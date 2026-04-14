@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MIT
+pragma zephyr ^1.0;
+
+/// Example: Simple Token contract demonstrating ZephyrLang features
+/// - Checked arithmetic (default)
+/// - Events with indexed parameters
+/// - Custom errors
+/// - Role-based access control
+/// - State variable auto-slotting
+
+contract SimpleToken {
+    // Roles (native ZephyrLang feature)
+    role ADMIN;
+    role MINTER inherits ADMIN;
+
+    // State variables
+    string public name;
+    string public symbol;
+    uint8 public decimals;
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    // Events
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Mint(address indexed to, uint256 value);
+
+    // Custom errors
+    error InsufficientBalance(address account, uint256 required, uint256 available);
+    error InsufficientAllowance(address spender, uint256 required, uint256 available);
+
+    // Constructor
+    constructor(string name_, string symbol_, uint256 initialSupply) {
+        name = name_;
+        symbol = symbol_;
+        decimals = 18;
+        totalSupply = initialSupply;
+        balanceOf[msg.sender] = initialSupply;
+        grant(ADMIN, msg.sender);
+        grant(MINTER, msg.sender);
+        emit Transfer(address(0), msg.sender, initialSupply);
+    }
+
+    // Transfer tokens (checked arithmetic - reverts on underflow)
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(to != address(0), "zero address");
+        uint256 senderBal = balanceOf[msg.sender];
+        require(senderBal >= amount, "insufficient balance");
+
+        balanceOf[msg.sender] = senderBal - amount;
+        balanceOf[to] = balanceOf[to] + amount;
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    // Approve spender
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    // Transfer from (with allowance check)
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 currentAllowance = allowance[from][msg.sender];
+        require(currentAllowance >= amount, "insufficient allowance");
+        allowance[from][msg.sender] = currentAllowance - amount;
+
+        uint256 fromBal = balanceOf[from];
+        require(fromBal >= amount, "insufficient balance");
+        balanceOf[from] = fromBal - amount;
+        balanceOf[to] = balanceOf[to] + amount;
+        emit Transfer(from, to, amount);
+        return true;
+    }
+
+    // Mint - role-restricted
+    function mint(address to, uint256 amount) external only(MINTER) {
+        totalSupply = totalSupply + amount;
+        balanceOf[to] = balanceOf[to] + amount;
+        emit Mint(to, amount);
+        emit Transfer(address(0), to, amount);
+    }
+}

@@ -1,0 +1,423 @@
+# ZephyrLang Design — Part 2: Compiler, VM Changes, Transpiler & Roadmap
+
+---
+
+## 3. Compiler Pipeline
+
+```
+┌─────────────┐    ┌────────┐    ┌─────┐    ┌─────┐    ┌──────────┐    ┌──────────┐
+│ .zeph source│───▶│ Lexer  │───▶│Parser│───▶│ HIR │───▶│   MIR    │───▶│ RISC-V   │
+│             │    │(tokens)│    │(AST) │    │     │    │(lowered) │    │ Codegen  │
+└─────────────┘    └────────┘    └──────┘    └─────┘    └──────────┘    └──────────┘
+                                                │              │              │
+                                          ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼──────┐
+                                          │Type Check  │ │Optimization│ │ ELF/.zeph  │
+                                          │Safety Anal.│ │Dead Code   │ │ Packaging  │
+                                          │Reentrancy  │ │Const Fold  │ │ Debug Info │
+                                          └───────────┘ └───────────┘ └────────────┘
+```
+
+### 3.1 Lexer (Source → Tokens)
+
+**Token types needed** (superset of Solidity):
+
+| Category | Tokens |
+|---|---|
+| **Keywords** | `contract`, `interface`, `library`, `abstract`, `function`, `modifier`, `event`, `error`, `struct`, `enum`, `mapping`, `storage`, `transient`, `immutable`, `constant`, `public`, `private`, `internal`, `external`, `view`, `pure`, `payable`, `returns`, `if`, `else`, `for`, `while`, `do`, `break`, `continue`, `return`, `emit`, `revert`, `require`, `assert`, `try`, `catch`, `match`, `some`, `none`, `move`, `role`, `only`, `grant`, `revoke`, `unchecked`, `assembly`, `import`, `pragma`, `is`, `new`, `delete`, `type`, `using` |
+| **New Keywords** | `option`, `result`, `resource`, `transient`, `role`, `only`, `grant`, `revoke`, `match`, `some`, `none`, `move`, `parallel`, `atomic` |
+| **Types** | `uint8`-`uint256`, `int8`-`int256`, `address`, `bool`, `bytes1`-`bytes32`, `bytes`, `string`, `fixed` |
+| **Operators** | `+`, `-`, `*`, `/`, `%`, `**`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `\|\|`, `!`, `&`, `\|`, `^`, `~`, `<<`, `>>`, `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `+%` (wrapping), `+\|` (saturating) |
+| **Literals** | Decimal, Hex (`0x...`), String, Bool, Address, Hex string |
+| **Punctuation** | `(`, `)`, `{`, `}`, `[`, `]`, `;`, `,`, `.`, `=>`, `->`, `_` |
+
+**Implementation**: Written in Zig, file `tools/zephyrc/lexer.zig` (~500 lines).
+
+### 3.2 Parser (Tokens → AST)
+
+```zig
+// tools/zephyrc/ast.zig — AST node definitions
+pub const ContractNode = struct {
+    name: []const u8,
+    kind: enum { contract, interface, library, abstract_contract },
+    base_contracts: []const InheritanceSpec,
+    body: []const ContractItem,
+};
+
+pub const ContractItem = union(enum) {
+    state_var: StateVarDecl,
+    function: FunctionDecl,
+    modifier: ModifierDecl,
+    event: EventDecl,
+    error_def: ErrorDecl,
+    struct_def: StructDecl,
+    enum_def: EnumDecl,
+    role_def: RoleDecl,        // NEW
+    using_directive: UsingDir,
+    constructor: FunctionDecl,
+    fallback: FunctionDecl,
+    receive: FunctionDecl,
+};
+
+pub const StateVarDecl = struct {
+    name: []const u8,
+    type_expr: TypeExpr,
+    visibility: Visibility,
+    storage_class: enum { regular, transient, immutable, constant },
+    initial_value: ?ExprNode,
+};
+
+pub const FunctionDecl = struct {
+    name: []const u8,
+    params: []const ParamDecl,
+    returns: []const ParamDecl,
+    visibility: Visibility,
+    mutability: Mutability,
+    modifiers: []const ModifierInvocation,
+    body: ?BlockStmt,
+    is_virtual: bool,
+    is_override: bool,
+};
+```
+
+**Recursive descent parser** with Pratt parsing for expressions. File: `tools/zephyrc/parser.zig` (~2000 lines).
+
+### 3.3 HIR — High-level IR (AST → Typed, Analyzed)
+
+The HIR phase performs:
+
+1. **Type checking and inference**: Resolve all types, check assignments, verify function signatures
+2. **Storage layout computation**: Assign slot indices to state variables automatically
+3. **Reentrancy analysis**: Track external calls vs state mutations, emit warnings/errors
+4. **Access control verification**: Ensure role-guarded functions have valid role definitions
+5. **Resource type linearity check**: Ensure resource values are consumed exactly once
+6. **Immutability enforcement**: Verify `view`/`pure` functions don't modify state
+7. **ABI generation**: Produce JSON ABI from public/external function signatures
+
+```zig
+// tools/zephyrc/hir.zig
+pub const TypedExpr = struct {
+    expr: ExprKind,
+    resolved_type: Type,           // Fully resolved type
+    is_lvalue: bool,               // Can appear on left of assignment
+    storage_location: ?Location,   // storage, memory, calldata, transient
+    gas_cost_hint: u32,            // Estimated gas for this expression
+};
+```
+
+### 3.4 MIR — Mid-level IR (HIR → Lowered)
+
+Lowers high-level constructs into VM-level operations:
+
+| HIR Construct | MIR Lowering |
+|---|---|
+| `balances[msg.sender]` | `SLOAD(keccak256(slot \|\| msg.sender))` |
+| `emit Transfer(from, to, value)` | `LOG3(topic0=keccak256("Transfer(address,address,uint256)"), topic1=from, topic2=to, data=value)` |
+| `require(cond, "msg")` | `if (!cond) { REVERT(abi.encode("msg")) }` |
+| `a + b` (checked) | `ADD a,b; if overflow → REVERT(Panic(0x11))` |
+| `msg.sender` | `SYSCALL(GET_CALLER)` |
+| `block.timestamp` | `SYSCALL(GET_TIMESTAMP)` |
+| `mapping.get(key)` | `SYSCALL(SLOAD, keccak256(key \|\| slot))` |
+
+Optimizations at MIR level:
+- **Constant folding**: `uint256 x = 2 + 3` → `uint256 x = 5`
+- **Dead code elimination**: Remove unreachable branches
+- **Common subexpression elimination**: Reuse repeated keccak256 computations
+- **Storage read caching**: Batch SLOAD for same key within a function
+- **Inline small functions**: Inline functions under ~20 instructions
+
+### 3.5 RISC-V Code Generation (MIR → Machine Code)
+
+```
+MIR Operation              →  RISC-V Instructions
+─────────────────────────────────────────────────────
+PUSH constant              →  LUI rd, upper20; ADDI rd, rd, lower12
+ADD a, b                   →  ADD rd, rs1, rs2
+SLOAD key                  →  LI a5, 0x01; LI a0, key_ptr; ECALL
+SSTORE key, val            →  LI a5, 0x02; LI a0, key_ptr; LI a1, val_ptr; ECALL
+EMIT event                 →  LI a5, 0x03; LI a0-a4, args; ECALL
+CALL target                →  LI a5, 0x04; ECALL
+REVERT data                →  LI a5, 0x0D; ECALL
+KECCAK256 data             →  LI a5, 0x0B; ECALL
+checked_add(a, b)          →  ADD rd, rs1, rs2; [overflow check branch → revert]
+```
+
+**Register allocation**: RISC-V RV32EM has 16 registers. Mapping:
+- `x0`: hardwired zero
+- `x1` (ra): return address
+- `x2` (sp): stack pointer
+- `x10-x15` (a0-a5): syscall args + return values
+- `x3-x9`: general-purpose temporaries (compiler-managed)
+
+**Output format**: ELF binary wrapped in `.zeph` container with:
+- Bytecode section
+- ABI JSON section
+- Source map section (PC → source line mapping)
+- Debug symbols section
+- Contract metadata (name, version, compiler version)
+
+---
+
+## 4. VM Changes Required
+
+### 4.1 New Syscalls
+
+| ID | Name | Args | Description |
+|---|---|---|---|
+| `0x26` | `GET_CODE_HASH` | `a0=addr_ptr` → `a0=hash_ptr` | Get code hash of address |
+| `0x27` | `ROLE_CHECK` | `a0=role_id, a1=addr_ptr` → `a0=bool` | Check if address has role |
+| `0x28` | `ROLE_GRANT` | `a0=role_id, a1=addr_ptr` | Grant role to address |
+| `0x29` | `ROLE_REVOKE` | `a0=role_id, a1=addr_ptr` | Revoke role from address |
+| `0x2A` | `RESOURCE_LOCK` | `a0=resource_id` | Lock resource for linear type |
+| `0x2B` | `RESOURCE_UNLOCK` | `a0=resource_id` | Unlock resource |
+| `0x2C` | `DEBUG_LOG` | `a0=msg_ptr, a1=msg_len` | Debug-mode logging |
+| `0x2D` | `GET_CHAIN_ID` | → `a0=chain_id` | Get current chain ID |
+| `0x2E` | `BASEFEE` | → `a0=basefee_ptr` | Get block base fee |
+| `0x2F` | `PREVRANDAO` | → `a0=randao_ptr` | Get previous RANDAO |
+
+### 4.2 Extended Memory Layout
+
+```
+Current (640 KB):
+  0x00000 - 0x0FFFF  Code      (64 KB)
+  0x10000 - 0x4FFFF  Heap      (256 KB)
+  0x50000 - 0x6FFFF  Stack     (128 KB)
+  0x70000 - 0x8FFFF  Calldata  (128 KB)
+  0x90000 - 0x9FFFF  Return    (64 KB)
+
+Proposed (1 MB — still fits L2 cache):
+  0x00000 - 0x1FFFF  Code      (128 KB)  — larger contracts
+  0x20000 - 0x6FFFF  Heap      (320 KB)  — more working memory
+  0x70000 - 0x8FFFF  Stack     (128 KB)  — unchanged
+  0x90000 - 0xAFFFF  Calldata  (128 KB)  — unchanged
+  0xB0000 - 0xCFFFF  Return    (128 KB)  — larger return data
+  0xD0000 - 0xDFFFF  Scratch   (64 KB)   — NEW: compiler temp space
+  0xE0000 - 0xFFFFF  Debug     (128 KB)  — NEW: debug info (optional)
+```
+
+### 4.3 Enhanced Gas Metering
+
+```zig
+// New gas costs for ZephyrLang features
+pub const ROLE_CHECK_GAS: u64 = 200;     // Role verification
+pub const ROLE_GRANT_GAS: u64 = 5000;    // Role state change
+pub const RESOURCE_LOCK_GAS: u64 = 100;  // Resource tracking
+pub const DEBUG_LOG_GAS: u64 = 0;        // Free in debug mode, disabled in prod
+pub const CHAIN_ID_GAS: u64 = 2;         // Cheap env read
+pub const BASEFEE_GAS: u64 = 2;          // Cheap env read
+```
+
+### 4.4 Contract Metadata Storage
+
+```zig
+// In HostEnv — new fields for ZephyrLang runtime
+contract_abi: ?[]const u8,          // JSON ABI for runtime reflection
+source_map: ?[]const SourceMapping,  // PC → source line for debugging
+role_registry: RoleRegistry,         // Per-contract role assignments
+resource_locks: ResourceTracker,     // Linear type enforcement
+```
+
+---
+
+## 5. Solidity → ZephyrLang Transpiler
+
+### 5.1 Architecture
+
+```
+┌──────────────┐    ┌────────────────────┐    ┌──────────────────┐    ┌────────────┐
+│ Solidity .sol│───▶│ Existing Parser    │───▶│ Sol→Zeph Mapper  │───▶│ .zeph file │
+│              │    │ (tools/transpiler/ │    │ (syntax transform│    │            │
+│              │    │  parser.zig)       │    │  + feature map)  │    │            │
+└──────────────┘    └────────────────────┘    └──────────────────┘    └────────────┘
+```
+
+**Key**: We already have a full Solidity parser ([tools/transpiler/parser.zig](file:///Users/karan/sol2zig/tools/transpiler/parser.zig), 997 lines). The transpiler reuses it and generates `.zeph` output instead of [.zig](file:///Users/karan/sol2zig/vm/vm.zig).
+
+### 5.2 Mapping Rules
+
+| Solidity | ZephyrLang | Notes |
+|---|---|---|
+| `pragma solidity ^0.8.0;` | `pragma zephyr ^1.0;` | Version mapping |
+| `contract X is Y, Z { }` | `contract X is Y, Z { }` | Identical |
+| `mapping(address => uint)` | `mapping(address => uint256)` | Identical |
+| `uint` | `uint256` | Explicit sizing |
+| `require(cond, "msg")` | `require(cond, "msg")` | Identical |
+| `msg.sender` | `msg.sender` | Identical |
+| `block.timestamp` | `block.timestamp` | Identical |
+| `keccak256(abi.encode(...))` | `keccak256(abi.encode(...))` | Identical |
+| `abi.encodeWithSelector(...)` | `abi.encodeWithSelector(...)` | Identical |
+| Inline assembly (EVM) | `assembly { /* risc-v */ }` | **Needs manual review** |
+| `selfdestruct(addr)` | **REMOVED** — emit event + drain | Security improvement |
+| OpenZeppelin imports | Native equivalents | `import "@oz/..."` |
+
+### 5.3 Automatic Enhancements During Transpilation
+
+```zephyr
+// INPUT (Solidity):
+contract Vault {
+    mapping(address => uint256) balances;
+    bool locked;
+    function withdraw(uint256 amount) external {
+        require(!locked);
+        locked = true;
+        require(balances[msg.sender] >= amount);
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok);
+        balances[msg.sender] -= amount;
+        locked = false;
+    }
+}
+
+// OUTPUT (ZephyrLang — auto-enhanced):
+contract Vault {
+    mapping(address => uint256) balances;
+    transient bool _locked;              // ← Auto: bool → transient (saves gas)
+
+    function withdraw(uint256 amount) external nonReentrant {  // ← Auto: pattern → modifier
+        require(balances[msg.sender] >= amount, "Insufficient balance");
+        balances[msg.sender] -= amount;  // ← Auto: CEI reordering
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok, "Transfer failed");  // ← Auto: error messages added
+    }
+}
+// ⚠️ TRANSPILER WARNING: Reordered state update before external call (CEI pattern)
+```
+
+---
+
+## 6. Built-in Standard Library
+
+### 6.1 Core Modules (Ship with Compiler)
+
+| Module | Functions |
+|---|---|
+| `std.math` | `min`, `max`, `abs`, `sqrt`, `log2`, `mulDiv`, `fullMul` |
+| `std.crypto` | `keccak256`, `sha256`, `ripemd160`, `ecrecover`, `verify` |
+| `std.abi` | `encode`, `decode`, `encodePacked`, `encodeWithSelector` |
+| `std.address` | `balance`, `code`, `codeHash`, `transfer`, `send`, `call` |
+| `std.array` | `push`, `pop`, `length`, `slice`, `contains`, `indexOf` |
+| `std.string` | `concat`, `length`, `substr`, `equals`, `toUint`, `toAddress` |
+| `std.token` | `ERC20`, `ERC721`, `ERC1155`, `ERC4626` |
+| `std.access` | `Ownable`, `AccessControl`, `Roles`, `Timelock` |
+| `std.security` | `ReentrancyGuard`, `Pausable`, `RateLimiter` |
+| `std.proxy` | `TransparentProxy`, `UUPSProxy`, `MinimalProxy`, `Beacon` |
+| `std.governance` | `Governor`, `TimelockController`, `Votes` |
+| `std.defi` | `FlashLoan`, `Oracle`, `AMM`, `Vault` |
+
+### 6.2 Example: Full ERC-20 in ZephyrLang
+
+```zephyr
+pragma zephyr ^1.0;
+import "std.token.ERC20";
+
+contract MyToken is ERC20 {
+    role MINTER;
+
+    constructor(string name_, string symbol_) ERC20(name_, symbol_) {
+        grant(MINTER, msg.sender);
+        _mint(msg.sender, 1_000_000 * 10**decimals());
+    }
+
+    function mint(address to, uint256 amount) external only(MINTER) {
+        _mint(to, amount);
+    }
+
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount);
+    }
+}
+// That's it. ~15 lines for a full, production-ready, mintable/burnable ERC-20.
+```
+
+---
+
+## 7. Implementation Roadmap
+
+### Phase 1: Language Core (Weeks 1-4)
+| Task | Effort | Owner |
+|---|---|---|
+| Lexer (`tools/zephyrc/lexer.zig`) | 3 days | |
+| Parser (`tools/zephyrc/parser.zig`) | 1.5 weeks | |
+| AST definitions (`tools/zephyrc/ast.zig`) | 2 days | |
+| Type checker (`tools/zephyrc/type_check.zig`) | 1 week | |
+| Storage layout (`tools/zephyrc/storage_layout.zig`) | 2 days | |
+
+### Phase 2: Code Generation (Weeks 5-8)
+| Task | Effort | Owner |
+|---|---|---|
+| MIR lowering (`tools/zephyrc/mir.zig`) | 1 week | |
+| RISC-V codegen (`tools/zephyrc/codegen_riscv.zig`) | 2 weeks | |
+| ELF packaging (`tools/zephyrc/elf_emit.zig`) | 3 days | |
+| ABI JSON generation (`tools/zephyrc/abi_gen.zig`) | 2 days | |
+| Source map generation (`tools/zephyrc/source_map.zig`) | 2 days | |
+
+### Phase 3: VM Enhancements (Weeks 5-6, parallel)
+| Task | Effort | Owner |
+|---|---|---|
+| New syscalls (0x26-0x2F) in [dispatch.zig](file:///Users/karan/sol2zig/vm/syscall/dispatch.zig) | 3 days | |
+| Extended memory layout in [sandbox.zig](file:///Users/karan/sol2zig/vm/memory/sandbox.zig) | 2 days | |
+| Role registry in `HostEnv` | 2 days | |
+| Source map loading in contract loader | 1 day | |
+
+### Phase 4: Safety Analysis (Weeks 7-9)
+| Task | Effort | Owner |
+|---|---|---|
+| Reentrancy detector (`tools/zephyrc/safety/reentrancy.zig`) | 1 week | |
+| Resource linearity checker | 3 days | |
+| Access control verifier | 2 days | |
+| Integer overflow proof (compile-time where possible) | 3 days | |
+
+### Phase 5: Standard Library (Weeks 9-12)
+| Task | Effort | Owner |
+|---|---|---|
+| `std.token` (ERC20, ERC721, ERC1155) | 1 week | |
+| `std.access` (Ownable, AccessControl) | 3 days | |
+| `std.security` (ReentrancyGuard, Pausable) | 2 days | |
+| `std.proxy` (UUPS, Transparent, Beacon) | 1 week | |
+| `std.defi` (FlashLoan, AMM, Vault) | 1 week | |
+
+### Phase 6: Solidity Transpiler (Weeks 10-13)
+| Task | Effort | Owner |
+|---|---|---|
+| Sol→Zeph syntax mapper (`tools/sol2zeph/mapper.zig`) | 1 week | |
+| CEI pattern auto-reorder | 3 days | |
+| Transient storage auto-upgrade | 2 days | |
+| Assembly block translation (EVM → RISC-V) | 1 week | |
+| Comprehensive test suite | 1 week | |
+
+### Phase 7: Tooling (Weeks 13-16)
+| Task | Effort | Owner |
+|---|---|---|
+| `zeph compile` command | 2 days | |
+| `zeph test` — built-in testing framework | 1 week | |
+| `zeph deploy` — deployment interface | 3 days | |
+| `zeph verify` — source verification | 3 days | |
+| LSP server for editor support | 2 weeks | |
+
+---
+
+## 8. Comparison Matrix
+
+| Feature | Solidity | Vyper | ZephyrLang |
+|---|---|---|---|
+| Syntax familiarity | ★★★★★ | ★★★ | ★★★★★ (Solidity-like) |
+| Safety by default | ★★★ | ★★★★ | ★★★★★ |
+| Reentrancy protection | Manual | Auto | **Compile-time enforced** |
+| Checked arithmetic | Opt-in (0.8+) | Always | **Default + wrapping/sat ops** |
+| Access control | Library | N/A | **Language-level roles** |
+| Option types (no null) | No | No | **Yes** |
+| Resource/linear types | No | No | **Yes** |
+| Result types | No | No | **Yes** |
+| Pattern matching | No | No | **Yes** |
+| Transient storage | EIP-1153 | No | **First-class keyword** |
+| Parallel execution hints | No | No | **Yes** |
+| Native RISC-V target | No | No | **Yes** |
+| Source-level debugging | Limited | Limited | **Full source maps** |
+| EVM assembly | Yes | No | **RISC-V assembly** |
+| Compile-time compute | No | No | **comptime expressions** |
+| Fixed-point math | No | Yes | **Yes** |
+| Standard library | OpenZeppelin | Built-in | **Rich built-in std** |
+
+---
+
+> [!IMPORTANT]
+> **Total estimated effort**: ~16 weeks for a single developer, ~8 weeks with 2 developers working in parallel (compiler + VM/stdlib tracks). Phase 1-2 (lexer/parser/codegen) is the critical path. The existing Solidity parser can be partially reused for the transpiler phase.

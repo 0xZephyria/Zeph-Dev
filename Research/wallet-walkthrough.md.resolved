@@ -1,0 +1,139 @@
+# Zephyria Wallet Extension — Build Walkthrough
+
+## What Was Built
+
+A complete, production-ready Firefox browser wallet extension for the Zephyria blockchain.
+
+**Location:** `/Users/karan/sol2zig/wallet-extension/`  
+**Load from:** `/Users/karan/sol2zig/wallet-extension/dist/`
+
+---
+
+## Extension Icon
+
+![Zephyria Wallet Icon](/Users/karan/.gemini/antigravity/brain/55339985-0b42-4bf1-91a6-242326b5f6ce/zephyria_wallet_icon_1772644860573.png)
+
+---
+
+## Build Output (All Clean ✓)
+
+| File | Size | Description |
+|---|---|---|
+| `dist/background.js` | 87 KB | Bundled background service worker + all crypto libs |
+| `dist/popup/popup.js` | 53 KB | Full UI SPA (9 screens) |
+| `dist/popup/style.css` | 30 KB | Zephyria design system |
+| `dist/content.js` | 809 B | Content script bridge |
+| `dist/inpage.js` | 3.0 KB | `window.ethereum` EIP-1193 provider |
+| `dist/manifest.json` | 1.7 KB | Firefox MV3 manifest |
+| `dist/icons/` | — | 16/32/48/128px icons |
+
+---
+
+## File Structure
+
+```
+wallet-extension/
+├── src/
+│   ├── lib/
+│   │   ├── crypto.js       BIP-39 mnemonic, BIP-44 HD derivation, secp256k1, keccak256
+│   │   ├── keystore.js     AES-256-GCM vault encryption (PBKDF2, 100k iterations)
+│   │   ├── rpc.js          Full JSON-RPC 2.0 client (all 54 Zephyria methods)
+│   │   ├── tx.js           EIP-1559 Type-2 RLP encoder + ECDSA signer
+│   │   ├── tokens.js       ERC-20 ABI encoder/decoder for ZEC tokens
+│   │   └── storage.js      browser.storage.local typed schema
+│   ├── background/
+│   │   └── index.js        Service worker — wallet state, all message handlers
+│   └── content/
+│       ├── bridge.js       Page ↔ background message bridge
+│       └── inpage.js       window.ethereum EIP-1193 provider (MetaMask-compatible)
+├── popup/
+│   ├── index.html          Popup shell
+│   ├── style.css           Cyberpunk dark design system
+│   ├── utils.js            Shared formatters, toast, modal, icons
+│   ├── popup.js            Router — boots wallet, renders screens
+│   └── screens/
+│       ├── unlock.js       Password unlock + 4-step setup wizard
+│       ├── dashboard.js    ZEE balance, quick actions, account switcher
+│       ├── tokens.js       ZEC token list, import, transfer
+│       ├── send.js         Send ZEE or ZEC with gas estimation
+│       ├── deploy.js       RISC-V ELF deployer (drag-and-drop .elf)
+│       ├── activity.js     Transaction history with TX detail modal
+│       ├── settings.js     Network, accounts, security, connected sites
+│       └── connect.js      dApp connection approval popup
+└── dist/                   ← Load this in Firefox
+```
+
+---
+
+## How to Load in Firefox
+
+1. Open Firefox → go to `about:debugging`
+2. Click **"This Firefox"** in the left sidebar
+3. Click **"Load Temporary Add-on…"**
+4. Navigate to `wallet-extension/dist/` and select **`manifest.json`**
+5. The Zephyria Wallet ⚡ icon appears in the toolbar
+
+---
+
+## Features
+
+### ✅ Wallet Management
+- Generate new wallet with 12-word BIP-39 seed phrase (reveal-gated)
+- Import from existing seed phrase (12 or 24 words)
+- Import from raw private key (64-char hex)
+- Multi-account: add HD-derived accounts or additional private keys
+- AES-256-GCM encrypted vault (PBKDF2 100k iterations)
+- Auto-lock timer
+
+### ✅ ZEE Native Token
+- Live balance display with 6-decimal formatting
+- Full send flow: paste address → MAX button → gas estimate → confirm → submit
+- EIP-1559 Type-2 signed transactions
+
+### ✅ ZEC Token Support
+- Import any ERC-20-compatible token by contract address
+- Auto-fetches name, symbol, decimals via ABI calls
+- Token balances for all imported tokens
+- Token transfer flow (same UX as ZEE send)
+
+### ✅ RISC-V ELF Contract Deployer
+- Drag-and-drop or browse for `.elf` file
+- Validates ELF magic bytes (`7f 45 4c 46`)
+- Validates RISC-V architecture (`e_machine = 0xf3`)
+- Shows file size and architecture info
+- Gas estimation then deploy (raw ELF bytes as transaction data, `to = null`)
+- Polls for contract address after deployment
+
+### ✅ MetaMask-Compatible Site Injection
+- `window.ethereum` injected at `document_start` into every page
+- `isMetaMask = true` for maximum dApp compatibility
+- EIP-6963 provider announcement for new dApp detection standards
+- Supported methods: `eth_requestAccounts`, `eth_accounts`, `eth_sendTransaction`, `personal_sign`, `eth_sign`, `wallet_switchEthereumChain`, all standard `eth_*` passthrough
+- dApp approval popup when site requests connection
+- Connected sites manager in Settings → disconnect anytime
+
+### ✅ Activity Log
+- Date-grouped transaction history (200 entries)
+- Shows: type, from/to, amount, status badge, timestamp
+- Click-to-expand detail modal with hash + contract address copy buttons
+- Async receipt polling updates status (pending → success/failed)
+
+---
+
+## Running `npm run build` for Production
+
+```bash
+cd wallet-extension
+npm run build   # → dist/ is fully rebuilt
+```
+
+---
+
+## Design System Highlights
+
+- **Background:** `#0a0a0f` (Void Black) with animated radial gradient mesh
+- **Accent:** `#00f0ff` (Cyber Cyan) with `box-shadow: 0 0 20px rgba(0,240,255,.35)` glow
+- **Secondary accent:** `#a855f7` (Electric Purple), `#ff2d78` (Neon Magenta)
+- **Cards:** `backdrop-filter: blur(20px)` glassmorphism with subtle cyan border
+- **Fonts:** Inter (UI) + JetBrains Mono (addresses/hashes)
+- **Animations:** Spinning gradient ring on lock screen, pulsing live-block dot, fade-in on screen transitions, toast slide-up notifications

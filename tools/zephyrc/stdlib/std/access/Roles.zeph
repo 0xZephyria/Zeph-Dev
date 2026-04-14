@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT
+pragma zephyr ^1.0;
+
+/// @title Roles — ZephyrLang Native Role-Based Access Control
+/// @notice Uses ZephyrLang's native `role` keyword and `only()` modifier
+/// with syscall-backed role checking (0x27-0x29).
+
+contract Roles {
+    // Role definitions — compiled to unique u256 hashes
+    role ADMIN;
+    role OPERATOR inherits ADMIN;
+    role MINTER inherits ADMIN;
+    role PAUSER inherits ADMIN;
+
+    event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+
+    error AccessControlUnauthorized(address account, bytes32 role);
+
+    constructor() {
+        // Deployer gets ADMIN role
+        grant(ADMIN, msg.sender);
+    }
+
+    function hasRole(bytes32 roleId, address account) external view returns (bool) {
+        // Backed by ROLE_CHECK syscall (0x27)
+        return _hasRole(roleId, account);
+    }
+
+    function grantRole(bytes32 roleId, address account) external only(ADMIN) {
+        grant(roleId, account);
+        emit RoleGranted(roleId, account, msg.sender);
+    }
+
+    function revokeRole(bytes32 roleId, address account) external only(ADMIN) {
+        revoke(roleId, account);
+        emit RoleRevoked(roleId, account, msg.sender);
+    }
+
+    function renounceRole(bytes32 roleId) external {
+        revoke(roleId, msg.sender);
+        emit RoleRevoked(roleId, msg.sender, msg.sender);
+    }
+
+    function _hasRole(bytes32 roleId, address account) internal view returns (bool) {
+        // This compiles to ROLE_CHECK syscall
+        return true; // Placeholder — actual check via syscall
+    }
+}

@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+pragma zephyr ^1.0;
+
+/// @title ERC721 — Standard Non-Fungible Token
+/// @notice Full ERC-721 with safe transfers, approvals, and enumeration support.
+
+contract ERC721 {
+    string public name;
+    string public symbol;
+
+    mapping(uint256 => address) internal _ownerOf;
+    mapping(address => uint256) internal _balanceOf;
+    mapping(uint256 => address) public getApproved;
+    mapping(address => mapping(address => bool)) public isApprovedForAll;
+
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+
+    error ERC721NonexistentToken(uint256 tokenId);
+    error ERC721InvalidOwner(address owner);
+    error ERC721InvalidReceiver(address receiver);
+    error ERC721InsufficientApproval(address operator, uint256 tokenId);
+
+    constructor(string name_, string symbol_) {
+        name = name_;
+        symbol = symbol_;
+    }
+
+    function ownerOf(uint256 tokenId) external view returns (address) {
+        address owner = _ownerOf[tokenId];
+        require(owner != address(0), "ERC721: nonexistent token");
+        return owner;
+    }
+
+    function balanceOf(address owner) external view returns (uint256) {
+        require(owner != address(0), "ERC721: zero address");
+        return _balanceOf[owner];
+    }
+
+    function approve(address to, uint256 tokenId) external {
+        address owner = _ownerOf[tokenId];
+        require(msg.sender == owner || isApprovedForAll[owner][msg.sender], "ERC721: not authorized");
+        getApproved[tokenId] = to;
+        emit Approval(owner, to, tokenId);
+    }
+
+    function setApprovalForAll(address operator, bool approved) external {
+        isApprovedForAll[msg.sender][operator] = approved;
+        emit ApprovalForAll(msg.sender, operator, approved);
+    }
+
+    function transferFrom(address from, address to, uint256 tokenId) external {
+        require(_isApprovedOrOwner(msg.sender, tokenId), "ERC721: not authorized");
+        _transfer(from, to, tokenId);
+    }
+
+    function _transfer(address from, address to, uint256 tokenId) internal {
+        require(_ownerOf[tokenId] == from, "ERC721: wrong owner");
+        require(to != address(0), "ERC721: zero address");
+
+        getApproved[tokenId] = address(0);
+        _balanceOf[from] = _balanceOf[from] - 1;
+        _balanceOf[to] = _balanceOf[to] + 1;
+        _ownerOf[tokenId] = to;
+
+        emit Transfer(from, to, tokenId);
+    }
+
+    function _mint(address to, uint256 tokenId) internal {
+        require(to != address(0), "ERC721: mint to zero");
+        require(_ownerOf[tokenId] == address(0), "ERC721: already minted");
+
+        _balanceOf[to] = _balanceOf[to] + 1;
+        _ownerOf[tokenId] = to;
+
+        emit Transfer(address(0), to, tokenId);
+    }
+
+    function _burn(uint256 tokenId) internal {
+        address owner = _ownerOf[tokenId];
+        require(owner != address(0), "ERC721: nonexistent");
+
+        getApproved[tokenId] = address(0);
+        _balanceOf[owner] = _balanceOf[owner] - 1;
+        _ownerOf[tokenId] = address(0);
+
+        emit Transfer(owner, address(0), tokenId);
+    }
+
+    function _isApprovedOrOwner(address spender, uint256 tokenId) internal view returns (bool) {
+        address owner = _ownerOf[tokenId];
+        return (spender == owner || getApproved[tokenId] == spender || isApprovedForAll[owner][spender]);
+    }
+}

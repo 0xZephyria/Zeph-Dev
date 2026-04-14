@@ -1,0 +1,69 @@
+# Zephyria Standardized Codebase Integration
+
+## Phase 1: Planning & Analysis
+- [x] Explore full codebase structure (12 modules, 431+ files under src/)
+- [x] Map module dependency graph from [build.zig](file:///Users/karan/sol2zig/build.zig)
+- [x] Analyze all subsystem entry points (mod.zig files)
+- [x] Read critical implementation files (dag_mempool, dag_executor, dag_scheduler, zelius, miner, vm_bridge, p2p/server, rpc/methods, security, block_producer)
+- [x] Scan for TODOs, FIXMEs, gaps (found 11 TODOs)
+- [x] Review Production Readiness Report
+- [x] Identify integration gaps and disconnected subsystems
+- [/] Write implementation plan for full integration
+
+## Phase 2: Core Execution Pipeline (Miner ↔ DAG ↔ Executor)
+- [ ] Rewrite [miner.zig](file:///Users/karan/sol2zig/src/node/miner.zig) to use DAG mempool + DAG executor as primary pipeline
+- [ ] Wire `BlockProducer` into miner as the unified block production interface
+- [ ] Integrate Turbo Executor's fast-path transfers into DAG executor
+- [ ] Add VM callback wiring to DAG executor for contract execution
+- [ ] Implement async state root computation (pipelined block N-1 commit)
+- [ ] Add memory prefetching in DAG scheduler before thread dispatch
+
+## Phase 3: Storage Integration (ZephyrDB + Verkle + LSM)
+- [ ] Implement SSTable flush in [lsm/db.zig](file:///Users/karan/sol2zig/src/storage/lsm/db.zig)
+- [ ] Implement io_uring engine in [lsm/io.zig](file:///Users/karan/sol2zig/src/storage/lsm/io.zig) (with fallback)
+- [ ] Add striped locks to ZephyrDB AccountTable for concurrent delta merge
+- [ ] Double-buffer checkpoint manager for unobtrusive snapshots
+- [ ] Wire ZephyrDB as hot-state layer with LSM as cold-state backend
+- [ ] Fix arena slice return in [zephyrdb/mod.zig](file:///Users/karan/sol2zig/src/storage/zephyrdb/mod.zig)
+
+## Phase 4: Consensus ↔ Execution Integration
+- [ ] Connect pipeline finalization to actual block commit
+- [ ] Wire epoch rotation through staking → zelius → adaptive
+- [ ] Implement equivocation gossip via P2P broadcast
+- [ ] Add exponential backoff to view change protocol
+- [ ] Connect fraud proof manager to P2P and staking slashing
+
+## Phase 5: P2P ↔ All Subsystems
+- [ ] Activate Turbine shredding as primary block propagation
+- [ ] Wire Gulf Stream for pre-execution TX forwarding via DAG mempool
+- [ ] Implement QUIC stream flush
+- [ ] Update gRPC tests for Spice API
+- [ ] Connect thread attestation pool to P2P for cross-validator attestations
+
+## Phase 6: VM Bridge ↔ DAG Executor
+- [ ] Thread-safe VM Bridge (remove global mutable state)
+- [ ] Wire VM callback into DAG executor's per-lane overlays
+- [ ] Add write_key enforcement in VM state bridge (isolation guarantee)
+- [ ] Pool VM execution contexts for zero-allocation reuse
+
+## Phase 7: RPC ↔ DAG Pipeline
+- [ ] Update RPC handler to reference DAG mempool for pending TX queries
+- [ ] Wire eth_sendRawTransaction through DAG admission with security checks
+- [ ] Add DAG-specific RPC methods (dag_getMetrics, zeph_getThreadInfo)
+
+## Phase 8: SDK Alignment
+- [ ] Ensure SDK syscalls match state_bridge interface
+- [ ] Validate contract deployment flow end-to-end
+
+## Phase 9: Security Hardening
+- [ ] Wire rate limiter into P2P and RPC admission
+- [ ] Wire TX sanitizer into DAG mempool admission
+- [ ] Wire bloom filter for dedup in DAG mempool
+- [ ] Integrate reentrancy guard into VM execution
+- [ ] Add execution timeout to VM bridge
+
+## Phase 10: Verification
+- [ ] Build compiles successfully (`zig build`)
+- [ ] All existing tests pass (`zig build test-node`)
+- [ ] Produce blocks with DAG pipeline end-to-end
+- [ ] Create walkthrough documenting all changes

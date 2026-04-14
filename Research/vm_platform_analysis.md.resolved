@@ -1,0 +1,434 @@
+# Zephyria VM & Smart Contract Platform: Comprehensive Analysis
+
+> Deep-dive into RISC-V interpreter execution, smart contract platform completeness, architectural gaps, and 1M TPS linear scaling requirements.
+
+---
+
+## Part 1: RISC-V Interpreter — Execution Workflow Analysis
+
+### 1.1 Interpreter Architecture Overview
+
+The ZephVM is a **pure software interpreter** executing the **RV32EM** instruction set (32-bit RISC-V with M-extension, constrained to 16 registers). It is **not** a JIT compiler or AOT compiler — it runs a classic **fetch-decode-execute-gas loop**.
+
+| Component | File | Role |
+|---|---|---|
+| **Decoder** | [decoder.zig](file:///Users/karan/sol2zig/vm/core/decoder.zig) | Decodes 32-bit instruction words into 7 format variants |
+| **Executor** | [executor.zig](file:///Users/karan/sol2zig/vm/core/executor.zig) | Fetch-decode-execute loop, CPU state (16 regs + PC) |
+| **Gas Meter** | [meter.zig](file:///Users/karan/sol2zig/vm/gas/meter.zig) | Per-instruction + per-syscall gas tracking with EIP-3529 refunds |
+| **Gas Table** | [table.zig](file:///Users/karan/sol2zig/vm/gas/table.zig) | 128-entry opcode lookup + EIP-2929 syscall costs |
+| **Sandbox Memory** | [sandbox.zig](file:///Users/karan/sol2zig/vm/memory/sandbox.zig) | 640KB linear memory, 5 permission-enforced regions |
+| **Syscall Dispatch** | [dispatch.zig](file:///Users/karan/sol2zig/vm/syscall/dispatch.zig) | 35 syscalls bridging guest and host |
+| **Contract Loader** | [contract_loader.zig](file:///Users/karan/sol2zig/vm/loader/contract_loader.zig) | ELF parsing, .zeph verification, validation |
+| **VM Pool** | [vm_pool.zig](file:///Users/karan/sol2zig/vm/vm_pool.zig) | Pre-allocated sandbox buffers for zero-alloc reuse |
+| **VM Bridge** | [vm_bridge.zig](file:///Users/karan/sol2zig/src/vm_bridge.zig) | Thread-safe bridge from DAG executor to RISC-V VM |
+
+### 1.2 End-to-End Contract Execution Workflow
+
+```mermaid
+sequenceDiagram
+    participant User as User TX
+    participant DAG as DAG Executor
+    participant Bridge as VMBridge
+    participant Loader as ContractLoader
+    participant VM as ZephVM Executor
+    participant Syscall as SyscallDispatch
+    participant State as StateBridge / Overlay
+
+    User->>DAG: Submit TX (to, data, gas)
+    DAG->>DAG: Schedule TX into lane (zero-conflict)
+    DAG->>Bridge: executeCallback(code, input, gas, overlay, caller, value)
+    Bridge->>Bridge: Create StateBridge(overlay, caller, value)
+    Bridge->>Bridge: Wire block/TX context (timestamp, coinbase, etc.)
+    Bridge->>Loader: executeContract(code, input, gas, state_bridge)
+    Loader->>Loader: Parse ELF / .zeph / raw bytecode
+    Loader->>Loader: Validate (opcode scan, size check, alignment)
+    Loader->>VM: ZephVM.init(sandbox, code_len, gas, handler)
+    Loader->>VM: Load code into CODE region, calldata into CALLDATA region
+    VM->>VM: Set PC = entry_point, SP = STACK_TOP
+
+    loop Fetch-Decode-Execute-Gas
+        VM->>VM: 1. Check PC bounds and step limit
+        VM->>VM: 2. Fetch 32-bit word from CODE region
+        VM->>VM: 3. Fast gas pre-check via opcode table
+        VM->>VM: 4. Decode into R/I/S/B/U/J/System
+        VM->>VM: 5. Charge M-ext extra gas (MUL=2, DIV=3)
+        VM->>VM: 6. Dispatch and execute instruction
+        VM->>VM: 7. Enforce x0 = 0
+        VM->>VM: 8. Advance PC += 4 (unless branch/jump)
+    end
+
+    Note over VM,Syscall: On ECALL instruction
+    VM->>Syscall: handler(vm) reads syscall ID from x15
+    Syscall->>State: SLOAD/SSTORE via StateBridge to Overlay
+    Syscall->>VM: Write results to registers/memory
+
+    Note over VM: On RETURN/REVERT syscall
+    VM->>VM: Set status = returned/reverted
+    VM->>Loader: Return ExecutionResult
+    Loader->>Bridge: Return ContractResult
+    Bridge->>DAG: Return VMResult(success, gas_used, return_data)
+    DAG->>DAG: Merge deltas + commit overlay
+```
+
+### 1.3 The Fetch-Decode-Execute-Gas Loop (Hot Path)
+
+Every instruction goes through exactly **8 stages** in [executor.zig](file:///Users/karan/sol2zig/vm/core/executor.zig#L136-L200):
+
+| Stage | Operation | Cost | Notes |
+|---|---|---|---|
+| 1 | PC bounds check | ~1 ns | Validates `pc < code_len` and 4-byte alignment |
+| 2 | Step limit check | ~1 ns | Defense-in-depth: max 10M steps per execution |
+| 3 | Fetch instruction | ~1-3 ns | `memory.loadWord(pc)` — in L1 cache for hot loops |
+| 4 | Fast gas pre-check | ~1 ns | 128-entry `OPCODE_GAS_TABLE[opcode]` lookup |
+| 5 | Decode | ~2-5 ns | Pattern match on 7-bit opcode, extract fields |
+| 6 | M-ext extra gas | conditional | Only for MUL/DIV: charges delta above ALU base |
+| 7 | Dispatch and execute | ~2-15 ns | R/I/S/B/U/J/System handler |
+| 8 | x0 enforcement + PC advance | ~1 ns | Hardwired zero + PC += 4 |
+
+**Total per-instruction: ~10-25 ns, giving theoretical ~40-100M instructions/second** on a single core.
+
+### 1.4 Guest to Host Bridge: The Syscall ABI
+
+The RISC-V `ecall` instruction is the **only** bridge between guest (contract) and host (node). The ABI is:
+
+| Register | Role |
+|---|---|
+| `x10-x14` (a0-a4) | Arguments |
+| `x15` (a5) | Syscall ID |
+| `x10-x11` (a0-a1) | Return values |
+
+**35 implemented syscalls** covering:
+
+| Category | Syscalls | EVM Equivalent |
+|---|---|---|
+| **Storage** | `SLOAD` (0x01), `SSTORE` (0x02) | `SLOAD`, `SSTORE` with EIP-2929/3529 |
+| **Events** | `EMIT_EVENT` (0x03), `LOG_RAW` (0x12) | `LOG0`-`LOG4` |
+| **Calls** | `CALL` (0x04), `DELEGATECALL` (0x05), `STATICCALL` (0x1C) | `CALL`, `DELEGATECALL`, `STATICCALL` |
+| **Context** | `GET_CALLER` (0x06), `GET_CALLVALUE` (0x07), `GET_CALLDATA` (0x08), `GET_CALLDATA_SIZE` (0x13) | `CALLER`, `CALLVALUE`, `CALLDATACOPY`, `CALLDATASIZE` |
+| **Control** | `RETURN` (0x09), `REVERT` (0x0A), `SELFDESTRUCT` (0x11) | `RETURN`, `REVERT`, `SELFDESTRUCT` |
+| **Crypto** | `KECCAK256` (0x0B), `ECRECOVER` (0x1D) | `KECCAK256`, `ECRECOVER` |
+| **Balance** | `GET_BALANCE` (0x0C) | `BALANCE` |
+| **Block** | `BLOCKNUMBER`, `TIMESTAMP`, `CHAINID`, `COINBASE`, `BASEFEE`, `PREVRANDAO`, `GASLIMIT` | Full EVM parity |
+| **Code** | `CODESIZE` (0x20), `CODECOPY` (0x21), `EXTCODESIZE` (0x22) | `CODESIZE`, `CODECOPY`, `EXTCODESIZE` |
+| **Returns** | `RETURNDATASIZE` (0x1E), `RETURNDATACOPY` (0x1F) | `RETURNDATASIZE`, `RETURNDATACOPY` |
+| **Deploy** | `CREATE_CONTRACT` (0x10) | `CREATE` |
+
+### 1.5 SDK Runtime: Contract Entry Point Lifecycle
+
+The SDK in [riscv_runtime.zig](file:///Users/karan/sol2zig/src/sdk/riscv_runtime.zig) implements the guest-side lifecycle:
+
+```
+_start (naked ASM)
+  |
+  +-> riscvMain()
+       |-- 1. ecall GET_CALLDATA_SIZE -> cd_size
+       |-- 2. ecall GET_CALLDATA -> calldata_buf[0..cd_size]
+       |-- 3. ExecutionContext.fromHost() -> ecalls GET_CALLER, GET_CALLVALUE, etc.
+       |-- 4. Dispatch: extract selector (first 4 bytes) -> match handler
+       |-- 5. Execute handler logic (SLOAD/SSTORE via ecall)
+       +-- 6. ecall RETURN_DATA or REVERT -> halt VM
+```
+
+### 1.6 Sandbox Memory Layout
+
+The [sandbox.zig](file:///Users/karan/sol2zig/vm/memory/sandbox.zig) enforces a strict 640KB memory map:
+
+| Region | Address Range | Size | Permissions |
+|---|---|---|---|
+| **Code** | `0x00000-0x0FFFF` | 64 KB | Read + Execute |
+| **Heap** | `0x10000-0x4FFFF` | 256 KB | Read + Write |
+| **Stack** | `0x50000-0x5FFFF` | 64 KB | Read + Write |
+| **Calldata** | `0x60000-0x6FFFF` | 64 KB | Read Only |
+| **Return** | `0x70000-0x9FFFF` | 192 KB | Read + Write |
+
+> [!IMPORTANT]
+> At ~640KB, the entire sandbox fits in L2 cache. This is critical for 1M TPS — no main memory round-trips during execution.
+
+---
+
+## Part 2: Smart Contract Platform — Current Capabilities and Gaps
+
+### 2.1 What Works Today
+
+| Capability | Status | Evidence |
+|---|---|---|
+| **ERC-20 Token Contracts** | Working | SDK has `StorageMapping`, `StorageSlot`, [events.zig](file:///Users/karan/sol2zig/src/sdk/events.zig), [abi_codec.zig](file:///Users/karan/sol2zig/src/sdk/abi_codec.zig) |
+| **ERC-721 NFT Contracts** | Working | SDK has [accounts.zig](file:///Users/karan/sol2zig/src/sdk/accounts.zig), nested mappings, address utilities |
+| **DeFi/DEX Contracts** | Partial | Cross-contract calls work but lack re-entrancy guards and flash loan patterns |
+| **ABI Encoding/Decoding** | Complete | 25KB [abi_codec.zig](file:///Users/karan/sol2zig/src/sdk/abi_codec.zig) with full Solidity ABI |
+| **Storage Model** | Solidity-compatible | `StorageMapping`, `StorageArray`, `StorageString` with Keccak slot derivation |
+| **Event Emission** | Complete | LOG0-LOG4 with indexed topics |
+| **Cross-Contract Calls** | Working | CALL, DELEGATECALL, STATICCALL with EIP-2929 warm/cold gas |
+| **Contract Deployment** | Working | CREATE syscall with address derivation |
+| **Gas Metering** | Production-grade | EIP-2929 warm/cold, EIP-3529 refunds, per-instruction opcode table |
+| **EVM Compatibility** | High | 35 syscalls matching EVM opcode semantics |
+| **Parallel Execution** | Working | DAG scheduler + executor with overlay isolation |
+| **Pre-allocated VM Pool** | Working | Zero-allocation path for hot execution |
+| **OpenZeppelin Patterns** | Started | `openzeppelin/` directory exists in SDK |
+
+### 2.2 Critical Gaps for a Complete Advanced Platform
+
+#### Gap 1: No JIT/AOT Compilation — Interpreter-Only Execution
+- **Current**: Pure software interpreter at ~40-100M RISC-V insn/sec
+- **Impact**: At ~200 instructions per average DeFi TX, single-core throughput caps at ~200-500K TPS
+- **Required**: AOT compilation (compile .zeph to native at deploy time) or tiered JIT (interpret first, JIT hot paths)
+- **Priority**: Critical for 1M TPS target
+
+#### Gap 2: Pseudo-ECRECOVER — Not Cryptographically Real
+- **Current**: `ecrecover` in [dispatch.zig](file:///Users/karan/sol2zig/vm/syscall/dispatch.zig) computes `keccak256(hash || v || r || s)` — **deterministic but fake**
+- **Impact**: No real signature verification. Tokens cannot verify permit() signatures. EIP-712 is broken.
+- **Required**: Bind `libsecp256k1` ECDSA point recovery natively in the host
+- **Priority**: Critical — blocks any DeFi with signature verification
+
+#### Gap 3: No Transient Storage (EIP-1153 — TLOAD/TSTORE)
+- **Current**: Not implemented
+- **Impact**: Cannot implement re-entrancy locks, flash loan callbacks, or zero-storage multihop AMM routing
+- **Required**: Add syscalls `TLOAD` (0x23) and `TSTORE` (0x24) backed by per-TX transient hashmap
+- **Priority**: Critical for advanced DeFi
+
+#### Gap 4: No CREATE2 (Salt-Based Deployment)
+- **Current**: Only `CREATE` (nonce-based) exists
+- **Impact**: No counterfactual addresses, no factory patterns, no Uniswap V3-style pool deployment
+- **Required**: Add `CREATE2` syscall with `keccak256(0xFF || sender || salt || init_code_hash)` derivation
+- **Priority**: Critical for DEX/factory patterns
+
+#### Gap 5: No Re-Entrancy Protection in VM
+- **Current**: Cross-contract calls allow unbounded re-entrancy
+- **Impact**: Contracts vulnerable to classic re-entrancy attacks without manual guards
+- **Required**: VM-level call depth tracking + optional re-entrancy mutex per contract
+- **Priority**: High — SDK-level guards can mitigate but VM-level is safer
+
+#### Gap 6: No BLS12-381 Precompiles
+- **Current**: Not implemented
+- **Impact**: No ZK-SNARK verification on-chain, no BLS signature aggregation in contracts
+- **Required**: Add precompile syscalls for BLS pairing, G1/G2 operations
+- **Priority**: High — needed for ZK rollups, privacy protocols
+
+#### Gap 7: No Bytecode Source Mapping / Debug Info
+- **Current**: ELF symbols stripped. Panic at PC=0x1234 gives zero debugging context.
+- **Impact**: Developer experience is severely limited. Block explorers cannot show source-level traces.
+- **Required**: DWARF-based source mapping in `.zeph` format, SDK debug tooling
+- **Priority**: High — critical for developer adoption
+
+#### Gap 8: No Gas Estimation RPC / Dry-Run Mode
+- **Current**: VM executes with hard gas limits but no dry-run estimation endpoint
+- **Impact**: Users cannot estimate gas costs before submitting TXs
+- **Required**: RPC method `eth_estimateGas` backed by VM dry-run with state snapshot
+- **Priority**: High — standard blockchain UX requirement
+
+#### Gap 9: Incomplete Error Propagation on Revert
+- **Current**: Revert data is captured but nested call reverts may truncate error strings
+- **Impact**: Debugging failed TXs in multi-hop DeFi is difficult
+- **Required**: Full revert data propagation through call stack with `RETURNDATACOPY`
+- **Priority**: Medium
+
+#### Gap 10: No Upgradeable Proxy Pattern Support (EIP-1167 / EIP-1967)
+- **Current**: DELEGATECALL works but no minimal proxy cloning or standardized proxy storage slots
+- **Impact**: No upgrade patterns for deployed contracts
+- **Required**: SDK-level proxy pattern + `CREATE2` for clone factories
+- **Priority**: Medium
+
+---
+
+## Part 3: Achieving 1 Million TPS with Linear Scaling
+
+### 3.1 Current Architecture Summary
+
+```mermaid
+graph TD
+    subgraph Transaction_Flow["Transaction Flow"]
+        TX["TX Submission"] --> RPC["RPC Layer"]
+        RPC --> GS["Gulf Stream Forwarding"]
+        GS --> MP["DAG Mempool 256 Shards"]
+    end
+
+    subgraph Block_Production["Block Production"]
+        MP --> SCHED["DAG Scheduler O(n log n)"]
+        SCHED --> PLAN["Execution Plan N conflict-free lanes"]
+    end
+
+    subgraph Parallel_Execution["Parallel Execution"]
+        PLAN --> L1["Lane 1 Overlay + VM"]
+        PLAN --> L2["Lane 2 Overlay + VM"]
+        PLAN --> LN["Lane N Overlay + VM"]
+    end
+
+    subgraph Commit["Commit"]
+        L1 --> MERGE["Delta Merge Deterministic"]
+        L2 --> MERGE
+        LN --> MERGE
+        MERGE --> VERKLE["Verkle Trie State Root"]
+        MERGE --> ZDB["ZephyrDB Persistent Storage"]
+    end
+
+    subgraph Consensus["Consensus"]
+        VERKLE --> ZELIUS["Zelius BLS-PoS"]
+        ZELIUS --> TURBINE["Turbine Shredding Reed-Solomon"]
+    end
+```
+
+### 3.2 TPS Budget Analysis (8-Core Consumer Hardware)
+
+To hit 1M TPS on 8 cores with 1 Gbps NIC:
+
+| Metric | Budget | Requirement |
+|---|---|---|
+| **Time per TX** | 8 us (8 cores x 125K TPS/core) | Total end-to-end including gas, state, commit |
+| **Network per TX** | ~125 bytes (1 Gbps / 1M TPS) | TX must be shredded, not gossiped whole |
+| **State reads per TX** | ~3-5 SLOAD | Each must hit L1/L2 cache — no RAM round-trips |
+| **VM execution per TX** | ~200 instructions x 15 ns = 3 us | Leaves 5 us for state + commit + overhead |
+
+### 3.3 The 7 Engineering Requirements for 1M TPS
+
+#### Requirement 1: VM JIT/AOT Compilation
+
+**Current bottleneck**: Interpreter loop at ~15 ns/instruction, giving ~3 us per average TX.
+
+**Solution**: AOT compile `.zeph` contracts to native code at deploy time, eliminating fetch-decode overhead:
+- **Interpreter**: 15 ns/insn x 200 insn = 3,000 ns (3 us)
+- **AOT native**: ~1 ns/insn x 200 insn = 200 ns (0.2 us)
+- **Speedup**: 15x, freeing ~2.8 us per TX for state operations
+
+**Implementation**: Translate RISC-V basic blocks to native x86-64 at deploy time. Cache compiled blocks per contract address.
+
+#### Requirement 2: Asynchronous State Root Hashing
+
+**Current bottleneck**: Verkle trie root computed synchronously after each block.
+
+**Impact at 1M TPS**: Hashing 1M state updates into a Verkle trie takes ~200 ms, causing blocks to stall.
+
+**Solution**:
+- Commit raw deltas to ZephyrDB immediately
+- Compute Verkle root on background thread
+- Block N commits to state root of Block N-2 (pipelined headers)
+- Dedicate 1 core exclusively to state root computation
+
+#### Requirement 3: Memory Prefetching and Cache Locality
+
+**Current bottleneck**: `LaneContext` threads fetch accounts from ZephyrDB on demand, causing L3 cache misses (~100 ns each).
+
+**Impact at 1M TPS**: 5 cache misses x 100 ns = 500 ns wasted per TX.
+
+**Solution**:
+- DAG scheduler pre-fetches `write_keys` and `read_keys` into L1/L2 cache before dispatching lanes
+- ZephyrDB `AccountTable` organized as cache-line-aligned (64-byte) structs
+- VM sandbox already fits in L2 (640KB) — this is already optimal
+
+#### Requirement 4: Lock-Free Delta Merge in ZephyrDB
+
+**Current bottleneck**: Delta merge phase uses `AccountTable` with potential lock contention.
+
+**Impact at 1M TPS**: 8 lanes simultaneously writing deltas causes thread serialization.
+
+**Solution**:
+- Striped locks (256 stripes across storage key space) for the merge phase
+- Or: wait-free concurrent hashmap with RCU (Read-Copy-Update) for lock-free reads
+- Double-buffered arenas: mutate Arena A while Arena B is being checkpointed
+
+#### Requirement 5: io_uring for Storage I/O
+
+**Current bottleneck**: WAL flush uses synchronous I/O with kernel context switches.
+
+**Impact at 1M TPS**: Each `fsync()` costs ~10 us kernel overhead.
+
+**Solution**:
+- Complete the `io_uring` engine at [io.zig:180](file:///Users/karan/sol2zig/src/storage/lsm/io.zig)
+- Submit WAL batches asynchronously via `io_uring` submission queue
+- Avoid kernel context switches entirely on Linux
+
+#### Requirement 6: Turbine Shredding for Block Propagation
+
+**Current bottleneck**: Full blocks gossiped to peers.
+
+**Impact at 1M TPS**: 1M TXs x ~120 bytes = ~120 MB per block. Gossiping 120 MB to 100 peers = 12 GB, saturating 1 Gbps NIC in 96 seconds.
+
+**Solution**:
+- Activate Reed-Solomon erasure coding in [turbine.zig](file:///Users/karan/sol2zig/src/p2p/turbine.zig)
+- Slice blocks into 1 KB shreds, send each peer a unique subset
+- Deterministic propagation tree: bandwidth scales O(log N)
+- Each node only sends ~120 MB / fanout^depth = ~1.2 MB per peer
+
+#### Requirement 7: Consensus Pipeline Overlap
+
+**Current bottleneck**: Propose, Vote, and Commit happen sequentially.
+
+**Impact at 1M TPS**: Block time must be ~1 second. If consensus takes 300 ms, only 700 ms remains for execution.
+
+**Solution**:
+- Overlap Phase N consensus voting with Phase N+1 execution (partially in [pipeline.zig](file:///Users/karan/sol2zig/src/consensus/pipeline.zig))
+- Pre-validate TX signatures in parallel during consensus voting
+- While Block N is being voted on, Block N+1 TXs are already being scheduled into lanes
+
+### 3.4 Linear Scaling Model
+
+The architecture supports **linear scaling** because:
+
+```
+TPS = (Threads) x (TPS_per_thread)
+
+Where:
+  TPS_per_thread = 1 / (T_vm + T_state + T_commit)
+
+  T_vm    = ~200 ns (with AOT, single-core)
+  T_state = ~300 ns (with prefetching, 3 SLOADs x 100 ns)
+  T_commit = ~100 ns (amortized delta merge)
+
+  TPS_per_thread = 1 / 600 ns = ~1.67M TPS/thread
+
+  With 8 threads:         8 x 125K = 1M TPS (conservative, interpreted VM)
+  With 8 threads + AOT:   8 x 500K = 4M TPS (with AOT compilation)
+```
+
+**Why it scales linearly**: The DAG scheduler guarantees **zero-conflict** lanes. Each lane operates on its own `Overlay` with its own VM instance. There is **no shared mutable state** between lanes during execution. The only serialization point is the delta merge, which takes O(N) with N = number of state changes, not number of TXs.
+
+### 3.5 Priority Roadmap for 1M TPS
+
+| Priority | Item | Impact | Effort |
+|---|---|---|---|
+| **P0** | Real ECRECOVER (libsecp256k1) | Unlocks all DeFi | 1-2 days |
+| **P0** | Transient Storage (TLOAD/TSTORE) | Unlocks re-entrancy guards, flash loans | 2-3 days |
+| **P0** | CREATE2 syscall | Unlocks factory patterns, DEXs | 1-2 days |
+| **P1** | Turbine shredding activation | Network layer for 1M TPS | 3-5 days |
+| **P1** | Async state root hashing | Unblocks execution pipeline | 3-5 days |
+| **P1** | Memory prefetching in DAG scheduler | Eliminates L3 cache misses | 2-3 days |
+| **P2** | AOT/JIT compilation | 15x VM speedup | 2-4 weeks |
+| **P2** | io_uring for ZephyrDB | Eliminates kernel I/O overhead | 1 week |
+| **P2** | Lock-free delta merge | Eliminates merge contention | 1 week |
+| **P3** | BLS12-381 precompiles | ZK proof verification | 1-2 weeks |
+| **P3** | Source mapping / debug tooling | Developer experience | 1-2 weeks |
+| **P3** | Gas estimation RPC | Standard UX | 2-3 days |
+
+---
+
+## Part 4: Existing Custom Technologies Summary
+
+| Technology | Files | Role | Status |
+|---|---|---|---|
+| **ZephVM (RISC-V RV32EM)** | `vm/` (11 files, ~140KB) | Smart contract interpreter | Production-functional |
+| **DAG Mempool** | [dag_mempool.zig](file:///Users/karan/sol2zig/src/core/dag_mempool.zig) (37KB) | 256-shard conflict-free TX scheduling | Working |
+| **DAG Scheduler** | [dag_scheduler.zig](file:///Users/karan/sol2zig/src/core/dag_scheduler.zig) (14KB) | O(n log n) lane assignment | Working |
+| **DAG Executor** | [dag_executor.zig](file:///Users/karan/sol2zig/src/core/dag_executor.zig) (22KB) | Parallel lane execution + delta merge | Working |
+| **ZephyrDB** | [zephyrdb/](file:///Users/karan/sol2zig/src/storage/zephyrdb) (6 files) | TigerBeetle-inspired append-only storage | Working |
+| **Verkle Trie** | [verkle/](file:///Users/karan/sol2zig/src/storage/verkle) (21 files) | Witness-efficient state commitment | Working |
+| **Zelius Consensus** | [zelius.zig](file:///Users/karan/sol2zig/src/consensus/zelius.zig) (27KB) | BLS-aggregated PoS | Working |
+| **Consensus Pipeline** | [pipeline.zig](file:///Users/karan/sol2zig/src/consensus/pipeline.zig) (15KB) | Overlapping propose/vote/commit | Working |
+| **Turbine (P2P)** | [turbine.zig](file:///Users/karan/sol2zig/src/p2p/turbine.zig) | Reed-Solomon shred propagation | Outlined, needs activation |
+| **Gulf Stream** | [gulf_stream.zig](file:///Users/karan/sol2zig/src/p2p/gulf_stream.zig) | Forward TXs to predicted leaders | Outlined, needs tuning |
+| **QUIC Transport** | [server.zig](file:///Users/karan/sol2zig/src/p2p/server.zig) | UDP-based P2P avoiding HOL blocking | Working |
+| **Zephyria SDK** | [sdk/](file:///Users/karan/sol2zig/src/sdk) (20 files, ~160KB) | Zig to RISC-V smart contract SDK | Working |
+| **VM Pool** | [vm_pool.zig](file:///Users/karan/sol2zig/vm/vm_pool.zig) | Zero-alloc sandbox reuse | Working |
+| **Staking** | [staking.zig](file:///Users/karan/sol2zig/src/consensus/staking.zig) (15KB) | Validator staking/unstaking/slashing | Working |
+| **VRF/VDF** | [vrf.zig](file:///Users/karan/sol2zig/src/consensus/vrf.zig), [vdf.zig](file:///Users/karan/sol2zig/src/consensus/vdf.zig) | Randomness for leader selection | Working |
+| **Adaptive Consensus** | [adaptive.zig](file:///Users/karan/sol2zig/src/consensus/adaptive.zig) (21KB) | Dynamic parameter tuning | Working |
+
+---
+
+## Conclusion
+
+The Zephyria platform has a **remarkably complete** custom-built stack. The RISC-V VM is functionally capable of executing Token and DEX contracts today with EVM-compatible gas metering and a rich 35-syscall host bridge. The **three critical gaps** blocking a "complete advanced smart contract platform" are:
+
+1. **Real ECRECOVER** — blocks all signature-dependent DeFi
+2. **Transient Storage (TLOAD/TSTORE)** — blocks re-entrancy guards and flash loans
+3. **CREATE2** — blocks factory patterns and deterministic deployment
+
+For **1M TPS with linear scaling**, the zero-conflict DAG architecture is mathematically sound. The remaining work is **engineering execution**: activating Turbine shredding for network scalability, async state root hashing to unblock the execution pipeline, and eventually AOT compilation for a 15x VM speedup that would push the architecture toward 4M+ TPS on 8 cores.

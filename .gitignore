@@ -1,0 +1,9 @@
+node_data/
+zig-out/
+.zig-cache/
+*.o
+node.log
+node.pid
+node_modules/
+.DS_Store
+tests/artifacts/

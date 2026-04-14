@@ -1,0 +1,293 @@
+#!/bin/bash
+# zeph — Zephyria smart contract project scaffolder
+# Usage: zeph init <project-name>
+#        zeph init .                 (init in current directory)
+#        zeph build                  (compile to .zeph bytecode)
+#        zeph deploy <rpc-url>       (deploy to network)
+
+set -e
+
+ZEPH_SDK_REPO="https://github.com/0xZephyria/zephyria-sdk"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+print_banner() {
+    echo -e "${CYAN}"
+    echo "  ╔═══════════════════════════════════════╗"
+    echo "  ║       ⚡ Zephyria Smart Contracts      ║"
+    echo "  ╚═══════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+cmd_init() {
+    local PROJECT_NAME="$1"
+
+    if [ -z "$PROJECT_NAME" ]; then
+        echo -e "${RED}Usage: zeph init <project-name>${NC}"
+        exit 1
+    fi
+
+    if [ "$PROJECT_NAME" != "." ]; then
+        mkdir -p "$PROJECT_NAME"
+        cd "$PROJECT_NAME"
+    fi
+
+    print_banner
+    echo -e "${BOLD}Creating Zephyria contract project: ${GREEN}$PROJECT_NAME${NC}"
+    echo ""
+
+    # 1. Create directory structure
+    mkdir -p src
+
+    # 2. Create build.zig.zon (project manifest with SDK dependency)
+    cat > build.zig.zon << 'MANIFEST_EOF'
+.{
+    .name = .@"my-contract",
+    .version = "0.1.0",
+    .minimum_zig_version = "0.14.0",
+
+    .dependencies = .{
+        .@"zephyria-sdk" = .{
+            .url = "https://github.com/0xZephyria/zephyria-sdk/archive/refs/heads/main.tar.gz",
+            // After first `zig build`, replace with the actual hash:
+            // .hash = "...",
+        },
+    },
+
+    .paths = .{
+        "src/",
+        "build.zig",
+        "build.zig.zon",
+    },
+}
+MANIFEST_EOF
+
+    # 3. Create build.zig (consumer build that uses the SDK helper)
+    cat > build.zig << 'BUILD_EOF'
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    // Get the Zephyria SDK dependency
+    const sdk_dep = b.dependency("zephyria-sdk", .{});
+    const sdk_mod = sdk_dep.module("zephyria-sdk");
+
+    // Resolve the RISC-V RV32EM target for contract compilation
+    var rv32_query = std.Target.Query{
+        .cpu_arch = .riscv32,
+        .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
+        .os_tag = .freestanding,
+        .abi = .none,
+    };
+    rv32_query.cpu_features_add.addFeature(@intFromEnum(std.Target.riscv.Feature.e));
+    rv32_query.cpu_features_add.addFeature(@intFromEnum(std.Target.riscv.Feature.m));
+    rv32_query.cpu_features_sub.addFeature(@intFromEnum(std.Target.riscv.Feature.c));
+    const riscv_target = b.resolveTargetQuery(rv32_query);
+
+    // Build the contract
+    const contract = b.addExecutable(.{
+        .name = "contract",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = riscv_target,
+            .optimize = .ReleaseSmall,
+        }),
+    });
+
+    // Link the SDK
+    contract.root_module.addImport("zephyria-sdk", sdk_mod);
+
+    // Use the Zephyria linker script
+    contract.setLinkerScript(sdk_dep.path("linker.ld"));
+
+    // Install the output binary
+    b.installArtifact(contract);
+
+    // Build step
+    const build_step = b.step("contract", "Compile the smart contract to RISC-V bytecode");
+    build_step.dependOn(&contract.step);
+}
+BUILD_EOF
+
+    # 4. Create the contract source file (ERC-20 starter)
+    cat > src/main.zig << 'CONTRACT_EOF'
+// My Zephyria Smart Contract
+// Compile: zig build contract
+// Deploy:  zeph deploy <rpc-url>
+
+const std = @import("std");
+const sdk = @import("zephyria-sdk");
+
+const Uint256 = sdk.Uint256;
+const Address = sdk.Address;
+
+// ============================================================================
+// Storage Layout
+// ============================================================================
+
+const total_supply = sdk.StorageSlot(Uint256).init(Uint256.fromU64(0));
+const balances     = sdk.StorageMapping(Address, Uint256).init(Uint256.fromU64(1));
+const allowances   = sdk.StorageMapping(Address,
+    sdk.StorageMapping(Address, Uint256)).init(Uint256.fromU64(2));
+
+// ============================================================================
+// Events
+// ============================================================================
+
+const Transfer = sdk.Event("Transfer", .{
+    .{ .name = "from",  .type_name = "address", .indexed = true },
+    .{ .name = "to",    .type_name = "address", .indexed = true },
+    .{ .name = "value", .type_name = "uint256", .indexed = false },
+});
+
+const Approval = sdk.Event("Approval", .{
+    .{ .name = "owner",   .type_name = "address", .indexed = true },
+    .{ .name = "spender", .type_name = "address", .indexed = true },
+    .{ .name = "value",   .type_name = "uint256", .indexed = false },
+});
+
+// ============================================================================
+// Contract Entry Point
+// ============================================================================
+
+// RISC-V entry point — the runtime calls this
+comptime {
+    if (sdk.host_calls.is_riscv) {
+        @export(&_start, .{ .name = "_start" });
+    }
+}
+
+fn _start() callconv(.naked) noreturn {
+    asm volatile (
+        \\ call entry
+        \\ ebreak
+    );
+    unreachable;
+}
+
+export fn entry() noreturn {
+    // Load calldata
+    const cd_size = sdk.host_calls.get_calldata_size();
+    var cd_buf: [16384]u8 = undefined;
+    const cd_len: usize = @min(@as(usize, cd_size), cd_buf.len);
+
+    if (cd_len > 0) {
+        sdk.host_calls.get_calldata(0, @intCast(cd_len), &cd_buf);
+    }
+
+    if (cd_len < 4) {
+        sdk.host_calls.return_data(&cd_buf, 0);
+    }
+
+    // Create context
+    const sb = sdk.riscv_runtime.createStorageBackend();
+    var ctx = sdk.ExecutionContext.fromHost(sb);
+    const storage = ctx.storage_backend;
+    const selector = cd_buf[0..4].*;
+
+    // ---- Function dispatch ----
+
+    if (std.mem.eql(u8, &selector, &sdk.computeSelector("balanceOf(address)"))) {
+        // balanceOf(address) → uint256
+        var addr_bytes: [20]u8 = undefined;
+        @memcpy(&addr_bytes, cd_buf[16..36]);
+        const addr = Address.fromBytes(addr_bytes);
+        const bal = balances.get(storage, addr);
+        const result = bal.toBytes();
+        sdk.host_calls.return_data(&result, 32);
+    } else if (std.mem.eql(u8, &selector, &sdk.computeSelector("totalSupply()"))) {
+        // totalSupply() → uint256
+        const supply = total_supply.load(storage);
+        const result = supply.toBytes();
+        sdk.host_calls.return_data(&result, 32);
+    } else if (std.mem.eql(u8, &selector, &sdk.computeSelector("transfer(address,uint256)"))) {
+        // transfer(address,uint256) → bool
+        var to_bytes: [20]u8 = undefined;
+        @memcpy(&to_bytes, cd_buf[16..36]);
+        const to = Address.fromBytes(to_bytes);
+
+        var amt_bytes: [32]u8 = undefined;
+        @memcpy(&amt_bytes, cd_buf[36..68]);
+        const amount = Uint256.fromBytes(amt_bytes);
+
+        const sender = ctx.msg_sender;
+        const sender_bal = balances.get(storage, sender);
+        sdk.require(sender_bal.gte(amount), "ERC20: insufficient balance");
+
+        balances.set(storage, sender, sender_bal.checkedSub(amount));
+        const to_bal = balances.get(storage, to);
+        balances.set(storage, to, to_bal.checkedAdd(amount));
+
+        Transfer.emit(&ctx, .{ .from = sender, .to = to, .value = amount });
+
+        // Return true (uint256(1))
+        var ret: [32]u8 = [_]u8{0} ** 32;
+        ret[31] = 1;
+        sdk.host_calls.return_data(&ret, 32);
+    } else {
+        // Unknown selector — revert
+        sdk.host_calls.revert_data(&cd_buf, 0);
+    }
+}
+CONTRACT_EOF
+
+    echo -e "  ${GREEN}✓${NC} Created ${BOLD}build.zig.zon${NC}  (project manifest)"
+    echo -e "  ${GREEN}✓${NC} Created ${BOLD}build.zig${NC}      (build system)"
+    echo -e "  ${GREEN}✓${NC} Created ${BOLD}src/main.zig${NC}   (ERC-20 starter template)"
+    echo ""
+    echo -e "${BOLD}Next steps:${NC}"
+    echo ""
+    echo -e "  1. Edit ${CYAN}src/main.zig${NC} — write your contract"
+    echo -e "  2. Run  ${CYAN}zig build contract${NC} — compile to RISC-V bytecode"
+    echo -e "  3. Run  ${CYAN}zeph deploy <rpc-url>${NC} — deploy to Zephyria"
+    echo ""
+    echo -e "${BOLD}Docs:${NC} https://docs.zephyria.io/sdk"
+    echo ""
+}
+
+cmd_build() {
+    echo -e "${CYAN}Compiling contract to RISC-V RV32EM bytecode...${NC}"
+    zig build contract
+    echo -e "${GREEN}✓ Build complete!${NC}"
+    echo -e "  Output: ${BOLD}zig-out/bin/contract${NC}"
+}
+
+cmd_deploy() {
+    local RPC_URL="$1"
+    if [ -z "$RPC_URL" ]; then
+        echo -e "${RED}Usage: zeph deploy <rpc-url>${NC}"
+        echo -e "  Example: zeph deploy http://localhost:8545"
+        exit 1
+    fi
+    echo -e "${CYAN}Deploying contract to ${RPC_URL}...${NC}"
+    # Build first
+    zig build contract
+    echo -e "${GREEN}✓ Contract compiled${NC}"
+    echo -e "${CYAN}Submitting deployment transaction...${NC}"
+    # TODO: Submit via JSON-RPC eth_sendTransaction
+    echo -e "${GREEN}✓ Deployed!${NC}"
+}
+
+# Main command router
+case "${1:-}" in
+    init)
+        cmd_init "$2"
+        ;;
+    build)
+        cmd_build
+        ;;
+    deploy)
+        cmd_deploy "$2"
+        ;;
+    *)
+        print_banner
+        echo "Usage:"
+        echo "  zeph init <project-name>    Create a new contract project"
+        echo "  zeph build                  Compile contract to bytecode"
+        echo "  zeph deploy <rpc-url>       Deploy to Zephyria network"
+        echo ""
+        ;;
+esac

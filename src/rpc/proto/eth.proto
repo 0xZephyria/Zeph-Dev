@@ -1,0 +1,191 @@
+syntax = "proto3";
+
+package eth;
+
+service EthService {
+  // ETH API
+  rpc GetBlockNumber (Empty) returns (BigInt);
+  rpc GetBalance (GetBalanceRequest) returns (BigInt);
+  rpc SendRawTransaction (SendRawTransactionRequest) returns (Hash);
+  rpc GetBlockByNumber (GetBlockByNumberRequest) returns (Block);
+  rpc GetBlockByHash (GetBlockByHashRequest) returns (Block);
+  rpc GetTransactionByHash (HashRequest) returns (TransactionResponse);
+  rpc GetTransactionReceipt (HashRequest) returns (ReceiptResponse);
+  rpc EstimateGas (CallRequest) returns (Uint64);
+  rpc Call (CallRequest) returns (Bytes);
+  rpc ChainId (Empty) returns (BigInt);
+  rpc GasPrice (Empty) returns (BigInt);
+  rpc MaxPriorityFeePerGas (Empty) returns (BigInt);
+  rpc FeeHistory (FeeHistoryRequest) returns (FeeHistoryResponse);
+  rpc GetCode (AddressRequest) returns (Bytes);
+  rpc GetStorageAt (GetStorageAtRequest) returns (Bytes);
+  rpc Syncing (Empty) returns (Bool);
+  rpc Coinbase (Empty) returns (Address);
+  rpc Mining (Empty) returns (Bool);
+  rpc Hashrate (Empty) returns (Uint64);
+  rpc GetTransactionCount (GetTransactionCountRequest) returns (Uint64);
+  rpc Status (Empty) returns (TxPoolStatus);
+
+  // NET API
+  rpc NetVersion (Empty) returns (String);
+  rpc NetListening (Empty) returns (Bool);
+  rpc NetPeerCount (Empty) returns (Uint64);
+
+  // WEB3 API
+  rpc ClientVersion (Empty) returns (String);
+  rpc Sha3 (Bytes) returns (Bytes);
+}
+
+message Empty {}
+message Bool { bool value = 1; }
+message BigInt { string hex = 1; }
+message Hash { string hex = 1; }
+message Address { string hex = 1; }
+message Uint64 { uint64 value = 1; }
+message String { string value = 1; }
+message Bytes { bytes value = 1; }
+
+message AddressRequest {
+  string address = 1;
+  string block_number = 2;
+}
+
+message HashRequest {
+  string hash = 1;
+}
+
+message GetBalanceRequest {
+  string address = 1;
+  string block_number = 2;
+}
+
+message SendRawTransactionRequest {
+  bytes data = 1;
+}
+
+message GetBlockByNumberRequest {
+  string block_number = 1;
+  bool full_tx = 2;
+}
+
+message GetBlockByHashRequest {
+  string hash = 1;
+  bool full_tx = 2;
+}
+
+message CallRequest {
+  string from = 1;
+  string to = 2;
+  uint64 gas = 3;
+  string gas_price = 4;
+  string value = 5;
+  bytes data = 6;
+}
+
+message GetTransactionCountRequest {
+  string address = 1;
+  string block_number = 2;
+}
+
+message GetStorageAtRequest {
+  string address = 1;
+  string position = 2;
+  string block_number = 3;
+}
+
+message FeeHistoryRequest {
+  uint64 block_count = 1;
+  string last_block = 2;
+  repeated double reward_percentiles = 3;
+}
+
+message FeeHistoryResponse {
+  string oldest_block = 1;
+  repeated string base_fee_per_gas = 2;
+  repeated double gas_used_ratio = 3;
+  repeated RewardRow reward = 4;
+}
+
+message RewardRow {
+  repeated string values = 1;
+}
+
+message TxPoolStatus {
+  uint64 pending = 1;
+  uint64 queued = 2;
+}
+
+message Block {
+  uint64 number = 1;
+  string hash = 2;
+  string parent_hash = 3;
+  uint64 time = 4;
+  string state_root = 5;
+  string tx_hash = 6;
+  string coinbase = 7;
+  uint64 gas_limit = 8;
+  uint64 gas_used = 9;
+  string base_fee = 10;
+  repeated Transaction transactions = 11; // If full_tx is true
+  repeated string transaction_hashes = 12; // If full_tx is false
+}
+
+message Transaction {
+  string hash = 1;
+  uint64 nonce = 2;
+  string from = 3;
+  string to = 4;
+  string value = 5;
+  uint64 gas_limit = 6;
+  string gas_price = 7;
+  bytes data = 8;
+  uint64 chain_id = 9;
+}
+
+message TransactionResponse {
+  string hash = 1;
+  uint64 nonce = 2;
+  string block_hash = 3;
+  uint64 block_number = 4;
+  uint64 transaction_index = 5;
+  string from = 6;
+  string to = 7;
+  string value = 8;
+  uint64 gas = 9;
+  string gas_price = 10;
+  bytes input = 11;
+  uint64 v = 12;
+  uint64 r = 13;
+  uint64 s = 14;
+  uint64 type = 15;
+  string chain_id = 16;
+}
+
+message ReceiptResponse {
+  string transaction_hash = 1;
+  uint64 transaction_index = 2;
+  string block_hash = 3;
+  uint64 block_number = 4;
+  string from = 5;
+  string to = 6;
+  uint64 cumulative_gas_used = 7;
+  uint64 gas_used = 8;
+  string effective_gas_price = 9;
+  string contract_address = 10;
+  repeated Log logs = 11;
+  string logs_bloom = 12;
+  uint64 status = 13;
+  uint64 type = 14;
+}
+
+message Log {
+  string address = 1;
+  repeated string topics = 2;
+  bytes data = 3;
+  string block_hash = 4;
+  uint64 block_number = 5;
+  string transaction_hash = 6;
+  uint64 transaction_index = 7;
+  uint64 log_index = 8;
+  bool removed = 9;
+}

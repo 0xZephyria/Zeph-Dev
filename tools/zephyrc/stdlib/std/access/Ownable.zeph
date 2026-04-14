@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+pragma zephyr ^1.0;
+
+/// @title Ownable — Single-owner access control pattern
+/// @notice Provides a basic access control mechanism with a single owner.
+
+contract Ownable {
+    address public owner;
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    error OwnableUnauthorized(address account);
+    error OwnableInvalidOwner(address owner);
+
+    constructor() {
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Ownable: not owner");
+        _;
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Ownable: zero address");
+        address oldOwner = owner;
+        owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
+    }
+
+    function renounceOwnership() external onlyOwner {
+        address oldOwner = owner;
+        owner = address(0);
+        emit OwnershipTransferred(oldOwner, address(0));
+    }
+}
