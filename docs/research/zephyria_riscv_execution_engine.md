@@ -11,7 +11,7 @@
 ```mermaid
 graph LR
     subgraph "Compile Time (Developer)"
-        A["Solidity Source"] -->|sol2zig| B["Zig Contract"]
+        A["Solidity Source"] -->|Zephyria| B["Zig Contract"]
         B -->|zig build -target riscv32| C["RV32EM ELF Binary"]
         C -->|zeph-pack| D[".zeph Package"]
     end
@@ -130,14 +130,14 @@ Total per-instance memory: ~392 KB (fits in L2 cache)
 | Problem | Challenge | Solution |
 |---------|-----------|----------|
 | **1M TPS** | 1 tx per microsecond on consumer hardware. Sequential execution maxes at ~5K TPS with JIT | Parallel execution + pipelined processing + kernel bypass |
-| **100% Solidity** | Every Solidity construct must compile and execute correctly — including inheritance, modifiers, events, mappings, reentrancy guards, ABI encoding | sol2zig transpiler handles syntax. SDK provides EVM-equivalent semantics. RISC-V syscalls replace EVM opcodes |
+| **100% Solidity** | Every Solidity construct must compile and execute correctly — including inheritance, modifiers, events, mappings, reentrancy guards, ABI encoding | Zephyria transpiler handles syntax. SDK provides EVM-equivalent semantics. RISC-V syscalls replace EVM opcodes |
 
 ### 2.2 Full Solidity Compatibility Stack
 
 ```mermaid
 graph TB
     subgraph "Solidity Compatibility Layer"
-        SOL["Solidity Source (.sol)"] --> T["sol2zig Transpiler"]
+        SOL["Solidity Source (.sol)"] --> T["Zephyria Transpiler"]
         T --> ZIG["Zig Contract (.zig)"]
         ZIG --> SDK["Zephyria SDK"]
     end
@@ -189,7 +189,7 @@ Every EVM opcode that contracts depend on must have a Zephyria equivalent:
 | **Tile Pipeline** | 8+ tiles (QUIC, verify, dedup, schedule, execute, commit, build, broadcast) | Very High | 10-14 weeks |
 | **AF_XDP Networking** | Kernel-bypass packet I/O via XDP sockets | Medium | 4-6 weeks |
 | **State Cache** | 3-tier hot/warm/cold with async persistence | Medium | 4-6 weeks |
-| **sol2zig Transpiler** | 100% Solidity syntax + OpenZeppelin support | High | Mostly done |
+| **Zephyria Transpiler** | 100% Solidity syntax + OpenZeppelin support | High | Mostly done |
 | **SDK** | Syscall-based types (Uint256, Address, Storage, Events) | Medium | 4-6 weeks |
 | **ABI Encoder/Decoder** | Solidity ABI encoding compatible with ethers.js | Medium | 3-4 weeks |
 | **Gas Metering** | Per-instruction + syscall gas tables, calibrated | Medium | 2-3 weeks |
@@ -338,7 +338,7 @@ fn executeNativeRiscv(code: []const u8, memory: []u8) !void {
 |--------|-------------------|------------------------|
 | **Bytecode ISA** | RISC-V RV32EM (32-bit, 16 regs, ~50 opcodes) | sBPF (64-bit, 11 regs, ~100+ opcodes) |
 | **Language** | Written entirely in **Zig** | Written in **C** (Firedancer) + **Rust** (Agave/SVM) |
-| **Smart contract lang** | **Solidity** (transpiled via sol2zig) → 100% Solidity compatible | **Rust** (primary), C, Zig (via Solang/sBPF) |
+| **Smart contract lang** | **Solidity** (transpiled via Zephyria) → 100% Solidity compatible | **Rust** (primary), C, Zig (via Solang/sBPF) |
 | **Execution model** | Interpreter → Threaded → Baseline JIT → Optimizing JIT (4 tiers) | Interpreter + JIT (rbpf crate, single-tier) |
 | **Register mapping** | 16 RV32E regs → 16 x86-64 GPRs (**perfect 1:1**) | 11 sBPF regs → x86-64 GPRs (5 regs wasted) |
 | **Gas metering** | Per-instruction decrement (1 branch/insn, ~5% overhead) | Compute units per instruction (~similar overhead) |

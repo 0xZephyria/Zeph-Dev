@@ -50,7 +50,7 @@ Standard HTTP is terrible for anonymity because it leaks User-Agents, accepted l
 4. **Result:** The node is running a full copy of the chain, submitting 1M TPS, and validating blocks, but to the outside world, the physical server is completely invisible. It has no open ports, and its IP cannot be found or DDoS'd.
 
 ## Next Steps for Implementation
-To build this in `sol2zig/src/p2p/`, the following core modules must be developed:
+To build this in `src/p2p/`, the following core modules must be developed:
 1. `src/p2p/sphinx.zig`: The cryptographic packet wrapper ensuring all packets look identical.
 2. `src/p2p/mixnet.zig`: The circuit builder and packet shuffler/buffer.
 3. `src/p2p/zhttp.zig`: The binary, metadata-stripped HTTP alternative that runs inside the mixnet.

@@ -516,7 +516,7 @@ All pending transactions with full details (like `txpool_inspect`).
 ```
 
 #### `zeph_compileEOF`
-Compiles Solidity source code via solc and returns bytecode.
+Compiles FORGE source code via forgec and returns bytecode.
 ```json
 // Request params: ["pragma solidity ^0.8.0; contract Hello { ... }"]
 // Response:

@@ -184,6 +184,8 @@ pub const RpcHandler = struct {
             return self.forge_getChainMetrics(allocator);
         } else if (std.mem.eql(u8, method, "forge_pendingTransactions")) {
             return self.forge_pendingTransactions(allocator);
+        } else if (std.mem.eql(u8, method, "forge_compileEOF") or std.mem.eql(u8, method, "forge_compile") or std.mem.eql(u8, method, "forgecompile")) {
+            return self.forge_compileEOF(allocator, params);
         }
 
         return error.MethodNotFound;
@@ -1539,8 +1541,8 @@ pub const RpcHandler = struct {
         const tmp_path = "/tmp/forgeyria_compile.sol";
         try std.fs.cwd().writeFile(.{ .sub_path = tmp_path, .data = source_code });
 
-        const solc_args = [_][]const u8{
-            "solc",
+        const forgec_args = [_][]const u8{
+            "forgec",
             "--evm-version",
             "prague",
             "--combined-json",
@@ -1548,7 +1550,7 @@ pub const RpcHandler = struct {
             tmp_path,
         };
 
-        var child = std.process.Child.init(&solc_args, allocator);
+        var child = std.process.Child.init(&forgec_args, allocator);
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;
 

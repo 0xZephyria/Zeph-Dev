@@ -52,9 +52,8 @@ ACTION : Search-and-replace the following tokens before making any other change.
   "zeph_format"           "forge_format"
   "ZEPH_MAGIC"            "FORGE_MAGIC"
   "ZEPH_VERSION"          "FORGE_VERSION"
-  ".zeph"                 ".forge"
+  ".zeph"                 ".foz"
   "SyscallId.ROLE_CHECK"  "SyscallId.AUTHORITY_CHECK"    (see Section 5)
-  "sol2zig"               "forgec"                        (compiler name)
 
 File renames:
   vm/loader/zeph_format.zig   → vm/loader/forge_format.zig

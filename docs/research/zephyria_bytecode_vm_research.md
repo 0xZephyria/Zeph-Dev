@@ -9,7 +9,7 @@
 The current pipeline compiles Zig source code to native machine code on every node:
 
 ```
-Solidity → sol2zig → token.zig → zig build (native x86/ARM) → execute
+Solidity → Zephyria → token.zig → zig build (native x86/ARM) → execute
 ```
 
 This causes **five critical problems**:
@@ -225,7 +225,7 @@ A from-scratch bytecode designed specifically for Zephyria's Zig contracts.
 ```mermaid
 graph TB
     subgraph "Developer Machine"
-        A[Solidity] -->|sol2zig| B[Zig Contract]
+        A[Solidity] -->|Zephyria| B[Zig Contract]
         B -->|zig build -target riscv32| C[".zeph ELF Binary"]
         C -->|zeph-pack| D["Zephyria Contract Package<br/>(bytecode + ABI + metadata)"]
     end
@@ -432,7 +432,7 @@ The SDK becomes a thin **syscall wrapper layer** that compiles to RISC-V `ecall`
 ```mermaid
 sequenceDiagram
     participant Dev as Developer
-    participant Compiler as sol2zig + zig build
+    participant Compiler as Zephyria + zig build
     participant Wallet as MetaMask
     participant Node as Validator Node
     participant Chain as Blockchain State
@@ -485,7 +485,7 @@ Nodes share contract bytecode the same way Ethereum shares EVM bytecodes:
 ```
 Developer submits:
   1. Original Solidity source (token.sol)
-  2. Compiler versions (sol2zig v0.1, zig 0.15.2)
+  2. Compiler versions (Zephyria v0.1, zig 0.15.2)
   3. Build flags (-O ReleaseSmall, -target riscv32-freestanding)
 
 Verifier re-compiles and checks:
