@@ -89,9 +89,9 @@ fn printBanner() void {
         \\
     ++ C_GLW ++ "    ╔══════════════════════════════════════════════════════════╗\n" ++ RST ++
         C_GLW ++ "    ║" ++ RST ++ "                                                          " ++ C_GLW ++ "║\n" ++ RST ++
-        C_GLW ++ "    ║" ++ RST ++ "   " ++ BOLD ++ C_CYAN ++ "⚡" ++ RST ++ " " ++ BOLD ++ C_MAG ++ "Z E P H Y R I A" ++ RST ++ "                                  " ++ C_GLW ++ "║\n" ++ RST ++
-        C_GLW ++ "    ║" ++ RST ++ "   " ++ C_VIO ++ "High-Performance L1 Blockchain" ++ RST ++ "                        " ++ C_GLW ++ "║\n" ++ RST ++
-        C_GLW ++ "    ║" ++ RST ++ "   " ++ C_DIM ++ "v" ++ VERSION ++ "   │  " ++ C_GRN ++ "1M+ TPS" ++ RST ++ C_DIM ++ "  │  " ++ C_PUR ++ "Zero-Conflict DAG" ++ RST ++ "           " ++ C_GLW ++ "║\n" ++ RST ++
+        C_GLW ++ "    ║" ++ RST ++ "      " ++ BOLD ++ C_CYAN ++ "⚡" ++ RST ++ " " ++ BOLD ++ C_MAG ++ "Z E P H Y R I A" ++ RST ++ "                                  " ++ C_GLW ++ "║\n" ++ RST ++
+        C_GLW ++ "    ║" ++ RST ++ "    " ++ C_VIO ++ "High-Performance L1 Blockchain" ++ RST ++ "                        " ++ C_GLW ++ "║\n" ++ RST ++
+        C_GLW ++ "    ║" ++ RST ++ "      " ++ C_DIM ++ "v" ++ VERSION ++ "   │  " ++ C_GRN ++ "1M+ TPS" ++ RST ++ C_DIM ++ "  │  " ++ C_PUR ++ "Zero-Conflict DAG" ++ RST ++ "           " ++ C_GLW ++ "║\n" ++ RST ++
         C_GLW ++ "    ║" ++ RST ++ "                                                          " ++ C_GLW ++ "║\n" ++ RST ++
         C_GLW ++ "    ╚══════════════════════════════════════════════════════════╝" ++ RST ++
         "\n", .{});
@@ -652,13 +652,13 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // Network, Chain ID, Validator — each as its own print call
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Network" ++ RST ++ "       " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{networkName});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Chain ID" ++ RST ++ "      " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{network.chainId});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Validator" ++ RST ++ "     " ++ C_CYAN ++ "0x{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{addr_hex});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Mining" ++ RST ++ "        " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{if (shouldMine) "● Active" else "○ Standby"});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Consensus" ++ RST ++ "     " ++ C_MAG ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{@tagName(engine.getCurrentTier())});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Validator" ++ RST ++ "   " ++ C_CYAN ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{addr_hex});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Mining" ++ RST ++ "          " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{if (shouldMine) "● Active" else "○ Standby"});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Consensus" ++ RST ++ "       " ++ C_MAG ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{@tagName(engine.getCurrentTier())});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Threads" ++ RST ++ "       " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{engine.getThreadCount()});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Endpoints section
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ BOLD ++ C_PUR ++ "ENDPOINTS" ++ RST ++ "                                              " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ BOLD ++ C_PUR ++ "ENDPOINTS" ++ RST ++ "                                               " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "P2P" ++ RST ++ "           " ++ C_BLUE ++ ":{d: <39}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{p2pPort});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "JSON-RPC" ++ RST ++ "      " ++ C_BLUE ++ "http://127.0.0.1:{d: <23}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{httpPort});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Data Dir" ++ RST ++ "      " ++ C_DIM ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{dataDir});
