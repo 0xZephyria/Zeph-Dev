@@ -31,16 +31,16 @@ const MAX_FORWARD_BYTES_PER_SLOT: u64 = 50 * 1024 * 1024; // 50 MB per slot
 
 pub const LeaderSlot = struct {
     slot: u64,
-    validator_index: u32,
-    validator_address: core.types.Address,
+    validatorIndex: u32,
+    validatorAddress: core.types.Address,
     epoch: u64,
 };
 
 pub const LeaderSchedule = struct {
     allocator: std.mem.Allocator,
     slots: [LEADER_LOOKAHEAD]?LeaderSlot,
-    current_slot: u64,
-    current_epoch: u64,
+    currentSlot: u64,
+    currentEpoch: u64,
 
     const Self = @This();
 
@@ -48,19 +48,19 @@ pub const LeaderSchedule = struct {
         return Self{
             .allocator = allocator,
             .slots = [_]?LeaderSlot{null} ** LEADER_LOOKAHEAD,
-            .current_slot = 0,
-            .current_epoch = 0,
+            .currentSlot = 0,
+            .currentEpoch = 0,
         };
     }
 
     /// Update the leader schedule from committee information.
     /// `committee_seed` and slot number determine the leader via deterministic selection.
-    pub fn update(self: *Self, current_slot: u64, epoch: u64, validators: []const ValidatorInfo) void {
-        self.current_slot = current_slot;
-        self.current_epoch = epoch;
+    pub fn update(self: *Self, currentSlot: u64, epoch: u64, validators: []const ValidatorInfo) void {
+        self.currentSlot = currentSlot;
+        self.currentEpoch = epoch;
 
         for (0..LEADER_LOOKAHEAD) |i| {
-            const target_slot = current_slot + @as(u64, @intCast(i));
+            const target_slot = currentSlot + @as(u64, @intCast(i));
             if (validators.len == 0) {
                 self.slots[i] = null;
                 continue;
@@ -77,8 +77,8 @@ pub const LeaderSchedule = struct {
 
             self.slots[i] = .{
                 .slot = target_slot,
-                .validator_index = validators[idx].index,
-                .validator_address = validators[idx].address,
+                .validatorIndex = validators[idx].index,
+                .validatorAddress = validators[idx].address,
                 .epoch = epoch,
             };
         }
@@ -104,53 +104,53 @@ pub const ValidatorInfo = struct {
 // ── Forward Batch ───────────────────────────────────────────────────────
 
 pub const ForwardBatch = struct {
-    batch_id: u64,
+    batchId: u64,
     slot: u64,
-    tx_count: u32,
-    tx_hashes: std.ArrayListUnmanaged(core.types.Hash),
-    tx_data: std.ArrayListUnmanaged([]const u8),
-    created_at: i64,
+    txCount: u32,
+    txHashes: std.ArrayListUnmanaged(core.types.Hash),
+    txData: std.ArrayListUnmanaged([]const u8),
+    createdAt: i64,
     compressed: bool,
-    total_bytes: u64,
+    totalBytes: u64,
 
     const Self = @This();
 
-    pub fn init(slot: u64, batch_id: u64) Self {
+    pub fn init(slot: u64, batchId: u64) Self {
         return Self{
-            .batch_id = batch_id,
+            .batchId = batchId,
             .slot = slot,
-            .tx_count = 0,
-            .tx_hashes = std.ArrayListUnmanaged(core.types.Hash){},
-            .tx_data = std.ArrayListUnmanaged([]const u8){},
-            .created_at = std.time.milliTimestamp(),
+            .txCount = 0,
+            .txHashes = std.ArrayListUnmanaged(core.types.Hash){},
+            .txData = std.ArrayListUnmanaged([]const u8){},
+            .createdAt = std.time.milliTimestamp(),
             .compressed = false,
-            .total_bytes = 0,
+            .totalBytes = 0,
         };
     }
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        self.tx_hashes.deinit(allocator);
-        for (self.tx_data.items) |data| {
+        self.txHashes.deinit(allocator);
+        for (self.txData.items) |data| {
             allocator.free(data);
         }
-        self.tx_data.deinit(allocator);
+        self.txData.deinit(allocator);
     }
 
     /// Add a transaction to this batch.
     pub fn addTransaction(self: *Self, allocator: std.mem.Allocator, hash: core.types.Hash, data: []const u8) !bool {
-        if (self.tx_count >= MAX_BATCH_SIZE) return false;
+        if (self.txCount >= MAX_BATCH_SIZE) return false;
 
-        try self.tx_hashes.append(allocator, hash);
+        try self.txHashes.append(allocator, hash);
         const data_copy = try allocator.dupe(u8, data);
-        try self.tx_data.append(allocator, data_copy);
-        self.tx_count += 1;
-        self.total_bytes += data.len;
+        try self.txData.append(allocator, data_copy);
+        self.txCount += 1;
+        self.totalBytes += data.len;
         return true;
     }
 
     /// Check if batch is full.
     pub fn isFull(self: *const Self) bool {
-        return self.tx_count >= MAX_BATCH_SIZE;
+        return self.txCount >= MAX_BATCH_SIZE;
     }
 
     /// Check if batch has expired (older than BATCH_EXPIRY_SLOTS).
@@ -165,20 +165,20 @@ pub const GulfStream = struct {
     allocator: std.mem.Allocator,
     schedule: LeaderSchedule,
     compressor: compression.Compressor,
-    lock: std.Thread.Mutex,
+    mutex: std.Thread.Mutex,
 
     // Pending batches
-    pending_batch: ?ForwardBatch,
+    pendingBatch: ?ForwardBatch,
     queue: std.ArrayListUnmanaged(ForwardBatch),
-    next_batch_id: u64,
+    nextBatchId: u64,
 
     // Current slot tracking
     current_slot: u64,
     current_epoch: u64,
 
     // Per-slot throttling
-    slot_bytes_forwarded: u64,
-    throttle_slot: u64,
+    slotBytesForwarded: u64,
+    throttleSlot: u64,
 
     // Stats
     stats: GulfStreamStats,
@@ -186,19 +186,19 @@ pub const GulfStream = struct {
     const Self = @This();
 
     pub const GulfStreamStats = struct {
-        batches_forwarded: u64,
-        batches_expired: u64,
-        txs_forwarded: u64,
-        txs_dropped: u64,
-        bytes_forwarded: u64,
-        bytes_compressed: u64,
-        forward_latency_sum_ms: u64,
-        forward_count: u64,
+        batchesForwarded: u64,
+        batchesExpired: u64,
+        txsForwarded: u64,
+        txsDropped: u64,
+        bytesForwarded: u64,
+        bytesCompressed: u64,
+        forwardLatencySumMs: u64,
+        forwardCount: u64,
 
         pub fn avgLatencyMs(self: *const GulfStreamStats) f64 {
-            if (self.forward_count == 0) return 0;
-            return @as(f64, @floatFromInt(self.forward_latency_sum_ms)) /
-                @as(f64, @floatFromInt(self.forward_count));
+            if (self.forwardCount == 0) return 0;
+            return @as(f64, @floatFromInt(self.forwardLatencySumMs)) /
+                @as(f64, @floatFromInt(self.forwardCount));
         }
     };
 
@@ -207,20 +207,20 @@ pub const GulfStream = struct {
             .allocator = allocator,
             .schedule = LeaderSchedule.init(allocator),
             .compressor = compression.Compressor.init(allocator),
-            .lock = .{},
-            .pending_batch = null,
+            .mutex = .{},
+            .pendingBatch = null,
             .queue = .{},
-            .next_batch_id = 1,
+            .nextBatchId = 1,
             .current_slot = 0,
             .current_epoch = 0,
-            .slot_bytes_forwarded = 0,
-            .throttle_slot = 0,
+            .slotBytesForwarded = 0,
+            .throttleSlot = 0,
             .stats = std.mem.zeroes(GulfStreamStats),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.pending_batch) |*batch| {
+        if (self.pendingBatch) |*batch| {
             batch.deinit(self.allocator);
         }
         for (self.queue.items) |*batch| {
@@ -232,29 +232,29 @@ pub const GulfStream = struct {
 
     /// Update slot and epoch — called by the consensus layer.
     pub fn advanceSlot(self: *Self, slot: u64, epoch: u64, validators: []const ValidatorInfo) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         self.current_slot = slot;
         self.current_epoch = epoch;
         self.schedule.update(slot, epoch, validators);
 
         // Reset per-slot throttle
-        if (slot != self.throttle_slot) {
-            self.slot_bytes_forwarded = 0;
-            self.throttle_slot = slot;
+        if (slot != self.throttleSlot) {
+            self.slotBytesForwarded = 0;
+            self.throttleSlot = slot;
         }
 
         // Expire old batches (including pending)
         self.expireOldBatches();
 
         // Also expire pending batch if stale
-        if (self.pending_batch) |*batch| {
+        if (self.pendingBatch) |*batch| {
             if (batch.isExpired(self.current_slot)) {
-                self.stats.batches_expired += 1;
-                self.stats.txs_dropped += batch.tx_count;
+                self.stats.batchesExpired += 1;
+                self.stats.txsDropped += batch.txCount;
                 batch.deinit(self.allocator);
-                self.pending_batch = null;
+                self.pendingBatch = null;
             }
         }
     }
@@ -262,66 +262,66 @@ pub const GulfStream = struct {
     /// Queue a transaction for forwarding to the predicted leader.
     /// Returns true if queued successfully, false if throttled or queue full.
     pub fn queueTransaction(self: *Self, tx_hash: core.types.Hash, tx_data: []const u8) !bool {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         // Check per-slot throttle
-        if (self.slot_bytes_forwarded + tx_data.len > MAX_FORWARD_BYTES_PER_SLOT) {
-            self.stats.txs_dropped += 1;
+        if (self.slotBytesForwarded + tx_data.len > MAX_FORWARD_BYTES_PER_SLOT) {
+            self.stats.txsDropped += 1;
             return false;
         }
 
         // Get or create pending batch
-        if (self.pending_batch == null) {
-            self.pending_batch = ForwardBatch.init(self.current_slot, self.next_batch_id);
-            self.next_batch_id += 1;
+        if (self.pendingBatch == null) {
+            self.pendingBatch = ForwardBatch.init(self.current_slot, self.nextBatchId);
+            self.nextBatchId += 1;
         }
 
-        var batch = &self.pending_batch.?;
+        var batch = &self.pendingBatch.?;
 
         // Add transaction
         const added = try batch.addTransaction(self.allocator, tx_hash, tx_data);
         if (!added) {
             // Batch full — move to queue and create new one
             try self.flushPendingBatch();
-            self.pending_batch = ForwardBatch.init(self.current_slot, self.next_batch_id);
-            self.next_batch_id += 1;
-            _ = try self.pending_batch.?.addTransaction(self.allocator, tx_hash, tx_data);
+            self.pendingBatch = ForwardBatch.init(self.current_slot, self.nextBatchId);
+            self.nextBatchId += 1;
+            _ = try self.pendingBatch.?.addTransaction(self.allocator, tx_hash, tx_data);
         }
 
-        self.slot_bytes_forwarded += tx_data.len;
+        self.slotBytesForwarded += tx_data.len;
         return true;
     }
 
     /// Flush the pending batch to the queue.
     fn flushPendingBatch(self: *Self) !void {
-        if (self.pending_batch) |batch| {
-            if (batch.tx_count > 0) {
+        if (self.pendingBatch) |batch| {
+            if (batch.txCount > 0) {
                 // Check queue depth
                 if (self.queue.items.len >= MAX_QUEUE_DEPTH) {
                     // Drop oldest
                     var oldest = self.queue.orderedRemove(0);
-                    self.stats.batches_expired += 1;
-                    self.stats.txs_dropped += oldest.tx_count;
+                    self.stats.batchesExpired += 1;
+                    self.stats.txsDropped += oldest.txCount;
                     oldest.deinit(self.allocator);
                 }
                 try self.queue.append(self.allocator, batch);
-                self.stats.batches_forwarded += 1;
-                self.stats.txs_forwarded += batch.tx_count;
-                self.stats.bytes_forwarded += batch.total_bytes;
+                self.stats.batchesForwarded += 1;
+                self.stats.txsForwarded += batch.txCount;
+                self.stats.bytesForwarded += batch.totalBytes;
             } else {
                 var b = batch;
                 b.deinit(self.allocator);
             }
-            self.pending_batch = null;
+            self.pendingBatch = null;
         }
     }
 
     /// Get the next batch ready for forwarding. Returns null if none available.
     /// Caller does NOT own the returned batch — it's removed from the queue.
     pub fn getNextBatch(self: *Self) ?ForwardBatch {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         // Flush pending batch first
         self.flushPendingBatch() catch {};
@@ -334,17 +334,17 @@ pub const GulfStream = struct {
 
     /// Get current forward targets (predicted leaders).
     pub fn getForwardTargets(self: *Self) [LEADER_LOOKAHEAD]?LeaderSlot {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
         return self.schedule.getForwardTargets();
     }
 
     /// Record a forward latency measurement.
     pub fn recordForwardLatency(self: *Self, latency_ms: u64) void {
-        self.lock.lock();
-        defer self.lock.unlock();
-        self.stats.forward_latency_sum_ms += latency_ms;
-        self.stats.forward_count += 1;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.stats.forwardLatencySumMs += latency_ms;
+        self.stats.forwardCount += 1;
     }
 
     /// Expire batches older than BATCH_EXPIRY_SLOTS.
@@ -353,8 +353,8 @@ pub const GulfStream = struct {
         while (i < self.queue.items.len) {
             if (self.queue.items[i].isExpired(self.current_slot)) {
                 var batch = self.queue.orderedRemove(i);
-                self.stats.batches_expired += 1;
-                self.stats.txs_dropped += batch.tx_count;
+                self.stats.batchesExpired += 1;
+                self.stats.txsDropped += batch.txCount;
                 batch.deinit(self.allocator);
             } else {
                 i += 1;
@@ -368,9 +368,9 @@ pub const GulfStream = struct {
 
     /// Get the current queue depth (number of pending batches).
     pub fn queueDepth(self: *Self) usize {
-        self.lock.lock();
-        defer self.lock.unlock();
-        const pending: usize = if (self.pending_batch != null and self.pending_batch.?.tx_count > 0) 1 else 0;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const pending: usize = if (self.pendingBatch != null and self.pendingBatch.?.txCount > 0) 1 else 0;
         return self.queue.items.len + pending;
     }
 };

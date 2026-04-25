@@ -12,7 +12,7 @@ const core = @import("core");
 // ── Protocol Version ────────────────────────────────────────────────────
 
 pub const PROTOCOL_VERSION: u32 = 2;
-pub const CHAIN_NAME = "forgeyria";
+pub const CHAIN_NAME = "zephyria";
 
 // ── Message Codes ───────────────────────────────────────────────────────
 
@@ -95,49 +95,49 @@ pub const CommitteeRole = enum(u8) {
 
 pub const CommitteeAssignment = struct {
     epoch: u64,
-    slot_start: u64,
-    slot_end: u64,
-    committee_index: u32,
+    slotStart: u64,
+    slotEnd: u64,
+    committeeIndex: u32,
     role: CommitteeRole,
-    aggregation_subnet: SubnetID,
+    aggregationSubnet: SubnetID,
 };
 
 // ── Rate Limiting ───────────────────────────────────────────────────────
 
 pub const RateLimitConfig = struct {
     /// Base burst capacity for unstaked peers
-    base_capacity: f64 = 20.0,
+    baseCapacity: f64 = 20.0,
     /// Base refill rate (tokens per second) for unstaked peers
-    base_refill: f64 = 10.0,
+    baseRefill: f64 = 10.0,
     /// Multiplier for committee members during their active slot
-    committee_burst_multiplier: f64 = 10.0,
+    committeeBurstMultiplier: f64 = 10.0,
     /// Stake scaling: refill_rate = base_refill * sqrt(stake / min_stake)
     /// Capped at 100x base_refill
-    max_stake_multiplier: f64 = 100.0,
+    maxStakeMultiplier: f64 = 100.0,
 };
 
 // ── Message Structures ──────────────────────────────────────────────────
 
 pub const StatusMsg = struct {
-    protocol_version: u32,
-    chain_id: u64,
-    genesis_hash: core.types.Hash,
-    head_hash: core.types.Hash,
-    head_number: u64,
+    protocolVersion: u32,
+    chainId: u64,
+    genesisHash: core.types.Hash,
+    headHash: core.types.Hash,
+    headNumber: u64,
     challenge: [32]u8,
-    peer_role: PeerRole,
-    stake_amount: u64,
-    subscribed_subnets: [8]u8, // Bitmap: 64 subnets packed into 8 bytes
+    peerRole: PeerRole,
+    stakeAmount: u64,
+    subscribedSubnets: [8]u8, // Bitmap: 64 subnets packed into 8 bytes
 };
 
 pub const NewBlockMsg = struct {
     block: core.types.Block,
-    total_difficulty: u256,
-    hop_count: u32,
+    totalDifficulty: u256,
+    hopCount: u32,
 };
 
 pub const GetBlocksMsg = struct {
-    start_hash: core.types.Hash,
+    startHash: core.types.Hash,
     limit: u64,
     direction: u8,
 };
@@ -147,35 +147,35 @@ pub const BlocksMsg = struct {
 };
 
 pub const TxBatchMsg = struct {
-    tx_hashes: []core.types.Hash,
-    tx_data: [][]const u8,
+    txHashes: []core.types.Hash,
+    txData: [][]const u8,
     compressed: bool,
-    batch_id: u64,
-    sender_subnet: SubnetID,
+    batchId: u64,
+    senderSubnet: SubnetID,
 };
 
 pub const VoteMsg = struct {
-    block_hash: core.types.Hash,
-    block_number: u64,
+    blockHash: core.types.Hash,
+    blockNumber: u64,
     view: u64,
     signature: [96]u8,
-    validator_index: u32,
+    validatorIndex: u32,
 };
 
 pub const AuthMsg = struct {
     signature: [64]u8,
-    public_key: [65]u8,
-    validator_address: core.types.Address,
-    stake_proof: [32]u8,
+    publicKey: [65]u8,
+    validatorAddress: core.types.Address,
+    stakeProof: [32]u8,
 };
 
 pub const SlashEvidenceMsg = struct {
     validator: core.types.Address,
-    block_number: u64,
+    blockNumber: u64,
     reason: SlashReason,
-    evidence_hash_1: core.types.Hash,
-    evidence_hash_2: core.types.Hash,
-    reporter_signature: [96]u8,
+    evidenceHash1: core.types.Hash,
+    evidenceHash2: core.types.Hash,
+    reporterSignature: [96]u8,
 };
 
 pub const SlashReason = enum(u8) {
@@ -191,19 +191,19 @@ pub const PeersMsg = struct {
 pub const NodeInfo = struct {
     id: [64]u8,
     ip: [16]u8,
-    ip_len: u8,
+    ipLen: u8,
     port: u16,
-    peer_role: PeerRole,
+    peerRole: PeerRole,
     subnets: [8]u8,
 };
 
 pub const GetNodeDataMsg = struct {
-    request_id: u64,
+    requestId: u64,
     hashes: []core.types.Hash,
 };
 
 pub const NodeDataMsg = struct {
-    request_id: u64,
+    requestId: u64,
     data: [][]const u8,
 };
 
@@ -225,81 +225,81 @@ pub const ShredType = enum(u8) {
 };
 
 pub const ShredMsg = struct {
-    block_number: u64,
-    shred_index: u32,
-    total_data_shreds: u32,
-    total_parity_shreds: u32,
-    shred_type: ShredType,
+    blockNumber: u64,
+    shredIndex: u32,
+    totalDataShreds: u32,
+    totalParityShreds: u32,
+    shredType: ShredType,
     payload: []const u8,
-    producer_signature: [64]u8,
-    tree_layer: u8,
-    tree_index: u16,
+    producerSignature: [64]u8,
+    treeLayer: u8,
+    treeIndex: u16,
     /// Thread ID (Loom Genesis: which thread this shred belongs to)
-    thread_id: u8,
+    threadId: u8,
 };
 
 // ── Attestation Types ───────────────────────────────────────────────────
 
 pub const AttestationMsg = struct {
-    block_hash: core.types.Hash,
-    block_number: u64,
+    blockHash: core.types.Hash,
+    blockNumber: u64,
     slot: u64,
-    validator_index: u32,
-    committee_index: u32,
+    validatorIndex: u32,
+    committeeIndex: u32,
     signature: [96]u8,
-    subnet_id: SubnetID,
+    subnetId: SubnetID,
 };
 
 pub const AggregateAttestationMsg = struct {
-    block_hash: core.types.Hash,
-    block_number: u64,
+    blockHash: core.types.Hash,
+    blockNumber: u64,
     slot: u64,
-    subnet_id: SubnetID,
-    participation_bitmap: [32]u8,
-    aggregate_signature: [96]u8,
-    aggregator_index: u32,
-    aggregator_proof: [96]u8,
+    subnetId: SubnetID,
+    participationBitmap: [32]u8,
+    aggregateSignature: [96]u8,
+    aggregatorIndex: u32,
+    aggregatorProof: [96]u8,
 };
 
 pub const QuorumCertificate = struct {
-    block_hash: core.types.Hash,
-    block_number: u64,
+    blockHash: core.types.Hash,
+    blockNumber: u64,
     slot: u64,
     epoch: u64,
-    aggregate_signature: [96]u8,
-    participation_bitmap: [32]u8,
-    proposer_vrf_proof: [48]u8,
+    aggregateSignature: [96]u8,
+    participationBitmap: [32]u8,
+    proposerVrfProof: [48]u8,
 };
 
 pub const ViewChangeMsg = struct {
     slot: u64,
     view: u64,
-    highest_qc: ?QuorumCertificate,
-    validator_index: u32,
+    highestQc: ?QuorumCertificate,
+    validatorIndex: u32,
     signature: [96]u8,
 };
 
 pub const ViewChangeQCMsg = struct {
     slot: u64,
-    new_view: u64,
-    participation_bitmap: [32]u8,
-    aggregate_signature: [96]u8,
-    best_qc: QuorumCertificate,
+    newView: u64,
+    participationBitmap: [32]u8,
+    aggregateSignature: [96]u8,
+    bestQc: QuorumCertificate,
 };
 
 pub const CommitteeHandshakeMsg = struct {
     epoch: u64,
-    committee_index: u32,
-    validator_index: u32,
-    validator_address: core.types.Address,
+    committeeIndex: u32,
+    validatorIndex: u32,
+    validatorAddress: core.types.Address,
     role: CommitteeRole,
-    bls_pubkey: [48]u8,
+    blsPubkey: [48]u8,
     signature: [96]u8,
 };
 
 pub const SubnetSubscribeMsg = struct {
-    subnet_id: SubnetID,
-    validator_address: core.types.Address,
+    subnetId: SubnetID,
+    validatorAddress: core.types.Address,
     epoch: u64,
     signature: [96]u8,
 };
@@ -366,60 +366,60 @@ pub fn isParticipating(bitmap: [32]u8, index: u32) bool {
 /// Thread attestation message (sent by weavers/committee members)
 pub const ThreadAttestationMsg = struct {
     slot: u64,
-    thread_id: u8,
-    thread_root: core.types.Hash,
-    validator_index: u32,
-    role_proof: [48]u8,
-    bls_signature: [96]u8,
-    attesting_stake: u64,
+    threadId: u8,
+    threadRoot: core.types.Hash,
+    validatorIndex: u32,
+    roleProof: [48]u8,
+    blsSignature: [96]u8,
+    attestingStake: u64,
 };
 
 /// Thread certificate message (aggregated from attestations)
 pub const ThreadCertificateMsg = struct {
     slot: u64,
-    thread_id: u8,
-    thread_root: core.types.Hash,
-    aggregate_signature: [96]u8,
-    weaver_bitmap: [32]u8,
-    attesting_stake: u64,
-    total_eligible_stake: u64,
+    threadId: u8,
+    threadRoot: core.types.Hash,
+    aggregateSignature: [96]u8,
+    weaverBitmap: [32]u8,
+    attestingStake: u64,
+    totalEligibleStake: u64,
 };
 
 /// Adaptive Quorum Certificate message
 pub const AdaptiveQCMsg = struct {
     slot: u64,
-    woven_root: core.types.Hash,
-    thread_cert_bitmap: u128,
-    aggregate_signature: [96]u8,
-    voter_bitmap: [32]u8,
-    total_attesting_stake: u64,
-    randomness_seed: [32]u8,
+    wovenRoot: core.types.Hash,
+    threadCertBitmap: u128,
+    aggregateSignature: [96]u8,
+    voterBitmap: [32]u8,
+    totalAttestingStake: u64,
+    randomnessSeed: [32]u8,
     tier: u8, // ConsensusTier as u8
 };
 
 /// Snowball query message (Tier 3: request a peer's preference)
 pub const SnowballQueryMsg = struct {
     slot: u64,
-    block_hash: core.types.Hash,
+    blockHash: core.types.Hash,
     round: u32,
-    querier_index: u32,
+    querierIndex: u32,
 };
 
 /// Snowball response message
 pub const SnowballResponseMsg = struct {
     slot: u64,
-    block_hash: core.types.Hash,
+    blockHash: core.types.Hash,
     accept: bool,
     round: u32,
-    responder_index: u32,
-    responder_stake: u64,
+    responderIndex: u32,
+    responderStake: u64,
 };
 
 /// Epoch transition notification
 pub const EpochTransitionMsg = struct {
-    new_epoch: u64,
+    newEpoch: u64,
     tier: u8, // ConsensusTier as u8
-    thread_count: u8,
-    validator_count: u32,
-    epoch_seed: [32]u8,
+    threadCount: u8,
+    validatorCount: u32,
+    epochSeed: [32]u8,
 };

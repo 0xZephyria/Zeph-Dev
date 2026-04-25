@@ -22,7 +22,7 @@ const state_mod = @import("../core/state.zig");
 
 /// Reward configuration — all values in wei.
 pub const RewardConfig = struct {
-    /// Base reward per block for the proposer (default: 2 ZEE)
+    /// Base reward per block for the proposer (default: 2 ZEPH)
     base_reward: u256 = 2_000_000_000_000_000_000,
 
     /// Extra reward per gas unit used in the block (default: 0, enable for EIP-1559 tips)
@@ -79,8 +79,8 @@ pub fn applyRewards(
 
     // Apply reward to coinbase
     if (total > 0) {
-        const current_balance = state.get_balance(ctx.coinbase);
-        try state.set_balance(ctx.coinbase, current_balance + total);
+        const current_balance = state.getBalance(ctx.coinbase);
+        try state.setBalance(ctx.coinbase, current_balance + total);
 
         // Also bump the coinbase nonce to make state root more distinct
         // (some chains do this; optional)

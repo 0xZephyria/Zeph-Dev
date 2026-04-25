@@ -47,14 +47,14 @@ inline fn eqU64(a: u64, b: u64) bool {
 // ── Server Configuration ────────────────────────────────────────────────
 
 pub const ServerConfig = struct {
-    listen_port: u16 = 30303,
-    num_workers: u32 = 8,
-    max_peers: u32 = types.MAX_CONNECTIONS,
-    rate_limit: types.RateLimitConfig = .{},
-    subnets_per_node: u32 = types.SUBNETS_PER_VALIDATOR,
-    peers_per_subnet: u32 = types.PEERS_PER_SUBNET,
-    packet_pool_size: u32 = 8192,
-    prune_interval_ms: u64 = 30_000,
+    listenPort: u16 = 30303,
+    numWorkers: u32 = 8,
+    maxPeers: u32 = types.MAX_CONNECTIONS,
+    rateLimit: types.RateLimitConfig = .{},
+    subnetsPerNode: u32 = types.SUBNETS_PER_VALIDATOR,
+    peersPerSubnet: u32 = types.PEERS_PER_SUBNET,
+    packetPoolSize: u32 = 8192,
+    pruneIntervalMs: u64 = 30_000,
 };
 
 // ── Server ──────────────────────────────────────────────────────────────
@@ -66,71 +66,69 @@ pub const Server = struct {
     // Core references
     chain: *core.Blockchain,
     engine: *consensus.ZeliusEngine,
-    tx_pool: *core.tx_pool.TxPool,
-    /// DAG mempool for parallel TX admission (set via setDAGPool)
-    dag_pool: ?*core.dag_mempool.DAGMempool,
+    dagPool: *core.dag_mempool.DAGMempool,
 
     // Peer Management
     peers: std.ArrayListUnmanaged(*Peer),
-    peers_by_id: SwissMap(u64, *Peer, hashU64, eqU64),
-    peers_by_ip: std.AutoHashMap(u32, *Peer),
-    lock: std.Thread.Mutex,
+    peersById: SwissMap(u64, *Peer, hashU64, eqU64),
+    peersByIp: std.AutoHashMap(u32, *Peer),
+    mutex: std.Thread.Mutex,
 
     // Networking
     sock: posix.socket_t,
     running: bool,
     thread: ?std.Thread,
     pool: std.Thread.Pool,
-    packet_pool: *PacketPool,
+    packetPool: *PacketPool,
 
     // Outbox
     outbox: std.ArrayListUnmanaged(Packet),
-    outbox_lock: std.Thread.Mutex,
+    outboxMutex: std.Thread.Mutex,
 
     // Subsystems
     turbine: turbine_mod.TurbineEngine,
-    gulf_stream: gulf_stream_mod.GulfStream,
+    gulfStream: gulf_stream_mod.GulfStream,
     discovery: *discovery_mod.DiscoveryService,
     compressor: compression_mod.Compressor,
 
     // Loom Genesis Adaptive Consensus subsystems
-    thread_attest_pool: ?*consensus.ThreadAttestationPool,
-    snowball_engine: ?*consensus.Snowball,
+    threadAttestPool: ?*consensus.ThreadAttestationPool,
+    snowballEngine: ?*consensus.Snowball,
 
     // Shred signature verification (Ed25519 + sampling)
-    shred_verifier: ?*shred_verify_mod.ShredVerifier,
+    shredVerifier: ?*shred_verify_mod.ShredVerifier,
 
     // Subnet Management
-    local_subnets: [8]u8, // Bitmap of subscribed subnets
-    subnet_peers: [types.GOSSIP_SUBNETS]std.ArrayListUnmanaged(*Peer),
+    localSubnets: [8]u8, // Bitmap of subscribed subnets
+    subnetPeers: [types.GOSSIP_SUBNETS]std.ArrayListUnmanaged(*Peer),
 
     // Rate limiting
-    rate_limiter: std.AutoHashMap(u32, RateLimitEntry),
+    rateLimiter: std.AutoHashMap(u32, RateLimitEntry),
 
     // Pruning
-    prune_thread: ?std.Thread,
-    last_prune: i64,
+    pruneThread: ?std.Thread,
+    lastPrune: i64,
 
     // Stats
     stats: ServerStats,
 
     const RateLimitEntry = struct {
         tokens: f64,
-        last_update: i64,
+        lastUpdate: i64,
     };
 
     pub const ServerStats = struct {
-        packets_received: u64,
-        packets_sent: u64,
-        bytes_received: u64,
-        bytes_sent: u64,
-        peers_connected: u32,
-        peers_authenticated: u32,
-        peers_pruned: u64,
-        rate_limited_packets: u64,
-        invalid_packets: u64,
-        shreds_relayed: u64,
-        attestations_relayed: u64,
+        packetsReceived: u64,
+        packetsSent: u64,
+        bytesReceived: u64,
+        bytesSent: u64,
+        peersConnected: u32,
+        peersAuthenticated: u32,
+        peersPruned: u64,
+        rateLimitedPackets: u64,
+        invalidPackets: u64,
+        shredsRelayed: u64,
+        attestationsRelayed: u64,
     };
 
     const Self = @This();
@@ -139,7 +137,7 @@ pub const Server = struct {
         allocator: std.mem.Allocator,
         chain: *core.Blockchain,
         engine: *consensus.ZeliusEngine,
-        tx_pool: *core.tx_pool.TxPool,
+        dagPool: *core.dag_mempool.DAGMempool,
         config: ServerConfig,
     ) !*Self {
         const self = try allocator.create(Self);
@@ -159,38 +157,38 @@ pub const Server = struct {
         try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(timeout));
 
         // Increase receive buffer
-        const rcvbuf: c_int = 4 * 1024 * 1024; // 4 MB
-        try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVBUF, &std.mem.toBytes(rcvbuf));
+        const rcvBuf: c_int = 4 * 1024 * 1024; // 4 MB
+        try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVBUF, &std.mem.toBytes(rcvBuf));
 
         // Packet pool
-        const pool_ptr = try allocator.create(PacketPool);
-        pool_ptr.* = PacketPool.init(.{
+        const poolPtr = try allocator.create(PacketPool);
+        poolPtr.* = PacketPool.init(.{
             .records_allocator = allocator,
             .memory_allocator = allocator,
         });
-        try pool_ptr.expandCapacity(config.packet_pool_size);
+        try poolPtr.expandCapacity(config.packetPoolSize);
 
         // Discovery
-        const discovery_priv = try allocator.alloc(u8, 32);
-        std.crypto.random.bytes(discovery_priv);
-        const discovery = try discovery_mod.DiscoveryService.init(allocator, discovery_priv, config.listen_port);
-        allocator.free(discovery_priv);
+        const discoveryPriv = try allocator.alloc(u8, 32);
+        std.crypto.random.bytes(discoveryPriv);
+        const discovery = try discovery_mod.DiscoveryService.init(allocator, discoveryPriv, config.listenPort);
+        allocator.free(discoveryPriv);
 
         // Initialize subnet peers
-        var subnet_peers: [types.GOSSIP_SUBNETS]std.ArrayListUnmanaged(*Peer) = undefined;
-        for (&subnet_peers) |*sp| {
+        var subnetPeers: [types.GOSSIP_SUBNETS]std.ArrayListUnmanaged(*Peer) = undefined;
+        for (&subnetPeers) |*sp| {
             sp.* = .{};
         }
 
         // Compute local subnet assignments (deterministic from node identity)
-        var local_subnets: [8]u8 = [_]u8{0} ** 8;
+        var localSubnets: [8]u8 = [_]u8{0} ** 8;
         {
             var hash: [32]u8 = undefined;
-            std.crypto.hash.sha3.Keccak256.hash(&discovery.local_node.id, &hash, .{});
+            std.crypto.hash.sha3.Keccak256.hash(&discovery.localNode.id, &hash, .{});
             const s1: types.SubnetID = @intCast(hash[0] % types.GOSSIP_SUBNETS);
             const s2: types.SubnetID = @intCast(hash[1] % types.GOSSIP_SUBNETS);
-            types.setSubnetBit(&local_subnets, s1);
-            if (s1 != s2) types.setSubnetBit(&local_subnets, s2);
+            types.setSubnetBit(&localSubnets, s1);
+            if (s1 != s2) types.setSubnetBit(&localSubnets, s2);
         }
 
         self.* = Self{
@@ -198,35 +196,34 @@ pub const Server = struct {
             .config = config,
             .chain = chain,
             .engine = engine,
-            .tx_pool = tx_pool,
-            .dag_pool = null,
+            .dagPool = dagPool,
             .peers = .{},
-            .peers_by_id = SwissMap(u64, *Peer, hashU64, eqU64).init(allocator),
-            .peers_by_ip = std.AutoHashMap(u32, *Peer).init(allocator),
-            .lock = .{},
+            .peersById = SwissMap(u64, *Peer, hashU64, eqU64).init(allocator),
+            .peersByIp = std.AutoHashMap(u32, *Peer).init(allocator),
+            .mutex = .{},
             .sock = sock,
             .running = false,
             .thread = null,
             .pool = undefined,
-            .packet_pool = pool_ptr,
+            .packetPool = poolPtr,
             .outbox = .{},
-            .outbox_lock = .{},
+            .outboxMutex = .{},
             .turbine = turbine_mod.TurbineEngine.init(allocator),
-            .gulf_stream = gulf_stream_mod.GulfStream.init(allocator),
+            .gulfStream = gulf_stream_mod.GulfStream.init(allocator),
             .discovery = discovery,
             .compressor = compression_mod.Compressor.init(allocator),
-            .thread_attest_pool = null,
-            .snowball_engine = null,
-            .shred_verifier = null,
-            .local_subnets = local_subnets,
-            .subnet_peers = subnet_peers,
-            .rate_limiter = std.AutoHashMap(u32, RateLimitEntry).init(allocator),
-            .prune_thread = null,
-            .last_prune = std.time.milliTimestamp(),
+            .threadAttestPool = null,
+            .snowballEngine = null,
+            .shredVerifier = null,
+            .localSubnets = localSubnets,
+            .subnetPeers = subnetPeers,
+            .rateLimiter = std.AutoHashMap(u32, RateLimitEntry).init(allocator),
+            .pruneThread = null,
+            .lastPrune = std.time.milliTimestamp(),
             .stats = std.mem.zeroes(ServerStats),
         };
 
-        try self.pool.init(.{ .allocator = allocator, .n_jobs = config.num_workers });
+        try self.pool.init(.{ .allocator = allocator, .n_jobs = config.numWorkers });
 
         return self;
     }
@@ -235,7 +232,7 @@ pub const Server = struct {
         self.running = false;
 
         if (self.thread) |t| t.join();
-        if (self.prune_thread) |t| t.join();
+        if (self.pruneThread) |t| t.join();
         self.pool.deinit();
 
         posix.close(self.sock);
@@ -244,21 +241,21 @@ pub const Server = struct {
             peer.deinit();
         }
         self.peers.deinit(self.allocator);
-        self.peers_by_id.deinit();
-        self.peers_by_ip.deinit();
+        self.peersById.deinit();
+        self.peersByIp.deinit();
 
-        self.packet_pool.deinit();
-        self.allocator.destroy(self.packet_pool);
+        self.packetPool.deinit();
+        self.allocator.destroy(self.packetPool);
 
         self.outbox.deinit(self.allocator);
-        self.rate_limiter.deinit();
+        self.rateLimiter.deinit();
 
-        for (&self.subnet_peers) |*sp| {
+        for (&self.subnetPeers) |*sp| {
             sp.deinit(self.allocator);
         }
 
         self.turbine.deinit();
-        self.gulf_stream.deinit();
+        self.gulfStream.deinit();
         self.compressor.deinit();
         self.discovery.deinit();
 
@@ -270,20 +267,20 @@ pub const Server = struct {
     pub fn start(self: *Self) !void {
         var addr = posix.sockaddr.in{
             .family = posix.AF.INET,
-            .port = std.mem.nativeToBig(u16, self.config.listen_port),
+            .port = std.mem.nativeToBig(u16, self.config.listenPort),
             .addr = 0,
             .zero = [_]u8{0} ** 8,
         };
 
         try posix.bind(self.sock, @ptrCast(&addr), @sizeOf(posix.sockaddr.in));
         log.debug("P2P Server starting on port {} (workers: {}, max_peers: {})\n", .{
-            self.config.listen_port, self.config.num_workers, self.config.max_peers,
+            self.config.listenPort, self.config.numWorkers, self.config.maxPeers,
         });
 
         try self.discovery.start();
         self.running = true;
         self.thread = try std.Thread.spawn(.{}, serverLoop, .{self});
-        self.prune_thread = try std.Thread.spawn(.{}, pruneLoop, .{self});
+        self.pruneThread = try std.Thread.spawn(.{}, pruneLoop, .{self});
     }
 
     pub fn stop(self: *Self) void {
@@ -291,42 +288,36 @@ pub const Server = struct {
         self.discovery.stop();
     }
 
-    /// Set the DAG mempool for parallel TX admission.
-    /// When set, handleTxBatch routes TXs through DAG admission.
-    pub fn setDAGPool(self: *Self, pool: *core.dag_mempool.DAGMempool) void {
-        self.dag_pool = pool;
-    }
-
     /// Broadcast a block using Turbine shredding (primary propagation).
     /// Shreds the block data, then sends each shred through the Turbine tree.
-    pub fn broadcastBlockViaTurbine(self: *Self, block_data: []const u8, block_number: u64) !void {
+    pub fn broadcastBlockViaTurbine(self: *Self, blockData: []const u8, blockNumber: u64) !void {
         // Shred the block (using zero signature — the actual sig is in the block header)
-        const zero_sig: [64]u8 = [_]u8{0} ** 64;
-        const shreds = try self.turbine.shredBlock(block_data, block_number, zero_sig);
+        const zeroSig: [64]u8 = [_]u8{0} ** 64;
+        const shreds = try self.turbine.shredBlock(blockData, blockNumber, zeroSig);
         defer self.allocator.free(shreds);
 
         // Send each shred to the first tier of the Turbine tree
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         for (shreds) |shred| {
             const msg = types.ShredMsg{
-                .block_number = shred.block_number,
-                .shred_index = shred.shred_index,
-                .total_data_shreds = shred.total_data_shreds,
-                .total_parity_shreds = shred.total_parity_shreds,
-                .shred_type = shred.shred_type,
+                .blockNumber = shred.blockNumber,
+                .shredIndex = shred.shredIndex,
+                .totalDataShreds = shred.totalDataShreds,
+                .totalParityShreds = shred.totalParityShreds,
+                .shredType = shred.shredType,
                 .payload = shred.payload,
-                .producer_signature = shred.producer_signature,
-                .thread_id = shred.thread_id,
+                .producerSignature = shred.producerSignature,
+                .threadId = shred.threadId,
             };
 
             // Send to Turbine tree children (fan-out propagation)
             const children = self.turbine.tree.getChildren(0);
             for (children) |child| {
-                if (child.peer_index < self.peers.items.len) {
-                    const peer = self.peers.items[child.peer_index];
-                    if (peer.handshake_complete) {
+                if (child.peerIndex < self.peers.items.len) {
+                    const peer = self.peers.items[child.peerIndex];
+                    if (peer.handshakeComplete) {
                         peer.send(types.MsgShred, msg) catch {};
                     }
                 }
@@ -344,9 +335,9 @@ pub const Server = struct {
         for (events) |event| {
             const msg = types.SlashEvidenceMsg{
                 .validator = event.validator,
-                .block_number = event.block_number,
+                .blockNumber = event.blockNumber,
                 .reason = @intFromEnum(event.reason),
-                .evidence_hash = event.evidence_hash,
+                .evidenceHash = event.evidenceHash,
                 .timestamp = event.timestamp,
             };
             self.broadcastRaw(types.MsgSlashEvidence, std.mem.asBytes(&msg)) catch {};
@@ -359,18 +350,18 @@ pub const Server = struct {
 
     fn serverLoop(self: *Self) void {
         while (self.running) {
-            const packets_slice = self.packet_pool.alloc(1) catch |err| {
+            const packetsSlice = self.packetPool.alloc(1) catch |err| {
                 log.debug("Packet pool exhausted: {}\n", .{err});
                 std.Thread.sleep(10 * std.time.ns_per_ms);
                 continue;
             };
-            var packet = &packets_slice[0];
+            var packet = &packetsSlice[0];
 
             var from: posix.sockaddr.in = undefined;
             var fromlen: posix.socklen_t = @sizeOf(posix.sockaddr.in);
 
             const len = posix.recvfrom(self.sock, &packet.buffer, 0, @ptrCast(&from), &fromlen) catch |err| {
-                self.packet_pool.free(packets_slice.ptr);
+                self.packetPool.free(packetsSlice.ptr);
                 if (err == error.WouldBlock or err == error.Again) {
                     continue;
                 }
@@ -380,25 +371,25 @@ pub const Server = struct {
 
             packet.size = len;
             packet.addr = std.net.Address{ .in = @bitCast(from) };
-            self.stats.packets_received += 1;
-            self.stats.bytes_received += len;
+            self.stats.packetsReceived += 1;
+            self.stats.bytesReceived += len;
 
             // Connection budget check
             if (!self.checkConnectionBudget(from.addr)) {
-                self.packet_pool.free(packets_slice.ptr);
-                self.stats.rate_limited_packets += 1;
+                self.packetPool.free(packetsSlice.ptr);
+                self.stats.rateLimitedPackets += 1;
                 continue;
             }
 
             // Rate limit check
             if (self.checkRateLimit(from.addr)) {
-                self.pool.spawn(handlePacketWrapper, .{ self, packet, packets_slice.ptr }) catch {
-                    self.packet_pool.free(packets_slice.ptr);
+                self.pool.spawn(handlePacketWrapper, .{ self, packet, packetsSlice.ptr }) catch {
+                    self.packetPool.free(packetsSlice.ptr);
                 };
             } else {
-                self.stats.rate_limited_packets += 1;
+                self.stats.rateLimitedPackets += 1;
                 self.punishIp(from.addr, -5);
-                self.packet_pool.free(packets_slice.ptr);
+                self.packetPool.free(packetsSlice.ptr);
             }
 
             self.flushOutbox() catch {};
@@ -406,34 +397,34 @@ pub const Server = struct {
     }
 
     fn handlePacketWrapper(self: *Self, packet: *Packet, ptr: [*]Packet) void {
-        defer self.packet_pool.free(ptr);
-        var from_addr = packet.addr.in;
-        self.handlePacket(@ptrCast(&from_addr), packet.data()) catch |err| {
+        defer self.packetPool.free(ptr);
+        var fromAddr = packet.addr.in;
+        self.handlePacket(@ptrCast(&fromAddr), packet.data()) catch |err| {
             if (err != error.EndOfStream) {
-                self.stats.invalid_packets += 1;
+                self.stats.invalidPackets += 1;
             }
         };
     }
 
     fn handlePacket(self: *Self, sender: *const posix.sockaddr.in, data: []const u8) !void {
         const decoded = try zquic.transport.packet.Packet.decode(data);
-        const conn_id = decoded.connection_id;
+        const connId = decoded.connection_id;
 
         const peer = blk: {
-            self.lock.lock();
-            defer self.lock.unlock();
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
-            if (self.peers_by_id.get(conn_id)) |p| {
+            if (self.peersById.get(connId)) |p| {
                 p.recordReceived(data.len);
                 break :blk p;
             } else {
                 // Connection budget enforcement
-                if (self.peers.items.len >= self.config.max_peers) {
+                if (self.peers.items.len >= self.config.maxPeers) {
                     return error.TooManyPeers;
                 }
 
-                var ip_buf: [20]u8 = undefined;
-                const ip = try std.fmt.bufPrint(&ip_buf, "{d}.{d}.{d}.{d}", .{
+                var ipBuf: [20]u8 = undefined;
+                const ip = try std.fmt.bufPrint(&ipBuf, "{d}.{d}.{d}.{d}", .{
                     (sender.addr >> 0) & 0xFF,
                     (sender.addr >> 8) & 0xFF,
                     (sender.addr >> 16) & 0xFF,
@@ -443,7 +434,7 @@ pub const Server = struct {
                 const p = try Peer.init(self.allocator, ip, std.mem.bigToNative(u16, sender.port));
 
                 var conn = try Connection.init(self.allocator);
-                conn.connection_id = conn_id;
+                conn.connection_id = connId;
                 try conn.establish();
                 p.attachQuic(conn);
                 try p.openStream(1);
@@ -453,24 +444,24 @@ pub const Server = struct {
 
                 // Send status with subnet info
                 const status = types.StatusMsg{
-                    .protocol_version = types.PROTOCOL_VERSION,
-                    .chain_id = self.chain.chain_id,
-                    .genesis_hash = self.chain.genesis_hash,
-                    .head_hash = self.chain.get_head_hash(),
-                    .head_number = self.chain.get_head_number(),
+                    .protocolVersion = types.PROTOCOL_VERSION,
+                    .chainId = self.chain.chainId,
+                    .genesisHash = self.chain.genesisHash,
+                    .headHash = self.chain.getHeadHash(),
+                    .headNumber = self.chain.getHeadNumber(),
                     .challenge = p.challenge,
-                    .peer_role = .Validator,
-                    .stake_amount = 0,
-                    .subscribed_subnets = self.local_subnets,
+                    .peerRole = .Validator,
+                    .stakeAmount = 0,
+                    .subscribedSubnets = self.localSubnets,
                 };
                 try p.send(types.MsgStatus, status);
 
                 try self.peers.append(self.allocator, p);
-                try self.peers_by_id.ensureTotalCapacity(self.peers_by_id.count() + 1);
-                self.peers_by_id.putAssumeCapacity(conn_id, p);
-                try self.peers_by_ip.put(sender.addr, p);
+                try self.peersById.ensureTotalCapacity(self.peersById.count() + 1);
+                self.peersById.putAssumeCapacity(connId, p);
+                try self.peersByIp.put(sender.addr, p);
 
-                self.stats.peers_connected += 1;
+                self.stats.peersConnected += 1;
                 log.debug("New peer: {s}:{} (total: {})\n", .{ ip, p.port, self.peers.items.len });
                 break :blk p;
             }
@@ -511,7 +502,7 @@ pub const Server = struct {
             types.MsgEpochTransition => try self.handleEpochTransition(peer, payload),
             else => {
                 peer.updateScore(-5);
-                self.stats.invalid_packets += 1;
+                self.stats.invalidPackets += 1;
             },
         }
     }
@@ -520,26 +511,26 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.StatusMsg, payload);
 
         // Validate protocol version
-        if (msg.protocol_version != types.PROTOCOL_VERSION) {
+        if (msg.protocolVersion != types.PROTOCOL_VERSION) {
             peer.updateScore(-20);
             return;
         }
 
         // Validate genesis hash
-        if (!std.mem.eql(u8, &msg.genesis_hash.bytes, &self.chain.genesis_hash.bytes)) {
+        if (!std.mem.eql(u8, &msg.genesisHash.bytes, &self.chain.genesisHash.bytes)) {
             peer.updateScore(-50);
             return;
         }
 
-        peer.updateHead(msg.head_hash, msg.head_number);
-        peer.protocol_version = msg.protocol_version;
-        peer.peer_role = msg.peer_role;
-        peer.stake_amount = msg.stake_amount;
-        peer.subscribed_subnets = msg.subscribed_subnets;
+        peer.updateHead(msg.headHash, msg.headNumber);
+        peer.protocolVersion = msg.protocolVersion;
+        peer.peerRole = msg.peerRole;
+        peer.stakeAmount = msg.stakeAmount;
+        peer.subscribedSubnets = msg.subscribedSubnets;
 
-        peer.lock.lock();
-        defer peer.lock.unlock();
-        peer.handshake_complete = true;
+        peer.mutex.lock();
+        defer peer.mutex.unlock();
+        peer.handshakeComplete = true;
         peer.updateScoreLocked(5);
 
         // Register peer in subnet lists
@@ -549,16 +540,16 @@ pub const Server = struct {
     fn handleNewBlock(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.NewBlockMsg, payload);
 
-        if (msg.block.header.number <= self.chain.get_head_number()) {
+        if (msg.block.header.number <= self.chain.getHeadNumber()) {
             return; // Stale
         }
 
-        const heap_block = try self.allocator.create(core.types.Block);
-        heap_block.* = msg.block;
+        const heapBlock = try self.allocator.create(core.types.Block);
+        heapBlock.* = msg.block;
 
-        self.chain.add_block(heap_block) catch |err| {
+        self.chain.addBlock(heapBlock) catch |err| {
             log.debug("Invalid block from peer: {}\n", .{err});
-            self.allocator.destroy(heap_block);
+            self.allocator.destroy(heapBlock);
             peer.updateScore(-20);
             return;
         };
@@ -566,10 +557,10 @@ pub const Server = struct {
         peer.updateScore(10);
 
         // Relay via Turbine shredding (not gossip)
-        if (msg.hop_count < 2) {
-            var relay_msg = msg;
-            relay_msg.hop_count += 1;
-            try self.broadcastSubset(types.MsgNewBlock, relay_msg, types.TURBINE_FANOUT, peer);
+        if (msg.hopCount < 2) {
+            var relayMsg = msg;
+            relayMsg.hopCount += 1;
+            try self.broadcastSubset(types.MsgNewBlock, relayMsg, types.TURBINE_FANOUT, peer);
         }
     }
 
@@ -577,29 +568,19 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.TxBatchMsg, payload);
 
         var added: u32 = 0;
-        for (msg.tx_data) |tx_raw| {
-            const tx = try rlp.decode(self.allocator, core.types.Transaction, tx_raw);
-            const heap_tx = try self.allocator.create(core.types.Transaction);
-            heap_tx.* = tx;
+        for (msg.txData) |txRaw| {
+            const tx = try rlp.decode(self.allocator, core.types.Transaction, txRaw);
+            const heapTx = try self.allocator.create(core.types.Transaction);
+            heapTx.* = tx;
 
-            // Route through DAG mempool if available (primary path)
-            if (self.dag_pool) |dag| {
-                dag.add(heap_tx) catch {
-                    self.allocator.destroy(heap_tx);
-                    continue;
-                };
-                // Also forward to Gulf Stream for predicted leader
-                const tx_hash = heap_tx.hash();
-                _ = self.gulf_stream.queueTransaction(tx_hash, tx_raw) catch false;
-                added += 1;
-            } else {
-                // Fallback to legacy pool
-                _ = self.tx_pool.add(heap_tx) catch {
-                    self.allocator.destroy(heap_tx);
-                    continue;
-                };
-                added += 1;
-            }
+            self.dagPool.add(heapTx) catch {
+                self.allocator.destroy(heapTx);
+                continue;
+            };
+            // Also forward to Gulf Stream for predicted leader
+            const txHash = heapTx.hash();
+            _ = self.gulfStream.queueTransaction(txHash, txRaw) catch false;
+            added += 1;
         }
 
         if (added > 0) {
@@ -610,19 +591,19 @@ pub const Server = struct {
     fn handleAuth(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.AuthMsg, payload);
 
-        var pub_key_bytes: [65]u8 = undefined;
-        @memcpy(&pub_key_bytes, &msg.public_key);
+        var pubKeyBytes: [65]u8 = undefined;
+        @memcpy(&pubKeyBytes, &msg.publicKey);
 
-        const valid = try core.account.verify_signature(peer.challenge, msg.signature, pub_key_bytes);
+        const valid = try core.account.verify_signature(peer.challenge, msg.signature, pubKeyBytes);
         if (!valid) {
             peer.updateScore(-50);
             return error.AuthFailed;
         }
 
-        const addr = try core.account.addressFromPubKey(&pub_key_bytes);
-        peer.lock.lock();
-        defer peer.lock.unlock();
-        peer.validator_address = addr;
+        const addr = try core.account.addressFromPubKey(&pubKeyBytes);
+        peer.mutex.lock();
+        defer peer.mutex.unlock();
+        peer.validatorAddress = addr;
         peer.authenticated = true;
         peer.updateScoreLocked(20);
     }
@@ -631,31 +612,31 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.ShredMsg, payload);
 
         var shred = turbine_mod.Shred{
-            .block_number = msg.block_number,
-            .shred_index = msg.shred_index,
-            .total_data_shreds = msg.total_data_shreds,
-            .total_parity_shreds = msg.total_parity_shreds,
-            .shred_type = msg.shred_type,
+            .blockNumber = msg.blockNumber,
+            .shredIndex = msg.shredIndex,
+            .totalDataShreds = msg.totalDataShreds,
+            .totalParityShreds = msg.totalParityShreds,
+            .shredType = msg.shredType,
             .payload = msg.payload,
-            .producer_signature = msg.producer_signature,
-            .thread_id = msg.thread_id,
+            .producerSignature = msg.producerSignature,
+            .threadId = msg.threadId,
             .crc32 = 0,
         };
         // Compute CRC for integrity verification on receive path
         shred.crc32 = shred.computeCrc();
 
         // Ed25519 signature verification (sampling-aware)
-        if (self.shred_verifier) |verifier| {
+        if (self.shredVerifier) |verifier| {
             // Derive producer address from the first 20 bytes of the signature
             // (in production, this would come from the block header's proposer field)
             var producer_addr = core.types.Address.zero();
-            @memcpy(&producer_addr.bytes, msg.producer_signature[0..20]);
+            @memcpy(&producer_addr.bytes, msg.producerSignature[0..20]);
 
             if (!verifier.verifyShred(
-                msg.block_number,
-                msg.shred_index,
+                msg.blockNumber,
+                msg.shredIndex,
                 msg.payload,
-                msg.producer_signature,
+                msg.producerSignature,
                 producer_addr,
             )) {
                 peer.updateScore(-15);
@@ -668,11 +649,11 @@ pub const Server = struct {
         if (maybe_block) |block_data| {
             defer self.allocator.free(block_data);
             // Block fully reconstructed — process it
-            log.debug("Turbine: Block {} reconstructed ({} bytes)\n", .{ shred.block_number, block_data.len });
+            log.debug("Turbine: Block {} reconstructed ({} bytes)\n", .{ shred.blockNumber, block_data.len });
             peer.updateScore(15);
         }
 
-        self.stats.shreds_relayed += 1;
+        self.stats.shredsRelayed += 1;
 
         // Relay shred to children in propagation tree
         const children = self.turbine.tree.getChildren(0); // Our peer_index
@@ -682,13 +663,13 @@ pub const Server = struct {
     }
 
     fn relayShredToChildren(self: *Self, msg: types.ShredMsg, children: []const turbine_mod.TreeNode) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         for (children) |child| {
-            if (child.peer_index < self.peers.items.len) {
-                const child_peer = self.peers.items[child.peer_index];
-                if (child_peer.handshake_complete) {
+            if (child.peerIndex < self.peers.items.len) {
+                const child_peer = self.peers.items[child.peerIndex];
+                if (child_peer.handshakeComplete) {
                     child_peer.send(types.MsgShred, msg) catch {};
                 }
             }
@@ -699,24 +680,24 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.AttestationMsg, payload);
 
         // Verify attestation is for a recent block
-        const head = self.chain.get_head_number();
-        if (msg.block_number + 10 < head or msg.block_number > head + 2) {
+        const head = self.chain.getHeadNumber();
+        if (msg.blockNumber + 10 < head or msg.blockNumber > head + 2) {
             peer.updateScore(-5);
             return;
         }
 
         peer.updateScore(3);
-        self.stats.attestations_relayed += 1;
+        self.stats.attestationsRelayed += 1;
 
         // Relay to peers in the same subnet
-        self.gossipToSubnet(msg.subnet_id, types.MsgAttestation, payload, peer);
+        self.gossipToSubnet(msg.subnetId, types.MsgAttestation, payload, peer);
     }
 
     fn handleAggregateAttestation(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.AggregateAttestationMsg, payload);
 
         // Verify participation meets minimum
-        const participation = types.countParticipation(msg.participation_bitmap);
+        const participation = types.countParticipation(msg.participationBitmap);
         if (participation < types.COMMITTEE_SIZE / 4) {
             peer.updateScore(-10);
             return;
@@ -732,7 +713,7 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.QuorumCertificate, payload);
 
         // Verify quorum
-        if (!types.hasQuorum(msg.participation_bitmap, types.COMMITTEE_SIZE)) {
+        if (!types.hasQuorum(msg.participationBitmap, types.COMMITTEE_SIZE)) {
             peer.updateScore(-20);
             return;
         }
@@ -764,41 +745,41 @@ pub const Server = struct {
 
         peer.setCommitteeAssignment(.{
             .epoch = msg.epoch,
-            .slot_start = 0,
-            .slot_end = 0,
-            .committee_index = msg.committee_index,
+            .slotStart = 0,
+            .slotEnd = 0,
+            .committeeIndex = msg.committeeIndex,
             .role = msg.role,
-            .aggregation_subnet = 0,
+            .aggregationSubnet = 0,
         });
 
-        peer.bls_pubkey = msg.bls_pubkey;
+        peer.blsPubKey = msg.blsPubkey;
         peer.updateScore(5);
     }
 
     fn handleSubnetSubscribe(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.SubnetSubscribeMsg, payload);
 
-        if (msg.subnet_id >= types.GOSSIP_SUBNETS) {
+        if (msg.subnetId >= types.GOSSIP_SUBNETS) {
             peer.updateScore(-10);
             return;
         }
 
-        peer.subscribeSubnet(msg.subnet_id);
+        peer.subscribeSubnet(msg.subnetId);
 
         // Add to subnet peer list
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         // Check if already in subnet list
         var found = false;
-        for (self.subnet_peers[msg.subnet_id].items) |sp| {
+        for (self.subnetPeers[msg.subnetId].items) |sp| {
             if (sp == peer) {
                 found = true;
                 break;
             }
         }
         if (!found) {
-            self.subnet_peers[msg.subnet_id].append(self.allocator, peer) catch {};
+            self.subnetPeers[msg.subnetId].append(self.allocator, peer) catch {};
         }
     }
 
@@ -817,7 +798,7 @@ pub const Server = struct {
         }
 
         const reply = types.NodeDataMsg{
-            .request_id = msg.request_id,
+            .requestId = msg.requestId,
             .data = data_list.items,
         };
         try peer.send(types.MsgNodeData, reply);
@@ -849,22 +830,22 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.ThreadAttestationMsg, payload);
 
         // Validate staleness
-        const head = self.chain.get_head_number();
+        const head = if (self.chain.currentBlock) |b| b.header.number else 0;
         if (msg.slot + 10 < head or msg.slot > head + 2) {
             peer.updateScore(-3);
             return;
         }
 
         // Add to thread attestation pool if available
-        if (self.thread_attest_pool) |pool| {
+        if (self.threadAttestPool) |pool| {
             const attest = consensus.ThreadAttestation{
                 .slot = msg.slot,
-                .thread_id = msg.thread_id,
-                .thread_root = msg.thread_root,
-                .validator_index = msg.validator_index,
-                .role_proof = msg.role_proof,
-                .bls_signature = msg.bls_signature,
-                .attesting_stake = msg.attesting_stake,
+                .threadId = msg.threadId,
+                .thread_root = msg.threadRoot,
+                .validatorIndex = msg.validatorIndex,
+                .roleProof = msg.roleProof,
+                .blsSignature = msg.blsSignature,
+                .attestingStake = msg.attestingStake,
             };
             _ = pool.addAttestation(attest) catch |err| {
                 log.debug("Failed to add thread attestation: {}", .{err});
@@ -872,7 +853,7 @@ pub const Server = struct {
         }
 
         peer.updateScore(3);
-        self.stats.attestations_relayed += 1;
+        self.stats.attestationsRelayed += 1;
 
         // Relay to peers (thread-aware subnets in future; broadcast for now)
         try self.broadcastRaw(types.MsgThreadAttestation, payload);
@@ -882,26 +863,25 @@ pub const Server = struct {
     fn handleThreadCertificate(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.ThreadCertificateMsg, payload);
 
-        // Validate quorum: attesting_stake must be > 2/3 total
-        if (msg.total_eligible_stake > 0) {
-            if (msg.attesting_stake * 3 <= msg.total_eligible_stake * 2) {
+        // Validate quorum: attestingStake must be > 2/3 total
+        if (msg.totalEligibleStake > 0) {
+            if (msg.attestingStake * 3 <= msg.totalEligibleStake * 2) {
                 peer.updateScore(-10);
                 return;
             }
         }
 
         // Add to adaptive engine
-        const adaptive = self.engine.getAdaptive();
         const cert = consensus.ThreadCertificate{
             .slot = msg.slot,
-            .thread_id = msg.thread_id,
-            .thread_root = msg.thread_root,
-            .aggregate_signature = msg.aggregate_signature,
-            .weaver_bitmap = msg.weaver_bitmap,
-            .attesting_stake = msg.attesting_stake,
-            .total_eligible_stake = msg.total_eligible_stake,
+            .threadId = msg.threadId,
+            .thread_root = msg.threadRoot,
+            .aggregateSignature = msg.aggregateSignature,
+            .weaverBitmap = msg.weaverBitmap,
+            .attestingStake = msg.attestingStake,
+            .totalEligibleStake = msg.totalEligibleStake,
         };
-        adaptive.addThreadCertificate(cert);
+        self.engine.adaptive.addThreadCertificate(cert);
 
         peer.updateScore(5);
 
@@ -929,18 +909,18 @@ pub const Server = struct {
         }
 
         // Respond with our preference
-        const accept = if (self.snowball_engine) |sb|
+        const accept = if (self.snowballEngine) |sb|
             sb.getPreference(msg.slot) != .None
         else
             false;
 
         const response = types.SnowballResponseMsg{
             .slot = msg.slot,
-            .block_hash = msg.block_hash,
+            .blockHash = msg.blockHash,
             .accept = accept,
             .round = msg.round,
-            .responder_index = 0, // Will be set by caller
-            .responder_stake = 0,
+            .responderIndex = 0, // Will be set by caller
+            .responderStake = 0,
         };
         try peer.send(types.MsgSnowballResponse, response);
         peer.updateScore(1);
@@ -950,11 +930,11 @@ pub const Server = struct {
     fn handleSnowballResponse(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.SnowballResponseMsg, payload);
 
-        if (self.snowball_engine) |sb| {
+        if (self.snowballEngine) |sb| {
             _ = sb.recordResponse(
                 msg.slot,
                 msg.accept,
-                msg.responder_stake,
+                msg.responderStake,
             );
         }
 
@@ -966,7 +946,7 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.EpochTransitionMsg, payload);
 
         log.info("Epoch transition from peer: epoch={d} tier={d} threads={d} validators={d}", .{
-            msg.new_epoch, msg.tier, msg.thread_count, msg.validator_count,
+            msg.newEpoch, msg.tier, msg.threadCount, msg.validatorCount,
         });
 
         peer.updateScore(3);
@@ -974,69 +954,69 @@ pub const Server = struct {
 
     /// Set the thread attestation pool (called from main.zig)
     pub fn setThreadAttestPool(self: *Self, pool: *consensus.ThreadAttestationPool) void {
-        self.thread_attest_pool = pool;
+        self.threadAttestPool = pool;
     }
 
     /// Set the Snowball engine (called from main.zig)
     pub fn setSnowballEngine(self: *Self, sb: *consensus.Snowball) void {
-        self.snowball_engine = sb;
+        self.snowballEngine = sb;
     }
 
     /// Set the shred signature verifier (called from main.zig)
     pub fn setShredVerifier(self: *Self, verifier: *shred_verify_mod.ShredVerifier) void {
-        self.shred_verifier = verifier;
+        self.shredVerifier = verifier;
     }
 
     // ── Broadcasting ────────────────────────────────────────────────────
 
-    pub fn broadcast(self: *Self, msg_code: u64, msg: anytype) !void {
-        self.lock.lock();
-        const peers_copy = self.allocator.dupe(*Peer, self.peers.items) catch {
-            self.lock.unlock();
+    pub fn broadcast(self: *Self, msgCode: u64, msg: anytype) !void {
+        self.mutex.lock();
+        const peersCopy = self.allocator.dupe(*Peer, self.peers.items) catch {
+            self.mutex.unlock();
             return;
         };
-        self.lock.unlock();
-        defer self.allocator.free(peers_copy);
+        self.mutex.unlock();
+        defer self.allocator.free(peersCopy);
 
-        for (peers_copy) |peer| {
-            if (peer.handshake_complete) {
-                peer.send(msg_code, msg) catch {};
+        for (peersCopy) |peer| {
+            if (peer.handshakeComplete) {
+                peer.send(msgCode, msg) catch {};
             }
         }
-        self.stats.packets_sent += @intCast(peers_copy.len);
+        self.stats.packetsSent += @intCast(peersCopy.len);
     }
 
-    pub fn broadcastRaw(self: *Self, msg_code: u64, payload: []const u8) !void {
-        self.lock.lock();
-        const peers_copy = self.allocator.dupe(*Peer, self.peers.items) catch {
-            self.lock.unlock();
+    pub fn broadcastRaw(self: *Self, msgCode: u64, payload: []const u8) !void {
+        self.mutex.lock();
+        const peersCopy = self.allocator.dupe(*Peer, self.peers.items) catch {
+            self.mutex.unlock();
             return;
         };
-        self.lock.unlock();
-        defer self.allocator.free(peers_copy);
+        self.mutex.unlock();
+        defer self.allocator.free(peersCopy);
 
-        for (peers_copy) |peer| {
-            if (peer.handshake_complete) {
-                peer.sendRaw(msg_code, payload) catch {};
+        for (peersCopy) |peer| {
+            if (peer.handshakeComplete) {
+                peer.sendRaw(msgCode, payload) catch {};
             }
         }
-        self.stats.packets_sent += @intCast(peers_copy.len);
+        self.stats.packetsSent += @intCast(peersCopy.len);
     }
 
-    pub fn broadcastSubset(self: *Self, msg_code: u64, msg: anytype, fanout: u32, exclude: *Peer) !void {
-        self.lock.lock();
-        const peers_copy = self.allocator.dupe(*Peer, self.peers.items) catch {
-            self.lock.unlock();
+    pub fn broadcastSubset(self: *Self, msgCode: u64, msg: anytype, fanout: u32, exclude: *Peer) !void {
+        self.mutex.lock();
+        const peersCopy = self.allocator.dupe(*Peer, self.peers.items) catch {
+            self.mutex.unlock();
             return;
         };
-        self.lock.unlock();
-        defer self.allocator.free(peers_copy);
+        self.mutex.unlock();
+        defer self.allocator.free(peersCopy);
 
         var count: u32 = 0;
-        for (peers_copy) |peer| {
+        for (peersCopy) |peer| {
             if (peer == exclude) continue;
-            if (peer.handshake_complete) {
-                peer.send(msg_code, msg) catch continue;
+            if (peer.handshakeComplete) {
+                peer.send(msgCode, msg) catch continue;
                 count += 1;
                 if (count >= fanout) break;
             }
@@ -1044,33 +1024,33 @@ pub const Server = struct {
     }
 
     /// Broadcast to peers in a specific subnet.
-    fn gossipToSubnet(self: *Self, subnet: types.SubnetID, msg_code: u64, payload: []const u8, exclude: *Peer) void {
+    fn gossipToSubnet(self: *Self, subnet: types.SubnetID, msgCode: u64, payload: []const u8, exclude: *Peer) void {
         if (subnet >= types.GOSSIP_SUBNETS) return;
 
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-        for (self.subnet_peers[subnet].items) |peer| {
+        for (self.subnetPeers[subnet].items) |peer| {
             if (peer == exclude) continue;
-            if (peer.handshake_complete) {
-                peer.sendRaw(msg_code, payload) catch {};
+            if (peer.handshakeComplete) {
+                peer.sendRaw(msgCode, payload) catch {};
             }
         }
     }
 
     /// Broadcast to committee members only.
-    fn broadcastToCommittee(self: *Self, msg_code: u64, payload: []const u8) !void {
-        self.lock.lock();
-        const peers_copy = self.allocator.dupe(*Peer, self.peers.items) catch {
-            self.lock.unlock();
+    fn broadcastToCommittee(self: *Self, msgCode: u64, payload: []const u8) !void {
+        self.mutex.lock();
+        const peersCopy = self.allocator.dupe(*Peer, self.peers.items) catch {
+            self.mutex.unlock();
             return;
         };
-        self.lock.unlock();
-        defer self.allocator.free(peers_copy);
+        self.mutex.unlock();
+        defer self.allocator.free(peersCopy);
 
-        for (peers_copy) |peer| {
-            if (peer.is_committee_member and peer.handshake_complete) {
-                peer.sendRaw(msg_code, payload) catch {};
+        for (peersCopy) |peer| {
+            if (peer.isCommitteeMember and peer.handshakeComplete) {
+                peer.sendRaw(msgCode, payload) catch {};
             }
         }
     }
@@ -1078,8 +1058,8 @@ pub const Server = struct {
     // ── Outbox (Batch Sending) ──────────────────────────────────────────
 
     pub fn enqueueSend(self: *Self, dest: std.net.Address, data: []const u8) !void {
-        self.outbox_lock.lock();
-        defer self.outbox_lock.unlock();
+        self.outboxMutex.lock();
+        defer self.outboxMutex.unlock();
 
         var pkt = Packet.init(dest, undefined, data.len);
         @memcpy(pkt.dataMut(), data);
@@ -1091,8 +1071,8 @@ pub const Server = struct {
     }
 
     fn flushOutbox(self: *Self) !void {
-        self.outbox_lock.lock();
-        defer self.outbox_lock.unlock();
+        self.outboxMutex.lock();
+        defer self.outboxMutex.unlock();
         try self.flushOutboxLocked();
     }
 
@@ -1100,7 +1080,7 @@ pub const Server = struct {
         if (self.outbox.items.len == 0) return;
 
         const sent = try socket_utils.sendBatch(self.sock, self.outbox.items);
-        self.stats.packets_sent += @intCast(sent);
+        self.stats.packetsSent += @intCast(sent);
 
         if (sent > 0) {
             const remaining = self.outbox.items.len - sent;
@@ -1112,32 +1092,32 @@ pub const Server = struct {
     // ── Subnet Management ───────────────────────────────────────────────
 
     fn registerPeerSubnets(self: *Self, peer: *Peer) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         for (0..types.GOSSIP_SUBNETS) |subnet| {
             if (peer.isInSubnet(@intCast(subnet))) {
                 var already = false;
-                for (self.subnet_peers[subnet].items) |sp| {
+                for (self.subnetPeers[subnet].items) |sp| {
                     if (sp == peer) {
                         already = true;
                         break;
                     }
                 }
                 if (!already) {
-                    self.subnet_peers[subnet].append(self.allocator, peer) catch {};
+                    self.subnetPeers[subnet].append(self.allocator, peer) catch {};
                 }
             }
         }
     }
 
     fn unregisterPeerSubnets(self: *Self, peer: *Peer) void {
-        // Must be called with self.lock held
+        // Must be called with self.mutex held
         for (0..types.GOSSIP_SUBNETS) |subnet| {
             var i: usize = 0;
-            while (i < self.subnet_peers[subnet].items.len) {
-                if (self.subnet_peers[subnet].items[i] == peer) {
-                    _ = self.subnet_peers[subnet].swapRemove(i);
+            while (i < self.subnetPeers[subnet].items.len) {
+                if (self.subnetPeers[subnet].items[i] == peer) {
+                    _ = self.subnetPeers[subnet].swapRemove(i);
                 } else {
                     i += 1;
                 }
@@ -1149,37 +1129,37 @@ pub const Server = struct {
 
     fn checkRateLimit(self: *Self, ip: u32) bool {
         const now = std.time.milliTimestamp();
-        const entry = self.rate_limiter.getOrPut(ip) catch return true;
+        const entry = self.rateLimiter.getOrPut(ip) catch return true;
 
         if (!entry.found_existing) {
             entry.value_ptr.* = .{
-                .tokens = self.config.rate_limit.base_capacity - 1.0,
-                .last_update = now,
+                .tokens = self.config.rateLimit.baseCapacity - 1.0,
+                .lastUpdate = now,
             };
             return true;
         }
 
-        const elapsed_sec = @as(f64, @floatFromInt(now - entry.value_ptr.last_update)) / 1000.0;
+        const elapsed_sec = @as(f64, @floatFromInt(now - entry.value_ptr.lastUpdate)) / 1000.0;
 
         // Check if this IP belongs to a staked peer
-        var refill = self.config.rate_limit.base_refill;
-        var capacity = self.config.rate_limit.base_capacity;
+        var refill = self.config.rateLimit.baseRefill;
+        var capacity = self.config.rateLimit.baseCapacity;
 
-        if (self.peers_by_ip.get(ip)) |peer| {
-            if (peer.stake_amount > 0) {
-                const stake_f = @as(f64, @floatFromInt(peer.stake_amount));
-                const multiplier = @min(@sqrt(stake_f / 10000.0), self.config.rate_limit.max_stake_multiplier);
+        if (self.peersByIp.get(ip)) |peer| {
+            if (peer.stakeAmount > 0) {
+                const stake_f = @as(f64, @floatFromInt(peer.stakeAmount));
+                const multiplier = @min(@sqrt(stake_f / 10000.0), self.config.rateLimit.maxStakeMultiplier);
                 refill *= @max(1.0, multiplier);
             }
-            if (peer.is_committee_member) {
-                capacity *= self.config.rate_limit.committee_burst_multiplier;
-                refill *= self.config.rate_limit.committee_burst_multiplier;
+            if (peer.isCommitteeMember) {
+                capacity *= self.config.rateLimit.committeeBurstMultiplier;
+                refill *= self.config.rateLimit.committeeBurstMultiplier;
             }
         }
 
         const new_tokens = entry.value_ptr.tokens + (elapsed_sec * refill);
         entry.value_ptr.tokens = @min(new_tokens, capacity);
-        entry.value_ptr.last_update = now;
+        entry.value_ptr.lastUpdate = now;
 
         if (entry.value_ptr.tokens >= 1.0) {
             entry.value_ptr.tokens -= 1.0;
@@ -1190,15 +1170,15 @@ pub const Server = struct {
 
     fn checkConnectionBudget(self: *Self, ip: u32) bool {
         _ = ip;
-        self.lock.lock();
-        defer self.lock.unlock();
-        return self.peers.items.len < self.config.max_peers;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.peers.items.len < self.config.maxPeers;
     }
 
     pub fn punishIp(self: *Self, ip: u32, delta: i32) void {
-        self.lock.lock();
-        defer self.lock.unlock();
-        if (self.peers_by_ip.get(ip)) |peer| {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.peersByIp.get(ip)) |peer| {
             peer.updateScore(delta);
         }
     }
@@ -1208,7 +1188,7 @@ pub const Server = struct {
     fn pruneLoop(self: *Self) void {
         while (self.running) {
             // Sleep in short increments so we can exit promptly on shutdown
-            const interval_ns = self.config.prune_interval_ms * std.time.ns_per_ms;
+            const interval_ns = self.config.pruneIntervalMs * std.time.ns_per_ms;
             const step_ns: u64 = 100 * std.time.ns_per_ms; // 100ms steps
             var remaining: u64 = interval_ns;
             while (remaining > 0 and self.running) {
@@ -1222,8 +1202,8 @@ pub const Server = struct {
     }
 
     fn prunePeers(self: *Self) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         var i: usize = 0;
         while (i < self.peers.items.len) {
@@ -1233,9 +1213,9 @@ pub const Server = struct {
                 self.unregisterPeerSubnets(peer);
 
                 // Remove from maps
-                // Find and remove from peers_by_id
+                // Find and remove from peersById
                 var id_to_remove: ?u64 = null;
-                var id_iter = self.peers_by_id.iterator();
+                var id_iter = self.peersById.iterator();
                 while (id_iter.next()) |entry| {
                     if (entry.value_ptr.* == peer) {
                         id_to_remove = entry.key_ptr.*;
@@ -1243,12 +1223,12 @@ pub const Server = struct {
                     }
                 }
                 if (id_to_remove) |id| {
-                    _ = self.peers_by_id.remove(id) catch {};
+                    _ = self.peersById.remove(id) catch {};
                 }
 
-                // Remove from peers_by_ip
+                // Remove from peersByIp
                 var ip_to_remove: ?u32 = null;
-                var ip_iter = self.peers_by_ip.iterator();
+                var ip_iter = self.peersByIp.iterator();
                 while (ip_iter.next()) |entry| {
                     if (entry.value_ptr.* == peer) {
                         ip_to_remove = entry.key_ptr.*;
@@ -1256,15 +1236,15 @@ pub const Server = struct {
                     }
                 }
                 if (ip_to_remove) |ip| {
-                    _ = self.peers_by_ip.remove(ip);
+                    _ = self.peersByIp.remove(ip);
                 }
 
                 // Remove from peers list
                 _ = self.peers.swapRemove(i);
 
-                self.stats.peers_pruned += 1;
-                if (self.stats.peers_connected > 0) {
-                    self.stats.peers_connected -= 1;
+                self.stats.peersPruned += 1;
+                if (self.stats.peersConnected > 0) {
+                    self.stats.peersConnected -= 1;
                 }
 
                 peer.deinit();
@@ -1281,17 +1261,17 @@ pub const Server = struct {
     }
 
     pub fn getPeerCount(self: *Self) u32 {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
         return @intCast(self.peers.items.len);
     }
 
     pub fn getSubnetHealth(self: *Self) [types.GOSSIP_SUBNETS]u32 {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
         var health: [types.GOSSIP_SUBNETS]u32 = undefined;
         for (0..types.GOSSIP_SUBNETS) |i| {
-            health[i] = @intCast(self.subnet_peers[i].items.len);
+            health[i] = @intCast(self.subnetPeers[i].items.len);
         }
         return health;
     }

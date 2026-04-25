@@ -1,31 +1,14 @@
-// ============================================================================
-// Zephyria — Block Producer (Miner) — Loom Genesis Adaptive
-// ============================================================================
-//
-// Production-grade block production pipeline with adaptive consensus:
-//   • DAG mempool → scheduler → parallel executor (primary path)
-//   • Legacy tx_pool → executor fallback (backward compat)
-//   • BlockProducer unifies both paths — miner just orchestrates
-//   • Thread-partitioned woven root computation
-//   • VRF-based proposer eligibility (replaces round-robin)
-//   • Adaptive tier/thread parameters at epoch boundaries
-//   • Pipeline integration with thread root submission
-//   • Thread attestation pool integration
-//   • Proper ordering: produce → rewards → seal → verify → add → broadcast
-
 const std = @import("std");
 const core = @import("core");
 const types = core.types;
 const consensus = @import("consensus");
 const zelius = consensus.zelius;
 const blockchain_mod = core.blockchain;
-const tx_pool_mod = core.tx_pool;
-const executor_mod = core.executor;
+const dag_mempool_mod = core.dag_mempool;
+const dag_executor_mod = core.dag_executor;
 const block_producer_mod = core.block_producer;
 const state_mod = core.state;
 const block_rewards = core.block_rewards;
-const dag_mempool_mod = core.dag_mempool;
-const dag_executor_mod = core.dag_executor;
 const p2p = @import("p2p");
 const EpochIntegration = @import("epoch_integration.zig").EpochIntegration;
 const log = core.logger;
@@ -51,41 +34,41 @@ pub const Miner = struct {
     engine: *zelius.ZeliusEngine,
     state: *state_mod.State,
 
-    // Unified block producer (DAG + legacy support)
+    // Unified block producer (DAG primary)
     producer: *block_producer_mod.BlockProducer,
 
-    // Legacy references kept for backward compat on RPC/pool queries
-    tx_pool: *tx_pool_mod.TxPool,
-    executor: *executor_mod.Executor,
+    // DAG Components
+    dagPool: *dag_mempool_mod.DAGMempool,
+    dagExecutor: *dag_executor_mod.DAGExecutor,
 
     running: *std.atomic.Value(bool),
-    validator_addr: types.Address,
-    p2p_server: ?*p2p.Server,
+    validatorAddr: types.Address,
+    p2pServer: ?*p2p.Server,
 
     // Consensus pipeline
     pipeline: ?*consensus.Pipeline,
     staking: ?*consensus.Staking,
 
     // Our validator index in the active set
-    our_validator_index: u32,
+    ourValidatorIndex: u32,
 
     // Epoch integration for constant-size blockchain
-    epoch_integration: ?*EpochIntegration,
+    epochIntegration: ?*EpochIntegration,
 
     // Block rewards config
-    reward_config: block_rewards.RewardConfig,
+    rewardConfig: block_rewards.RewardConfig,
 
     // Stats
-    blocks_produced: u64,
-    total_txs_processed: u64,
-    total_gas_used: u64,
+    blocksProduced: u64,
+    totalTxsProcessed: u64,
+    totalGasUsed: u64,
 
     pub fn init(
         allocator: std.mem.Allocator,
         chain: *blockchain_mod.Blockchain,
-        pool: *tx_pool_mod.TxPool,
+        pool: *dag_mempool_mod.DAGMempool,
         engine: *zelius.ZeliusEngine,
-        exec: *executor_mod.Executor,
+        executor: *dag_executor_mod.DAGExecutor,
         state_obj: *state_mod.State,
         addr: types.Address,
         running_flag: *std.atomic.Value(bool),
@@ -95,22 +78,22 @@ pub const Miner = struct {
         self.* = Miner{
             .allocator = allocator,
             .chain = chain,
-            .tx_pool = pool,
+            .dagPool = pool,
             .engine = engine,
-            .executor = exec,
+            .dagExecutor = executor,
             .producer = producer,
             .running = running_flag,
-            .validator_addr = addr,
+            .validatorAddr = addr,
             .state = state_obj,
-            .p2p_server = null,
+            .p2pServer = null,
             .pipeline = null,
             .staking = null,
-            .our_validator_index = 0,
-            .epoch_integration = null,
-            .reward_config = .{},
-            .blocks_produced = 0,
-            .total_txs_processed = 0,
-            .total_gas_used = 0,
+            .ourValidatorIndex = 0,
+            .epochIntegration = null,
+            .rewardConfig = .{},
+            .blocksProduced = 0,
+            .totalTxsProcessed = 0,
+            .totalGasUsed = 0,
         };
         return self;
     }
@@ -119,8 +102,8 @@ pub const Miner = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn set_p2p(self: *Miner, server: *p2p.Server) void {
-        self.p2p_server = server;
+    pub fn setP2p(self: *Miner, server: *p2p.Server) void {
+        self.p2pServer = server;
     }
 
     pub fn setPipeline(self: *Miner, pipe: *consensus.Pipeline) void {
@@ -132,60 +115,59 @@ pub const Miner = struct {
     }
 
     pub fn setEpochIntegration(self: *Miner, integration: *EpochIntegration) void {
-        self.epoch_integration = integration;
+        self.epochIntegration = integration;
     }
 
     pub fn setValidatorIndex(self: *Miner, idx: u32) void {
-        self.our_validator_index = idx;
+        self.ourValidatorIndex = idx;
     }
 
     pub fn start(self: *Miner) !void {
         const tier_name = @tagName(self.engine.getCurrentTier());
         const thread_count = self.engine.getThreadCount();
-        const has_dag = self.producer.dag_pool != null;
-        log.info("Block production started ({}ms block time, tier={s}, threads={d}, dag={s})", .{
-            BLOCK_TIME_MS, tier_name, thread_count, if (has_dag) "active" else "legacy",
+        log.info("Block production started ({}ms block time, tier={s}, threads={d})", .{
+            BLOCK_TIME_MS, tier_name, thread_count,
         });
 
         while (self.running.load(.seq_cst)) {
-            const block_start_ns = std.time.nanoTimestamp();
+            const blockStartNs = std.time.nanoTimestamp();
 
-            const parent = self.chain.current_block orelse return error.NoGenesis;
-            const next_number = parent.header.number + 1;
+            const parent = self.chain.currentBlock orelse return error.NoGenesis;
+            const nextNumber = parent.header.number + 1;
 
             // 1. Check proposer eligibility (adaptive VRF-based)
-            const eligible = self.checkProposerEligibility(parent, next_number);
+            const eligible = self.checkProposerEligibility(parent, nextNumber);
             if (!eligible) {
                 std.Thread.sleep(BLOCK_TIME_MS * std.time.ns_per_ms);
                 continue;
             }
 
             // 2. Begin epoch tracking (if enabled)
-            if (self.epoch_integration) |integration| {
+            if (self.epochIntegration) |integration| {
                 try integration.beginBlock();
             }
 
-            // 3. Produce block via unified BlockProducer (DAG or legacy)
-            const build_result = self.producer.produce() catch |err| {
+            // 3. Produce block via unified BlockProducer
+            const buildResult = self.producer.produce() catch |err| {
                 log.err("Block production failed: {}", .{err});
                 std.Thread.sleep(BLOCK_TIME_MS * std.time.ns_per_ms);
                 continue;
             };
-            const block = build_result.block;
+            const block = buildResult.block;
 
             // 4. Apply block rewards
-            const reward_ctx = block_rewards.RewardContext{
-                .coinbase = self.validator_addr,
-                .block_number = next_number,
-                .gas_used = build_result.gas_used,
-                .tx_count = @as(u64, build_result.tx_count),
+            const rewardCtx = block_rewards.RewardContext{
+                .coinbase = self.validatorAddr,
+                .block_number = nextNumber,
+                .gas_used = buildResult.gasUsed,
+                .tx_count = @as(u64, buildResult.txCount),
                 .timestamp = block.header.time,
             };
-            _ = try block_rewards.applyRewards(self.state, self.reward_config, reward_ctx);
+            _ = try block_rewards.applyRewards(self.state, self.rewardConfig, rewardCtx);
 
             // 5. Commit Verkle trie and recompute state root
             try self.state.trie.commit();
-            block.header.verkle_root = types.Hash{ .bytes = self.state.trie.rootHash() };
+            block.header.verkleRoot = types.Hash{ .bytes = self.state.trie.rootHash() };
 
             // 6. Compute woven root from thread partitioning
             const thread_count_now = self.engine.getThreadCount();
@@ -204,15 +186,15 @@ pub const Miner = struct {
             var tc: u8 = 0;
             while (tc < thread_count_now) : (tc += 1) {
                 var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-                hasher.update(&block.header.verkle_root.bytes);
+                hasher.update(&block.header.verkleRoot.bytes);
                 hasher.update(&[_]u8{tc});
                 var count_buf: [4]u8 = undefined;
                 std.mem.writeInt(u32, &count_buf, thread_tx_counts[tc], .big);
                 hasher.update(&count_buf);
                 hasher.final(&thread_roots[tc].bytes);
             }
-            const woven_root = computeWovenRoot(thread_roots[0..thread_count_now]);
-            block.header.tx_hash = woven_root;
+            const wovenRoot = computeWovenRoot(thread_roots[0..thread_count_now]);
+            block.header.txHash = wovenRoot;
 
             // 7. Seal with BLS signature + VDF proof
             self.engine.seal(block) catch |err| {
@@ -221,68 +203,68 @@ pub const Miner = struct {
                 continue;
             };
 
-            // 8. Cache hashes BEFORE add_block — add_block calls set_head which
+            // 8. Cache hashes BEFORE addBlock — addBlock calls setHead which
             //    frees the old current_block (== parent), invalidating the pointer.
-            const block_hash = block.hash();
-            const parent_hash = parent.hash();
+            const blockHash = block.hash();
+            const parentHash = parent.hash();
 
             // 9. Record proposal for double-sign tracking
-            if (try self.engine.recordProposal(next_number, block_hash, self.validator_addr)) |slash| {
-                log.err("Double-signing detected at block {d}! Reason: {}", .{ slash.block_number, slash.reason });
+            if (try self.engine.recordProposal(nextNumber, blockHash, self.validatorAddr)) |slash| {
+                log.err("Double-signing detected at block {d}! Reason: {}", .{ slash.blockNumber, slash.reason });
                 continue;
             }
 
             // 10. Add to chain (NOTE: after this, `parent` is a dangling pointer — do NOT use it)
-            self.chain.add_block(block) catch |err| {
+            self.chain.addBlock(block) catch |err| {
                 log.err("Block add failed: {}", .{err});
                 continue;
             };
 
             // 11. Submit to consensus pipeline (adaptive — with thread roots)
             if (self.pipeline) |pipe| {
-                var tx_hashes_buf: [0]types.Hash = undefined;
-                if (pipe.propose(next_number, parent_hash, &tx_hashes_buf)) |_| {
+                var txHashesBuf: [0]types.Hash = undefined;
+                if (pipe.propose(nextNumber, parentHash, &txHashesBuf)) |_| {
                     // Self-vote
-                    _ = pipe.vote(next_number, self.our_validator_index) catch {};
+                    _ = pipe.vote(nextNumber, self.ourValidatorIndex) catch {};
                 } else |_| {}
 
                 // Set thread roots
-                pipe.setThreadRoots(next_number, thread_roots[0..thread_count_now], woven_root);
+                pipe.setThreadRoots(nextNumber, thread_roots[0..thread_count_now], wovenRoot);
             }
 
             // 11. Record proposed block for staking rewards
             if (self.staking) |stk| {
-                stk.recordProposedBlock(self.validator_addr);
-                _ = stk.distributeRewards(self.validator_addr) catch {};
+                stk.recordProposedBlock(self.validatorAddr);
+                _ = stk.distributeRewards(self.validatorAddr) catch {};
             }
 
             // 12. Epoch finalization (if enabled)
-            if (self.epoch_integration) |integration| {
+            if (self.epochIntegration) |integration| {
                 _ = try integration.endBlock(block);
-                integration.recordGas(block.header.gas_used);
+                integration.recordGas(block.header.gasUsed);
             }
 
             // 13. Broadcast to P2P network
-            if (self.p2p_server) |server| {
+            if (self.p2pServer) |server| {
                 const msg = p2p.types.NewBlockMsg{
                     .block = block.*,
-                    .total_difficulty = 1,
-                    .hop_count = 0,
+                    .totalDifficulty = 1,
+                    .hopCount = 0,
                 };
                 server.broadcast(p2p.types.MsgNewBlock, msg) catch {};
             }
 
             // 14. Epoch rotation at epoch boundary (adaptive)
-            if (self.engine.isEpochBoundary(next_number)) {
-                try self.handleEpochRotation(next_number, block_hash);
+            if (self.engine.isEpochBoundary(nextNumber)) {
+                try self.handleEpochRotation(nextNumber, blockHash);
             }
 
-            // 15. Sync legacy pool with state for RPC queries
-            self.tx_pool.sync_with_state();
+            // 15. Sync DAG pool with state for RPC queries
+            self.dagPool.syncWithState();
 
-            self.blocks_produced += 1;
-            self.total_txs_processed += build_result.tx_count;
-            self.total_gas_used += build_result.gas_used;
+            self.blocksProduced += 1;
+            self.totalTxsProcessed += buildResult.txCount;
+            self.totalGasUsed += buildResult.gasUsed;
 
             // Block log with adaptive info + DAG metrics
             const current_tier = @tagName(self.engine.getCurrentTier());
@@ -293,26 +275,26 @@ pub const Miner = struct {
                 " \x1b[38;5;245m│\x1b[0m lanes \x1b[38;5;75m{d}\x1b[0m" ++
                 " \x1b[38;5;245m│\x1b[0m \x1b[38;5;141m{s}\x1b[0m T{d}" ++
                 " \x1b[38;5;245m│\x1b[0m \x1b[38;5;84m{d}\x1b[0m TPS\n", .{
-                next_number,
+                nextNumber,
                 block.transactions.len,
-                block.header.gas_used,
-                build_result.lane_count,
+                block.header.gasUsed,
+                buildResult.laneCount,
                 current_tier,
                 current_threads,
-                build_result.tps,
+                buildResult.tps,
             });
             std.debug.print("  \x1b[38;5;245m├─\x1b[0m hash  \x1b[38;5;75m0x{s}\x1b[0m\n" ++
                 "  \x1b[38;5;245m└─\x1b[0m state \x1b[38;5;141m0x{s}\x1b[0m\n", .{
-                hexEncode(block_hash.bytes),
-                hexEncode(block.header.verkle_root.bytes),
+                hexEncode(blockHash.bytes),
+                hexEncode(block.header.verkleRoot.bytes),
             });
 
             // 16. Sleep remaining block time
-            const elapsed_ns = std.time.nanoTimestamp() - block_start_ns;
-            const target_ns: i128 = @as(i128, BLOCK_TIME_MS) * std.time.ns_per_ms;
-            if (elapsed_ns < target_ns) {
-                const sleep_ns: u64 = @intCast(target_ns - elapsed_ns);
-                std.Thread.sleep(sleep_ns);
+            const elapsedNs = std.time.nanoTimestamp() - blockStartNs;
+            const targetNs: i128 = @as(i128, BLOCK_TIME_MS) * std.time.ns_per_ms;
+            if (elapsedNs < targetNs) {
+                const sleepNs: u64 = @intCast(targetNs - elapsedNs);
+                std.Thread.sleep(sleepNs);
             }
         }
     }
@@ -322,27 +304,26 @@ pub const Miner = struct {
     fn checkProposerEligibility(self: *Miner, parent: *types.Block, next_number: u64) bool {
         _ = parent;
         // Single-validator mode: always eligible
-        if (self.engine.active_validators.len <= 1) return true;
+        if (self.engine.activeValidators.len <= 1) return true;
 
         // Use the adaptive engine's proposer selection
-        return self.engine.isProposerForSlot(next_number, self.our_validator_index);
+        return self.engine.isProposerForSlot(next_number, self.ourValidatorIndex);
     }
 
     // ── Epoch Rotation (Adaptive) ───────────────────────────────────
 
-    fn handleEpochRotation(self: *Miner, block_number: u64, block_hash: types.Hash) !void {
+    fn handleEpochRotation(self: *Miner, blockNumber: u64, blockHash: types.Hash) !void {
         // Collect validator stakes for adaptive epoch transition
-        // getValidatorStakes() heap-allocates the slice — must free after use
-        var stakes_owned: ?[]u64 = null;
-        defer if (stakes_owned) |s| self.allocator.free(s);
+        var stakesOwned: ?[]u64 = null;
+        defer if (stakesOwned) |s| self.allocator.free(s);
 
         const stakes: []const u64 = if (self.staking) |stk| blk: {
             const s = stk.getValidatorStakes() catch break :blk &[_]u64{};
-            stakes_owned = s;
+            stakesOwned = s;
             break :blk s;
         } else &[_]u64{};
 
-        self.engine.rotateEpoch(block_number, block_hash.bytes, stakes) catch |err| {
+        self.engine.rotateEpoch(blockNumber, blockHash.bytes, stakes) catch |err| {
             log.err("Epoch rotation failed: {}", .{err});
             return;
         };
@@ -356,20 +337,20 @@ pub const Miner = struct {
         }
 
         // Broadcast epoch transition to P2P network
-        if (self.p2p_server) |server| {
+        if (self.p2pServer) |server| {
             const epoch_msg = p2p.types.EpochTransitionMsg{
-                .new_epoch = self.engine.current_epoch,
+                .newEpoch = self.engine.currentEpoch,
                 .tier = @intFromEnum(self.engine.getCurrentTier()),
-                .thread_count = self.engine.getThreadCount(),
-                .validator_count = @intCast(self.engine.active_validators.len),
-                .epoch_seed = self.engine.epoch_seed,
+                .threadCount = self.engine.getThreadCount(),
+                .validatorCount = @intCast(self.engine.activeValidators.len),
+                .epochSeed = self.engine.epochSeed,
             };
             server.broadcast(p2p.types.MsgEpochTransition, epoch_msg) catch {};
         }
 
         log.info("Epoch rotated at block {d} (epoch {d}, tier={s}, threads={d})", .{
-            block_number,
-            self.engine.current_epoch,
+            blockNumber,
+            self.engine.currentEpoch,
             @tagName(self.engine.getCurrentTier()),
             self.engine.getThreadCount(),
         });
@@ -430,9 +411,9 @@ pub const Miner = struct {
         threads: u8,
     } {
         return .{
-            .blocks = self.blocks_produced,
-            .txs = self.total_txs_processed,
-            .gas = self.total_gas_used,
+            .blocks = self.blocksProduced,
+            .txs = self.totalTxsProcessed,
+            .gas = self.totalGasUsed,
             .tier = self.engine.getCurrentTier(),
             .threads = self.engine.getThreadCount(),
         };

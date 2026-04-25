@@ -29,14 +29,14 @@ pub const ShredVerifyConfig = struct {
     /// Fraction of shreds to verify (0.0–1.0).
     /// At 1.0: verify all (highest security, highest cost).
     /// At 0.1: verify 10% (production default for 1M TPS).
-    sample_rate: f64 = 0.10,
+    sampleRate: f64 = 0.10,
 
     /// Enable verification at all.
     /// Disable for benchmarking or trusted validator sets.
     enabled: bool = true,
 
     /// Maximum cache size for validator public keys.
-    max_validators: u32 = 200_000,
+    maxValidators: u32 = 200_000,
 };
 
 // ── Validator Set ──────────────────────────────────────────────────────
@@ -60,13 +60,13 @@ pub const ShredVerifier = struct {
     validators: std.AutoHashMap(types.Address, ValidatorEntry),
 
     // Stats
-    total_verified: u64,
-    total_passed: u64,
-    total_failed: u64,
-    total_skipped: u64,
+    totalVerified: u64,
+    totalPassed: u64,
+    totalFailed: u64,
+    totalSkipped: u64,
 
     // Deterministic sampling PRNG
-    sample_state: u64,
+    sampleState: u64,
 
     const Self = @This();
 
@@ -75,11 +75,11 @@ pub const ShredVerifier = struct {
             .allocator = allocator,
             .config = config,
             .validators = std.AutoHashMap(types.Address, ValidatorEntry).init(allocator),
-            .total_verified = 0,
-            .total_passed = 0,
-            .total_failed = 0,
-            .total_skipped = 0,
-            .sample_state = 0x123456789ABCDEF0,
+            .totalVerified = 0,
+            .totalPassed = 0,
+            .totalFailed = 0,
+            .totalSkipped = 0,
+            .sampleState = 0x123456789ABCDEF0,
         };
     }
 
@@ -139,16 +139,16 @@ pub const ShredVerifier = struct {
         producer_addr: types.Address,
     ) bool {
         if (!self.config.enabled) {
-            self.total_skipped += 1;
+            self.totalSkipped += 1;
             return true;
         }
 
         // Deterministic sampling: skip verification for some shreds
-        if (self.config.sample_rate < 1.0) {
-            self.sample_state = xorshift64(self.sample_state);
-            const threshold: u64 = @intFromFloat(self.config.sample_rate * @as(f64, @floatFromInt(std.math.maxInt(u64))));
-            if (self.sample_state > threshold) {
-                self.total_skipped += 1;
+        if (self.config.sampleRate < 1.0) {
+            self.sampleState = xorshift64(self.sampleState);
+            const threshold: u64 = @intFromFloat(self.config.sampleRate * @as(f64, @floatFromInt(std.math.maxInt(u64))));
+            if (self.sampleState > threshold) {
+                self.totalSkipped += 1;
                 return true; // Skip — not sampled
             }
         }
@@ -157,14 +157,14 @@ pub const ShredVerifier = struct {
         const validator = self.validators.get(producer_addr) orelse {
             // Unknown producer — could be legitimate if validator set is out of date,
             // but we must reject for safety.
-            self.total_verified += 1;
-            self.total_failed += 1;
+            self.totalVerified += 1;
+            self.totalFailed += 1;
             return false;
         };
 
         if (!validator.active) {
-            self.total_verified += 1;
-            self.total_failed += 1;
+            self.totalVerified += 1;
+            self.totalFailed += 1;
             return false;
         }
 
@@ -174,11 +174,11 @@ pub const ShredVerifier = struct {
         // Verify Ed25519 signature
         const valid = verifyEd25519(signing_payload, signature, validator.pubkey);
 
-        self.total_verified += 1;
+        self.totalVerified += 1;
         if (valid) {
-            self.total_passed += 1;
+            self.totalPassed += 1;
         } else {
-            self.total_failed += 1;
+            self.totalFailed += 1;
         }
 
         return valid;
@@ -187,22 +187,22 @@ pub const ShredVerifier = struct {
     // ── Stats ───────────────────────────────────────────────────────
 
     pub const VerifierStats = struct {
-        total_verified: u64,
-        total_passed: u64,
-        total_failed: u64,
-        total_skipped: u64,
-        sample_rate: f64,
-        validators_registered: u32,
+        totalVerified: u64,
+        totalPassed: u64,
+        totalFailed: u64,
+        totalSkipped: u64,
+        sampleRate: f64,
+        validatorsRegistered: u32,
     };
 
     pub fn getStats(self: *const Self) VerifierStats {
         return .{
-            .total_verified = self.total_verified,
-            .total_passed = self.total_passed,
-            .total_failed = self.total_failed,
-            .total_skipped = self.total_skipped,
-            .sample_rate = self.config.sample_rate,
-            .validators_registered = @intCast(self.validators.count()),
+            .totalVerified = self.totalVerified,
+            .totalPassed = self.totalPassed,
+            .totalFailed = self.totalFailed,
+            .totalSkipped = self.totalSkipped,
+            .sampleRate = self.config.sampleRate,
+            .validatorsRegistered = @intCast(self.validators.count()),
         };
     }
 };
@@ -272,12 +272,12 @@ test "ShredVerifier disabled mode skips all" {
         types.Address.zero(),
     );
     try std.testing.expect(result); // Should pass (disabled)
-    try std.testing.expectEqual(@as(u64, 1), verifier.total_skipped);
+    try std.testing.expectEqual(@as(u64, 1), verifier.totalSkipped);
 }
 
 test "ShredVerifier rejects unknown producer" {
     const allocator = std.testing.allocator;
-    var verifier = ShredVerifier.init(allocator, .{ .sample_rate = 1.0 });
+    var verifier = ShredVerifier.init(allocator, .{ .sampleRate = 1.0 });
     defer verifier.deinit();
 
     const result = verifier.verifyShred(
@@ -288,5 +288,5 @@ test "ShredVerifier rejects unknown producer" {
         types.Address{ .bytes = [_]u8{0xFF} ** 20 },
     );
     try std.testing.expect(!result); // Should fail (unknown)
-    try std.testing.expectEqual(@as(u64, 1), verifier.total_failed);
+    try std.testing.expectEqual(@as(u64, 1), verifier.totalFailed);
 }

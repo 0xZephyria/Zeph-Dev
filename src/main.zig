@@ -20,7 +20,7 @@ const Hash = types.Hash;
 // ── Version Info ─────────────────────────────────────────────────────────
 const VERSION = "1.0.0";
 const BUILD_TARGET = "native";
-const VM_BACKEND = "RISC-V RV32EM";
+const VM_BACKEND = "RISC-V RV64IM";
 const STORAGE_ENGINE = "ZephyrDB";
 const CONSENSUS = "Loom Genesis Adaptive PoS";
 
@@ -48,6 +48,8 @@ const C_BOX = "\x1b[38;5;240m";
 
 // ── Entry Point ──────────────────────────────────────────────────────────
 
+/// Main entry point for the Zephyria blockchain node.
+/// Parses CLI commands and dispatches to the appropriate handlers.
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -81,6 +83,7 @@ pub fn main() !void {
 
 // ── Banner ───────────────────────────────────────────────────────────────
 
+/// Prints the Zephyria ASCII brand banner to stdout.
 fn printBanner() void {
     std.debug.print(
         \\
@@ -96,6 +99,7 @@ fn printBanner() void {
 
 // ── CLI Output ───────────────────────────────────────────────────────────
 
+/// Prints CLI usage instructions, including available commands and node options.
 fn printUsage() void {
     printBanner();
     // USAGE header
@@ -127,6 +131,7 @@ fn printUsage() void {
         "    " ++ C_TEAL ++ "Compatible" ++ RST ++ "  " ++ C_DIM ++ "ethers.js  •  web3.js  •  MetaMask  •  Hardhat" ++ RST ++ "\n\n", .{});
 }
 
+/// Prints detailed version, build, and feature information.
 fn printVersion() void {
     printBanner();
     // BUILD INFO
@@ -144,6 +149,7 @@ fn printVersion() void {
         "  " ++ C_DIM ++ "└─" ++ RST ++ " " ++ C_PUR ++ "EVM Compatible" ++ RST ++ "  " ++ C_DIM ++ "ethers.js • web3.js • Hardhat" ++ RST ++ "\n\n", .{});
 }
 
+/// Prints the current status of the node (e.g., Online/Offline).
 fn printStatus() void {
     std.debug.print("\n" ++
         "  " ++ BOLD ++ C_CYAN ++ "◉ NODE STATUS" ++ RST ++ "\n" ++
@@ -154,6 +160,8 @@ fn printStatus() void {
 
 // ── Account Management ───────────────────────────────────────────────────
 
+/// Handles account management subcommands (new, list).
+/// Creates and manages validator keypairs in the local keystore.
 fn handleAccountCommand(allocator: std.mem.Allocator, args: []const []const u8) !void {
     if (args.len == 0) {
         std.debug.print("\n" ++
@@ -166,22 +174,22 @@ fn handleAccountCommand(allocator: std.mem.Allocator, args: []const []const u8) 
     }
 
     const sub = args[0];
-    var data_dir: []const u8 = "./node_data";
+    var dataDir: []const u8 = "./node_data";
 
     // Parse --datadir option
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--datadir")) {
             if (i + 1 < args.len) {
-                data_dir = args[i + 1];
+                dataDir = args[i + 1];
                 i += 1;
             }
         }
     }
 
-    const keystore_dir_path = try std.fs.path.join(allocator, &[_][]const u8{ data_dir, "keystore" });
-    defer allocator.free(keystore_dir_path);
-    try std.fs.cwd().makePath(keystore_dir_path);
+    const keystoreDirPath = try std.fs.path.join(allocator, &[_][]const u8{ dataDir, "keystore" });
+    defer allocator.free(keystoreDirPath);
+    try std.fs.cwd().makePath(keystoreDirPath);
 
     if (std.mem.eql(u8, sub, "new")) {
         std.debug.print("\n  " ++ C_CYAN ++ "◆" ++ RST ++ " Generating new account...\n", .{});
@@ -190,9 +198,9 @@ fn handleAccountCommand(allocator: std.mem.Allocator, args: []const []const u8) 
 
         // Derive address from private key
         var addr: [20]u8 = undefined;
-        var hash_buf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&priv_key, &hash_buf, .{});
-        @memcpy(&addr, hash_buf[12..]);
+        var hashBuf: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(&priv_key, &hashBuf, .{});
+        @memcpy(&addr, hashBuf[12..]);
 
         var addr_buf: [42]u8 = undefined;
         const addr_hex = try @import("utils").hex.encodeBuffer(&addr_buf, &addr);
@@ -201,7 +209,7 @@ fn handleAccountCommand(allocator: std.mem.Allocator, args: []const []const u8) 
         const json = try std.fmt.allocPrint(allocator, "{{\"address\":\"{s}\",\"version\":3}}", .{addr_hex});
         defer allocator.free(json);
 
-        const filename = try std.fmt.allocPrint(allocator, "{s}/{s}.json", .{ keystore_dir_path, addr_hex });
+        const filename = try std.fmt.allocPrint(allocator, "{s}/{s}.json", .{ keystoreDirPath, addr_hex });
         defer allocator.free(filename);
 
         const file = try std.fs.cwd().createFile(filename, .{});
@@ -212,14 +220,14 @@ fn handleAccountCommand(allocator: std.mem.Allocator, args: []const []const u8) 
         std.debug.print("  " ++ C_GRN ++ "✓" ++ RST ++ " Saved to: " ++ C_DIM ++ "{s}" ++ RST ++ "\n\n", .{filename});
     } else if (std.mem.eql(u8, sub, "list")) {
         std.debug.print("\n  " ++ BOLD ++ C_CYAN ++ "◆ Local Accounts" ++ RST ++ "\n  " ++ C_DIM ++ "────────────────────────────────" ++ RST ++ "\n", .{});
-        var dir = try std.fs.cwd().openDir(keystore_dir_path, .{ .iterate = true });
+        var dir = try std.fs.cwd().openDir(keystoreDirPath, .{ .iterate = true });
         defer dir.close();
 
         var it = dir.iterate();
         var count: u32 = 0;
         while (try it.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".json")) {
-                const full_path = try std.fs.path.join(allocator, &[_][]const u8{ keystore_dir_path, entry.name });
+                const full_path = try std.fs.path.join(allocator, &[_][]const u8{ keystoreDirPath, entry.name });
                 defer allocator.free(full_path);
 
                 const content = try std.fs.cwd().readFileAlloc(allocator, full_path, 4096);
@@ -263,49 +271,52 @@ fn printComponentFmt(comptime connector: []const u8, comptime name: []const u8, 
 
 // ── Node Startup ─────────────────────────────────────────────────────────
 
+/// Initializes and starts a Zephyria blockchain node.
+/// Orchestrates the setup of storage, consensus, networking (P2P), RPC, and VM components.
+/// If `shouldMine` is true, begins active block production.
 fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // ── Parse Arguments ──
-    var p2p_port: u16 = 30303;
-    var http_port: u16 = 8545;
-    var data_dir: []const u8 = "./node_data";
-    var network_name: []const u8 = "devnet";
-    var should_mine: bool = false;
-    var miner_key_hex: ?[]const u8 = null;
-    var miner_keystore_path: ?[]const u8 = null;
+    var p2pPort: u16 = 30303;
+    var httpPort: u16 = 8545;
+    var dataDir: []const u8 = "./node_data";
+    var networkName: []const u8 = "devnet";
+    var shouldMine: bool = false;
+    var minerKeyHex: ?[]const u8 = null;
+    var minerKeystorePath: ?[]const u8 = null;
     var password: []const u8 = "password";
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--port")) {
             if (i + 1 < args.len) {
-                p2p_port = try std.fmt.parseInt(u16, args[i + 1], 10);
+                p2pPort = try std.fmt.parseInt(u16, args[i + 1], 10);
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "--http.port")) {
             if (i + 1 < args.len) {
-                http_port = try std.fmt.parseInt(u16, args[i + 1], 10);
+                httpPort = try std.fmt.parseInt(u16, args[i + 1], 10);
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "--datadir")) {
             if (i + 1 < args.len) {
-                data_dir = args[i + 1];
+                dataDir = args[i + 1];
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "--network")) {
             if (i + 1 < args.len) {
-                network_name = args[i + 1];
+                networkName = args[i + 1];
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "--mine")) {
-            should_mine = true;
+            shouldMine = true;
         } else if (std.mem.eql(u8, args[i], "--miner.key")) {
             if (i + 1 < args.len) {
-                miner_key_hex = args[i + 1];
+                minerKeyHex = args[i + 1];
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "--keystore")) {
             if (i + 1 < args.len) {
-                miner_keystore_path = args[i + 1];
+                minerKeystorePath = args[i + 1];
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "--password")) {
@@ -328,8 +339,8 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.debug.print("  " ++ BOLD ++ C_CYAN ++ "◆ INITIALIZING" ++ RST ++ "\n", .{});
 
     // Auto-enable mining for devnet
-    if (std.mem.eql(u8, network_name, "devnet") and !should_mine) {
-        should_mine = true;
+    if (std.mem.eql(u8, networkName, "devnet") and !shouldMine) {
+        shouldMine = true;
     }
 
     // ── Initialize Components ──
@@ -344,8 +355,8 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.posix.sigaction(std.posix.SIG.TERM, &act, null);
 
     // 1. Storage
-    try std.fs.cwd().makePath(data_dir);
-    var db = try storage.lsm.db.DB.init(allocator, data_dir);
+    try std.fs.cwd().makePath(dataDir);
+    var db = try storage.lsm.db.DB.init(allocator, dataDir);
     defer db.deinit();
     printComponentLine("├─", "Storage       ", "ZephyrDB + LSM engine");
 
@@ -353,134 +364,123 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     defer trie.deinit();
     printComponentLine("├─", "Verkle Trie   ", "IPA commitments");
 
-    var world_state = core.state.State.init(allocator, trie);
-    defer world_state.deinit();
+    var worldState = core.state.State.init(allocator, trie);
+    defer worldState.deinit();
 
     // 2. Network config + Genesis
-    const network = core.genesis.getNetworkConfig(network_name);
+    const network = core.genesis.getNetworkConfig(networkName);
 
     // Determine Miner Identity
-    var miner_priv_key: [32]u8 = undefined;
-    var validator_addr: Address = undefined;
+    var minerPrivKey: [32]u8 = undefined;
+    var validatorAddr: Address = undefined;
 
-    if (miner_key_hex) |hex_str| {
+    if (minerKeyHex) |hex_str| {
         const trimmed = if (hex_str.len >= 2 and hex_str[0] == '0' and hex_str[1] == 'x')
             hex_str[2..]
         else
             hex_str;
-        _ = std.fmt.hexToBytes(&miner_priv_key, trimmed) catch |err| {
+        _ = std.fmt.hexToBytes(&minerPrivKey, trimmed) catch |err| {
             log.err("Invalid --miner.key: {}", .{err});
             return error.InvalidMinerKey;
         };
-        var hash_buf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&miner_priv_key, &hash_buf, .{});
-        @memcpy(&validator_addr.bytes, hash_buf[12..]);
-    } else if (miner_keystore_path) |ks_path| {
+        var hashBuf: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(&minerPrivKey, &hashBuf, .{});
+        @memcpy(&validatorAddr.bytes, hashBuf[12..]);
+    } else if (minerKeystorePath) |ks_path| {
         const ks_data = try std.fs.cwd().readFileAlloc(allocator, ks_path, 4096);
         defer allocator.free(ks_data);
         const parsed = try std.json.parseFromSlice(struct { address: []const u8 }, allocator, ks_data, .{});
         defer parsed.deinit();
         // NOTE: Keystore decryption not yet implemented — generating random key
         log.warn("Keystore decryption not implemented, using random key", .{});
-        std.crypto.random.bytes(&miner_priv_key);
-        var hash_buf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&miner_priv_key, &hash_buf, .{});
-        @memcpy(&validator_addr.bytes, hash_buf[12..]);
-    } else if (should_mine) {
-        std.crypto.random.bytes(&miner_priv_key);
-        var hash_buf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&miner_priv_key, &hash_buf, .{});
-        @memcpy(&validator_addr.bytes, hash_buf[12..]);
+        std.crypto.random.bytes(&minerPrivKey);
+        var hashBuf: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(&minerPrivKey, &hashBuf, .{});
+        @memcpy(&validatorAddr.bytes, hashBuf[12..]);
+    } else if (shouldMine) {
+        std.crypto.random.bytes(&minerPrivKey);
+        var hashBuf: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(&minerPrivKey, &hashBuf, .{});
+        @memcpy(&validatorAddr.bytes, hashBuf[12..]);
     } else {
         log.err("Mining requested but no key provided. Use --miner.key <hex> or --keystore <path>", .{});
         return error.MinerKeyRequired;
     }
 
     // 3. Blockchain
-    var chain = try core.blockchain.Blockchain.init(allocator, db.asAbstractDB(), @as(u64, @intCast(network.chain_id)));
+    var chain = try core.blockchain.Blockchain.init(allocator, db.asAbstractDB(), @as(u64, @intCast(network.chainId)));
     defer chain.deinit();
 
-    var genesis_hash: Hash = Hash.zero();
-    if (chain.get_head()) |head| {
-        genesis_hash = head.hash();
+    var genesisHash: Hash = Hash.zero();
+    if (chain.getHead()) |head| {
+        genesisHash = head.hash();
         printComponentFmt("├─", "Chain         ", "Block #{d}", head.header.number);
     } else {
         const alloc = core.genesis.getDefaultAlloc();
-        const sys_contracts = core.genesis.getDefaultSystemContracts();
+        const sysContracts = core.genesis.getDefaultSystemContracts();
         const genesis = core.genesis.Genesis{
             .config = network,
             .alloc = &alloc,
-            .system_contracts = &sys_contracts,
+            .systemContracts = &sysContracts,
         };
-        const genesis_block = core.genesis.applyGenesis(allocator, trie, genesis) catch {
+        const genesisBlock = core.genesis.applyGenesis(allocator, trie, genesis) catch {
             log.err("Failed to create genesis block", .{});
             return;
         };
-        try chain.add_block(genesis_block);
-        genesis_hash = genesis_block.hash();
+        try chain.addBlock(genesisBlock);
+        genesisHash = genesisBlock.hash();
         printComponentLine("├─", "Genesis       ", "New chain created");
     }
 
     // 4. Consensus Engine (Zelius PoS)
-    const validator_info = consensus.types.ValidatorInfo{
-        .address = validator_addr,
+    const validatorInfo = consensus.types.ValidatorInfo{
+        .address = validatorAddr,
         .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
         .status = .Active,
-        .bls_pub_key = [_]u8{0} ** 48,
+        .blsPubKey = [_]u8{0} ** 48,
         .commission = 500, // 5%
-        .activation_block = 0,
-        .slash_count = 0,
-        .total_rewards = 0,
+        .activationBlock = 0,
+        .slashCount = 0,
+        .totalRewards = 0,
         .name = "validator-0",
         .website = "",
     };
-    const validators = [_]consensus.types.ValidatorInfo{validator_info};
+    const validators = [_]consensus.types.ValidatorInfo{validatorInfo};
     const engine = try consensus.ZeliusEngine.init(allocator, &validators);
     defer engine.deinit();
-    engine.set_priv_key(miner_priv_key);
-    engine.set_bls_priv_key(&miner_priv_key);
+    engine.setPrivKey(minerPrivKey);
+    engine.setBlsPrivKey(&minerPrivKey);
     printComponentLine("├─", "Consensus     ", "Loom Genesis Adaptive PoS");
 
     // Initial epoch rotation to seed adaptive consensus
     {
         const initial_stakes = [_]u64{100_000_000_000};
-        engine.rotateEpoch(0, genesis_hash.bytes, &initial_stakes) catch |err| {
+        engine.rotateEpoch(0, genesisHash.bytes, &initial_stakes) catch |err| {
             log.err("Initial epoch rotation failed: {}", .{err});
         };
     }
 
-    // 5. Legacy Components (backward compatibility for RPC and fallback)
-    var pool = core.tx_pool.TxPool.init(allocator, &world_state);
-    defer pool.deinit();
+    // 5. DAG Pipeline (primary execution path for 1M+ TPS)
+    var dagPool = try core.dag_mempool.DAGMempool.init(allocator, &worldState, .{});
+    defer dagPool.deinit();
 
-    var exec = core.executor.Executor.init(allocator, .{
-        .max_threads = 16,
-        .block_gas_limit = @as(u64, @intCast(network.gas_limit)),
-        .base_fee = network.base_fee orelse 1_000_000_000,
-        .coinbase = validator_addr,
-    });
-
-    // 5a. DAG Pipeline (primary execution path for 1M+ TPS)
-    var dag_pool = try core.dag_mempool.DAGMempool.init(allocator, &world_state, .{});
-    defer dag_pool.deinit();
-
-    var dag_exec = core.dag_executor.DAGExecutor.init(allocator, &world_state, .{
-        .num_threads = 8,
-        .block_gas_limit = @as(u64, @intCast(network.gas_limit)),
-        .coinbase = validator_addr,
-        .base_fee = network.base_fee orelse 1_000_000_000,
-        .transfer_fast_path = true,
+    var dagExecutor = core.dag_executor.DAGExecutor.init(allocator, &worldState, .{
+        .numThreads = 8,
+        .blockGasLimit = @as(u64, @intCast(network.gasLimit)),
+        .coinbase = validatorAddr,
+        .baseFee = network.baseFee orelse 1_000_000_000,
+        .transferFastPath = true,
     });
 
     // ── Performance Optimization Modules (P0-P2) ────────────────────
 
     // P0: Async State Root — background Verkle trie commitment
-    var async_root = core.async_state_root.AsyncStateRootComputer.init(
+    var asyncRoot = core.async_state_root.AsyncStateRootComputer.init(
         allocator,
-        &world_state,
-        .{ .root_lag = 2, .max_queue_depth = 8 },
+        &worldState,
+        .{ .rootLag = 2, .maxQueueDepth = 8 },
     );
-    defer async_root.deinit();
+    defer asyncRoot.deinit();
     // NOTE: Do NOT start the async root background thread here.
     // The miner already calls trie.commit() + rootHash() directly in
     // its block production loop. Starting the bg thread causes a race
@@ -488,44 +488,43 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // in stale (unchanging) state roots. The async root computer object
     // is still registered with DAGExecutor for future use when the DAG
     // path handles its own commits independently.
-    dag_exec.setAsyncRoot(&async_root);
+    dagExecutor.setAsyncRoot(&asyncRoot);
 
     // P1: State Prefetcher — trie cache warming before lane execution
-    var state_pf = core.state_prefetcher.StatePrefetcher.init(
+    var statePrefetcher = core.state_prefetcher.StatePrefetcher.init(
         allocator,
-        &world_state,
-        .{ .max_addresses = 1_000_000, .prefetch_code = true },
+        &worldState,
+        .{ .maxAddresses = 1_000_000, .prefetchCode = true },
     );
-    defer state_pf.deinit();
-    dag_exec.setPrefetcher(&state_pf);
+    defer statePrefetcher.deinit();
+    dagExecutor.setPrefetcher(&statePrefetcher);
 
     // P1: Lock-Free Delta Merger — parallel merge of lane deltas
-    var delta_merger = core.delta_merge.DeltaMerger.init(allocator);
-    defer delta_merger.deinit();
-    dag_exec.setDeltaMerger(&delta_merger);
+    var deltaMerger = core.delta_merge.DeltaMerger.init(allocator);
+    defer deltaMerger.deinit();
+    dagExecutor.setDeltaMerger(&deltaMerger);
 
     printComponentLine("├─", "DAG Pipeline  ", "256-shard mempool + parallel executor");
     printComponentLine("├─", "Optimizations ", "AsyncRoot + Prefetch + DeltaMerge");
 
-    // 5b. BlockProducer — unified production interface (DAG primary, legacy fallback)
+    // 5b. BlockProducer — unified production interface (DAG primary)
     var producer = core.block_producer.BlockProducer.init(
         allocator,
         chain,
-        &world_state,
-        validator_addr,
-        @as(u64, @intCast(network.gas_limit)),
+        &worldState,
+        validatorAddr,
+        @as(u64, @intCast(network.gasLimit)),
     );
-    producer.setDAGPipeline(dag_pool, &dag_exec);
-    producer.setLegacyPipeline(&pool, &exec);
-    producer.setAsyncRoot(&async_root);
-    printComponentLine("├─", "BlockProducer ", "DAG + legacy fallback + async root");
+    producer.setDAGPipeline(dagPool, &dagExecutor);
+    producer.setAsyncRoot(&asyncRoot);
+    printComponentLine("├─", "BlockProducer ", "DAG-native + async root");
 
     // 5c. Consensus subsystems
     var pipeline = consensus.Pipeline.init(allocator, .{
-        .validator_count = 1,
-        .our_index = 0,
-        .our_address = validator_addr,
-        .thread_count = engine.getThreadCount(),
+        .validatorCount = 1,
+        .ourIndex = 0,
+        .ourAddress = validatorAddr,
+        .threadCount = engine.getThreadCount(),
         .tier = engine.getCurrentTier(),
     });
     defer pipeline.deinit();
@@ -535,116 +534,115 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     // Register initial validator in staking
     staking.registerValidator(
-        validator_addr,
+        validatorAddr,
         100_000_000_000_000_000_000_000, // 100k ZEE self-stake
         500, // 5% commission
         0, // registered at genesis
     ) catch {};
 
     // Loom Genesis Adaptive Consensus subsystems
-    var thread_attest_pool = consensus.ThreadAttestationPool.init(allocator);
-    defer thread_attest_pool.deinit();
+    var threadAttestPool = consensus.ThreadAttestationPool.init(allocator);
+    defer threadAttestPool.deinit();
 
-    var snowball_inst = consensus.Snowball.init(allocator, .{});
-    defer snowball_inst.deinit();
+    var snowball = consensus.Snowball.init(allocator, .{});
+    defer snowball.deinit();
     printComponentLine("├─", "Adaptive      ", "ThreadPool + Snowball ready");
 
     // 6. VM Bridge (thread-safe, wired to both executors)
-    var riscv_bridge = vm_bridge.VMBridge.init(allocator, .{
-        .enable_jit = true,
-        .optimization_level = .Fast,
-        .trace_execution = false,
+    var riscvBridge = vm_bridge.VMBridge.init(allocator, .{
+        .enableJit = true,
+        .optimizationLevel = .Fast,
+        .traceExecution = false,
     });
-    defer riscv_bridge.deinit();
+    defer riscvBridge.deinit();
 
     // Wire execution context for contracts (block env + chain config)
-    riscv_bridge.setExecutionContext(.{
+    riscvBridge.setExecutionContext(.{
         .timestamp = @intCast(@max(0, std.time.timestamp())),
-        .block_number = 0,
-        .chain_id = 99999,
-        .coinbase = validator_addr.bytes,
-        .prevrandao = genesis_hash.bytes,
+        .blockNumber = 0,
+        .chainId = 99999,
+        .coinbase = validatorAddr.bytes,
+        .prevRandao = genesisHash.bytes,
     });
 
-    // Wire VM callback to BOTH executors (DAG primary, legacy fallback)
-    dag_exec.setVMCallback(riscv_bridge.getCallback());
-    exec.setVMCallback(riscv_bridge.getLegacyCallback());
-    printComponentLine("├─", "VM Engine     ", "RISC-V RV32EM (thread-safe)");
+    // Wire VM callback to executor
+    dagExecutor.setVMCallback(riscvBridge.getCallback());
+    printComponentLine("├─", "VM Engine     ", "RISC-V RV64IM (thread-safe)");
 
     // 7. Miner (uses BlockProducer for unified DAG/legacy production)
-    var node_miner = try node.Miner.init(
+    var nodeMiner = try node.Miner.init(
         allocator,
         chain,
-        &pool,
+        dagPool, // Using dagPool instead of legacy pool
         engine,
-        &exec,
-        &world_state,
-        validator_addr,
+        &dagExecutor, // Using dagExecutor instead of legacy exec
+        &worldState,
+        validatorAddr,
         &running,
         &producer,
     );
-    defer node_miner.deinit();
+    defer nodeMiner.deinit();
 
-    node_miner.setPipeline(&pipeline);
-    node_miner.setStaking(&staking);
-    node_miner.setValidatorIndex(0);
+    nodeMiner.setPipeline(&pipeline);
+    nodeMiner.setStaking(&staking);
+    nodeMiner.setValidatorIndex(0);
 
     // 8. Epoch Integration
-    const epoch_integration = try node.EpochIntegration.init(
+    const epochIntegration = try node.EpochIntegration.init(
         allocator,
         db.asAbstractDB(),
         100,
     );
-    defer epoch_integration.deinit();
-    node_miner.setEpochIntegration(epoch_integration);
+    defer epochIntegration.deinit();
+    nodeMiner.setEpochIntegration(epochIntegration);
 
     // 9. Historical State
-    const historical_state = try core.historical_state.HistoricalState.init(
+    const historicalState = try core.historical_state.HistoricalState.init(
         allocator,
         db.asAbstractDB(),
-        &world_state,
+        &worldState,
     );
-    defer historical_state.deinit();
-    historical_state.setHead(chain.get_head_number());
+    defer historicalState.deinit();
+    historicalState.setHead(chain.getHeadNumber());
 
     // 10. P2P Server
-    var p2p_server = try p2p.Server.init(allocator, chain, engine, &pool, .{ .listen_port = p2p_port });
-    defer p2p_server.deinit();
-    node_miner.set_p2p(p2p_server);
-    p2p_server.setThreadAttestPool(&thread_attest_pool);
-    p2p_server.setSnowballEngine(&snowball_inst);
+    var p2pServer = try p2p.Server.init(allocator, chain, engine, dagPool, .{ .listenPort = p2pPort });
+    defer p2pServer.deinit();
+    nodeMiner.setP2p(p2pServer);
+    p2pServer.setThreadAttestPool(&threadAttestPool);
+    p2pServer.setSnowballEngine(&snowball);
 
     // P2: Shred Signature Verifier — Ed25519 + 10% sampling
-    var shred_verifier = p2p.shred_verifier.ShredVerifier.init(allocator, .{
-        .sample_rate = 0.10,
+    var shredVerifier = p2p.shred_verifier.ShredVerifier.init(allocator, .{
+        .sampleRate = 0.10,
         .enabled = true,
     });
-    defer shred_verifier.deinit();
+    defer shredVerifier.deinit();
 
     // Register our own validator for self-verification
-    try shred_verifier.addValidator(.{
-        .address = validator_addr,
+    try shredVerifier.addValidator(.{
+        .address = validatorAddr,
         .pubkey = [_]u8{0} ** 32, // Populated from BLS/Ed25519 key in production
         .stake = 100_000_000_000, // 100K ZEE (in gwei units)
         .active = true,
     });
-    p2p_server.setShredVerifier(&shred_verifier);
+    p2pServer.setShredVerifier(&shredVerifier);
 
-    try p2p_server.start();
-    printComponentFmt("├─", "P2P           ", "Port {d} + shred verification", p2p_port);
+    try p2pServer.start();
+    printComponentFmt("├─", "P2P           ", "Port {d} + shred verification", p2pPort);
 
     // 11. JSON-RPC Server
-    const rpc_server = try rpc.Server.init(allocator, http_port, chain, &pool, &exec, &world_state);
-    defer rpc_server.deinit();
-    rpc_server.set_p2p(p2p_server);
-    rpc_server.setHistoricalState(historical_state);
-    rpc_server.setDAGPool(dag_pool);
-    try rpc_server.start();
-    printComponentFmt("└─", "JSON-RPC      ", "Port {d}", http_port);
+    const rpcServer = try rpc.Server.init(allocator, httpPort, chain, dagPool, &dagExecutor, &worldState);
+    defer rpcServer.deinit();
+    rpcServer.setP2P(p2pServer);
+    rpcServer.setHistoricalState(historicalState);
+    rpcServer.setDAGPool(dagPool);
+    try rpcServer.start();
+    printComponentFmt("└─", "JSON-RPC      ", "Port {d}", httpPort);
 
     // ── Node Dashboard ──
     var addr_buf: [42]u8 = undefined;
-    const addr_hex = try @import("utils").hex.encodeBuffer(&addr_buf, &validator_addr.bytes);
+    const addr_hex = try @import("utils").hex.encodeBuffer(&addr_buf, &validatorAddr.bytes);
 
     // Top border
     std.debug.print("\n  " ++ C_GLW ++ "╔══════════════════════════════════════════════════════════╗" ++ RST ++ "\n", .{});
@@ -652,26 +650,26 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.debug.print("  " ++ C_GLW ++ "╠══════════════════════════════════════════════════════════╣" ++ RST ++ "\n", .{});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Network, Chain ID, Validator — each as its own print call
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Network" ++ RST ++ "       " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{network_name});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Chain ID" ++ RST ++ "      " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{network.chain_id});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Network" ++ RST ++ "       " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{networkName});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Chain ID" ++ RST ++ "      " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{network.chainId});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Validator" ++ RST ++ "     " ++ C_CYAN ++ "0x{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{addr_hex});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Mining" ++ RST ++ "        " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{if (should_mine) "● Active" else "○ Standby"});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Mining" ++ RST ++ "        " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{if (shouldMine) "● Active" else "○ Standby"});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Consensus" ++ RST ++ "     " ++ C_MAG ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{@tagName(engine.getCurrentTier())});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Threads" ++ RST ++ "       " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{engine.getThreadCount()});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Endpoints section
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ BOLD ++ C_PUR ++ "ENDPOINTS" ++ RST ++ "                                              " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "P2P" ++ RST ++ "           " ++ C_BLUE ++ ":{d: <39}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{p2p_port});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "JSON-RPC" ++ RST ++ "      " ++ C_BLUE ++ "http://127.0.0.1:{d: <23}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{http_port});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Data Dir" ++ RST ++ "      " ++ C_DIM ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{data_dir});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "P2P" ++ RST ++ "           " ++ C_BLUE ++ ":{d: <39}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{p2pPort});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "JSON-RPC" ++ RST ++ "      " ++ C_BLUE ++ "http://127.0.0.1:{d: <23}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{httpPort});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Data Dir" ++ RST ++ "      " ++ C_DIM ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{dataDir});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Bottom border
     std.debug.print("  " ++ C_GLW ++ "╚══════════════════════════════════════════════════════════╝" ++ RST ++ "\n\n", .{});
 
     // ── Start Block Production ──
-    if (should_mine) {
+    if (shouldMine) {
         std.debug.print("  " ++ C_CYAN ++ "⚡" ++ RST ++ " Block production started. Press " ++ BOLD ++ "Ctrl+C" ++ RST ++ " to stop.\n\n", .{});
-        try node_miner.start();
+        try nodeMiner.start();
     } else {
         std.debug.print("  " ++ C_GRN ++ "◉" ++ RST ++ " Node ready (standby). Press " ++ BOLD ++ "Ctrl+C" ++ RST ++ " to stop.\n\n", .{});
         while (running.load(.seq_cst)) {

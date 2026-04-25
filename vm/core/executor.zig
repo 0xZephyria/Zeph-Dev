@@ -13,13 +13,13 @@
 const std = @import("std");
 const decoder = @import("decoder.zig");
 const sandbox = @import("../memory/sandbox.zig");
-const gas_meter = @import("../gas/meter.zig");
-const gas_table = @import("../gas/table.zig");
+const gasMeter = @import("../gas/meter.zig");
+const gasTable = @import("../gas/table.zig");
 
 // Re-export for convenience
 pub const Instruction = decoder.Instruction;
 pub const SandboxMemory = sandbox.SandboxMemory;
-pub const GasMeter = gas_meter.GasMeter;
+pub const GasMeter = gasMeter.GasMeter;
 
 // ---------------------------------------------------------------------------
 // Execution result
@@ -27,22 +27,22 @@ pub const GasMeter = gas_meter.GasMeter;
 
 pub const ExecutionStatus = enum {
     running,
-    returned, // Normal exit via ECALL return_data (syscall 0x09)
+    returned, // Normal exit via ECALL returnData (syscall 0x09)
     reverted, // Revert via ECALL revert (syscall 0x0A)
-    out_of_gas, // Gas exhausted
+    outOfGas, // Gas exhausted
     fault, // Illegal instruction, segfault, etc.
     breakpoint, // EBREAK hit (debug)
-    self_destruct, // SELFDESTRUCT syscall
+    selfDestruct, // SELFDESTRUCT syscall
 };
 
 pub const ExecutionResult = struct {
     status: ExecutionStatus,
-    gas_used: u64,
-    gas_remaining: u64,
-    return_data_offset: u32, // Offset within return region
-    return_data_len: u32, // Length of return data
-    fault_pc: u32, // PC where fault occurred (if status == .fault)
-    fault_reason: ?[]const u8, // Human-readable fault reason
+    gasUsed: u64,
+    gasRemaining: u64,
+    returnDataOffset: u32, // Offset within return region
+    returnDataLen: u32, // Length of return data
+    faultPc: u32, // PC where fault occurred (if status == .fault)
+    faultReason: ?[]const u8, // Human-readable fault reason
 };
 
 /// Syscall handler function type.
@@ -69,7 +69,7 @@ pub const ForgeVM = struct {
     // ---- CPU State ----
     regs: [32]u64, // x0–x31 (x0 always 0)
     pc: u32, // Program counter (byte address)
-    pc_updated: bool, // Flag: true if pc was set by a branch/jump this cycle
+    pcUpdated: bool, // Flag: true if pc was set by a branch/jump this cycle
 
     // ---- Memory ----
     memory: *SandboxMemory,
@@ -78,64 +78,64 @@ pub const ForgeVM = struct {
     gas: GasMeter,
 
     // ---- Code ----
-    code_len: u32, // Length of loaded code in bytes
-    calldata_len: u32, // Actual calldata length (set by loader)
+    codeLen: u32, // Length of loaded code in bytes
+    calldataLen: u32, // Actual calldata length (set by loader)
 
     // ---- Status ----
     status: ExecutionStatus,
 
     // ---- Syscall ----
-    syscall_handler: ?SyscallFn,
+    syscallHandler: ?SyscallFn,
 
     // ---- Return data ----
-    return_data_offset: u32,
-    return_data_len: u32,
+    returnDataOffset: u32,
+    returnDataLen: u32,
 
     // ---- Fault info ----
-    fault_reason: ?[]const u8,
+    faultReason: ?[]const u8,
 
     // ---- Call depth tracking (EVM-compatible, max 1024) ----
-    call_depth: u16,
-    max_call_depth: u16,
+    callDepth: u16,
+    maxCallDepth: u16,
 
     // ---- Step counter (defense-in-depth against runaway execution) ----
-    step_count: u64,
-    max_steps: u64,
+    stepCount: u64,
+    maxSteps: u64,
 
     // ---- Host context (opaque pointer to HostEnv, avoids shared-static threading bugs) ----
     // Set by the VM creator immediately after init(). The syscall handler retrieves the
     // HostEnv from here rather than from a module-level static, making concurrent VM
     // instances on the same or different threads fully independent.
-    host_ctx: ?*anyopaque,
+    hostCtx: ?*anyopaque,
 
     /// Initialize a new VM instance.
     pub fn init(
         memory: *SandboxMemory,
-        code_len: u32,
-        gas_limit: u64,
-        syscall_handler: ?SyscallFn,
+        codeLen: u32,
+        gasLimit: u64,
+        syscallHandler: ?SyscallFn,
     ) ForgeVM {
         var vm = ForgeVM{
             .regs = [_]u64{0} ** 32,
             .pc = 0,
-            .pc_updated = false,
+            .pcUpdated = false,
             .memory = memory,
-            .gas = GasMeter.init(gas_limit),
-            .code_len = code_len,
-            .calldata_len = 0,
+            .gas = GasMeter.init(gasLimit),
+            .codeLen = codeLen,
+            .calldataLen = 0,
             .status = .running,
-            .syscall_handler = syscall_handler,
-            .return_data_offset = 0,
-            .return_data_len = 0,
-            .fault_reason = null,
-            .call_depth = 0,
-            .max_call_depth = 1024,
-            .step_count = 0,
-            .max_steps = 10_000_000, // 10M steps — configurable defense-in-depth
-            .host_ctx = null,
+            .syscallHandler = syscallHandler,
+            .returnDataOffset = 0,
+            .returnDataLen = 0,
+            .faultReason = null,
+            .callDepth = 0,
+            .maxCallDepth = 1024,
+            .stepCount = 0,
+            .maxSteps = 10_000_000, // 10M steps — configurable defense-in-depth
+            .hostCtx = null,
         };
         // Set stack pointer to top of stack region (grows downward)
-        vm.regs[2] = @as(u64, sandbox.STACK_TOP);
+        vm.regs[2] = @as(u64, sandbox.stackTop);
         return vm;
     }
 
@@ -152,49 +152,49 @@ pub const ForgeVM = struct {
         if (self.status != .running) return;
 
         // 1. Check PC bounds
-        if (self.pc >= self.code_len or self.pc & 3 != 0) {
+        if (self.pc >= self.codeLen or self.pc & 3 != 0) {
             self.status = .fault;
-            self.fault_reason = "PC out of bounds or misaligned";
+            self.faultReason = "PC out of bounds or misaligned";
             return;
         }
 
         // 1b. Check step limit (defense-in-depth)
-        self.step_count += 1;
-        if (self.step_count > self.max_steps) {
+        self.stepCount += 1;
+        if (self.stepCount > self.maxSteps) {
             self.status = .fault;
-            self.fault_reason = "Execution step limit exceeded";
+            self.faultReason = "Execution step limit exceeded";
             return;
         }
 
         // 2. Fetch instruction word
         const word = self.memory.loadWord(self.pc) catch {
             self.status = .fault;
-            self.fault_reason = "Failed to fetch instruction";
+            self.faultReason = "Failed to fetch instruction";
             return;
         };
 
         // 3. Fast gas pre-check using opcode table
         const opcode: u7 = @truncate(word & 0x7F);
         self.gas.consumeOpcode(opcode) catch {
-            self.status = .out_of_gas;
+            self.status = .outOfGas;
             return;
         };
 
         // 4. Decode
         const insn = decoder.decode(word) catch {
             self.status = .fault;
-            self.fault_reason = "Illegal instruction";
+            self.faultReason = "Illegal instruction";
             return;
         };
 
         // 5. For M-extension multiply/divide, charge additional gas
-        if (insn == .r_type) {
-            const r = insn.r_type;
+        if (insn == .rType) {
+            const r = insn.rType;
             if (r.funct7 == decoder.Funct7.MULDIV) {
-                const extra = gas_table.instructionCost(insn) -| gas_table.InstructionGas.ALU;
+                const extra = gasTable.instructionCost(insn) -| gasTable.InstructionGas.ALU;
                 if (extra > 0) {
                     self.gas.consume(extra) catch {
-                        self.status = .out_of_gas;
+                        self.status = .outOfGas;
                         return;
                     };
                 }
@@ -202,14 +202,14 @@ pub const ForgeVM = struct {
         }
 
         // 6. Execute
-        self.pc_updated = false;
+        self.pcUpdated = false;
         self.dispatch(insn);
 
         // 7. Enforce x0 = 0
         self.regs[0] = 0;
 
         // 8. Advance PC (unless a branch/jump already updated it)
-        if (!self.pc_updated and self.status == .running) {
+        if (!self.pcUpdated and self.status == .running) {
             self.pc +%= 4;
         }
     }
@@ -220,12 +220,12 @@ pub const ForgeVM = struct {
 
     fn dispatch(self: *ForgeVM, insn: Instruction) void {
         switch (insn) {
-            .r_type => |r| self.execR(r),
-            .i_type => |i| self.execI(i),
-            .s_type => |s| self.execS(s),
-            .b_type => |b| self.execB(b),
-            .u_type => |u_val| self.execU(u_val),
-            .j_type => |j| self.execJ(j),
+            .rType => |r| self.execR(r),
+            .iType => |i| self.execI(i),
+            .sType => |s| self.execS(s),
+            .bType => |b| self.execB(b),
+            .uType => |u_val| self.execU(u_val),
+            .jType => |j| self.execJ(j),
             .system => |sys| self.execSystem(sys),
             .custom => |c| self.execCustom(c),
         }
@@ -249,33 +249,33 @@ pub const ForgeVM = struct {
         const result: u64 = switch (r.funct7) {
             decoder.Funct7.NORMAL => switch (r.funct3) {
                 decoder.Funct3.ADD_SUB => rs1 +% rs2, // ADD
-                decoder.Funct3.SLL => rs1 << @truncate(if (r.word_op) rs2 & 0x1F else rs2 & 0x3F),
+                decoder.Funct3.SLL => rs1 << @truncate(if (r.wordOp) rs2 & 0x1F else rs2 & 0x3F),
                 decoder.Funct3.SLT => if (@as(i64, @bitCast(rs1)) < @as(i64, @bitCast(rs2))) @as(u64, 1) else @as(u64, 0),
                 decoder.Funct3.SLTU => if (rs1 < rs2) @as(u64, 1) else @as(u64, 0),
                 decoder.Funct3.XOR => rs1 ^ rs2,
-                decoder.Funct3.SRL_SRA => rs1 >> @truncate(if (r.word_op) rs2 & 0x1F else rs2 & 0x3F), // SRL
+                decoder.Funct3.SRL_SRA => rs1 >> @truncate(if (r.wordOp) rs2 & 0x1F else rs2 & 0x3F), // SRL
                 decoder.Funct3.OR => rs1 | rs2,
                 decoder.Funct3.AND => rs1 & rs2,
             },
             decoder.Funct7.SUB_SRA => switch (r.funct3) {
                 decoder.Funct3.ADD_SUB => rs1 -% rs2, // SUB
-                decoder.Funct3.SRL_SRA => @bitCast(@as(i64, @bitCast(rs1)) >> @truncate(if (r.word_op) rs2 & 0x1F else rs2 & 0x3F)), // SRA
+                decoder.Funct3.SRL_SRA => @bitCast(@as(i64, @bitCast(rs1)) >> @truncate(if (r.wordOp) rs2 & 0x1F else rs2 & 0x3F)), // SRA
                 else => {
                     self.status = .fault;
-                    self.fault_reason = "Invalid R-type funct3 with SUB/SRA funct7";
+                    self.faultReason = "Invalid R-type funct3 with SUB/SRA funct7";
                     return;
                 },
             },
-            decoder.Funct7.MULDIV => self.execMulDiv(rs1, rs2, r.funct3, r.word_op),
+            decoder.Funct7.MULDIV => self.execMulDiv(rs1, rs2, r.funct3, r.wordOp),
             else => {
                 self.status = .fault;
-                self.fault_reason = "Invalid R-type funct7";
+                self.faultReason = "Invalid R-type funct7";
                 return;
             },
         };
 
         if (self.status == .running) {
-            self.regs[r.rd] = if (r.word_op) signExtend32(result) else result;
+            self.regs[r.rd] = if (r.wordOp) signExtend32(result) else result;
         }
     }
 
@@ -283,7 +283,7 @@ pub const ForgeVM = struct {
     // M-extension: multiply/divide
     // -------------------------------------------------------------------
 
-    fn execMulDiv(self: *ForgeVM, rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
+    fn execMulDiv(self: *ForgeVM, rs1: u64, rs2: u64, funct3: u3, wordOp: bool) u64 {
         _ = self;
         const s1: i64 = @bitCast(rs1);
         const s2: i64 = @bitCast(rs2);
@@ -309,7 +309,7 @@ pub const ForgeVM = struct {
                 break :blk @truncate(product >> 64);
             },
             decoder.Funct3.DIV => blk: {
-                if (word_op) {
+                if (wordOp) {
                     const ws1: i32 = @truncate(s1);
                     const ws2: i32 = @truncate(s2);
                     if (ws2 == 0) break :blk @as(u64, 0xFFFFFFFF_FFFFFFFF); // -1
@@ -322,7 +322,7 @@ pub const ForgeVM = struct {
                 }
             },
             decoder.Funct3.DIVU => blk: {
-                if (word_op) {
+                if (wordOp) {
                     const wrs1: u32 = @truncate(rs1);
                     const wrs2: u32 = @truncate(rs2);
                     if (wrs2 == 0) break :blk @as(u64, 0xFFFFFFFF_FFFFFFFF);
@@ -333,7 +333,7 @@ pub const ForgeVM = struct {
                 }
             },
             decoder.Funct3.REM => blk: {
-                if (word_op) {
+                if (wordOp) {
                     const ws1: i32 = @truncate(s1);
                     const ws2: i32 = @truncate(s2);
                     if (ws2 == 0) break :blk rs1;
@@ -346,7 +346,7 @@ pub const ForgeVM = struct {
                 }
             },
             decoder.Funct3.REMU => blk: {
-                if (word_op) {
+                if (wordOp) {
                     const wrs1: u32 = @truncate(rs1);
                     const wrs2: u32 = @truncate(rs2);
                     if (wrs2 == 0) break :blk rs1;
@@ -394,7 +394,7 @@ pub const ForgeVM = struct {
 
         const rs1 = self.regs[i.rs1];
         const imm: u64 = @bitCast(i.imm);
-        const word_op = i.word_op;
+        const wordOp = i.wordOp;
 
         switch (opcode) {
             decoder.Opcode.OP_IMM, decoder.Opcode.OP_IMM_32 => {
@@ -405,9 +405,9 @@ pub const ForgeVM = struct {
                     decoder.Funct3.XOR => rs1 ^ imm, // XORI
                     decoder.Funct3.OR => rs1 | imm, // ORI
                     decoder.Funct3.AND => rs1 & imm, // ANDI
-                    decoder.Funct3.SLL => rs1 << @truncate(if (word_op) imm & 0x1F else imm & 0x3F), // SLLI
+                    decoder.Funct3.SLL => rs1 << @truncate(if (wordOp) imm & 0x1F else imm & 0x3F), // SLLI
                     decoder.Funct3.SRL_SRA => blk: {
-                        const shamt: u6 = @truncate(if (word_op) imm & 0x1F else imm & 0x3F);
+                        const shamt: u6 = @truncate(if (wordOp) imm & 0x1F else imm & 0x3F);
                         if (imm & 0x400 != 0) {
                             // SRAI: arithmetic shift right
                             break :blk @bitCast(@as(i64, @bitCast(rs1)) >> shamt);
@@ -417,7 +417,7 @@ pub const ForgeVM = struct {
                         }
                     },
                 };
-                self.regs[i.rd] = if (word_op) signExtend32(result) else result;
+                self.regs[i.rd] = if (wordOp) signExtend32(result) else result;
             },
             decoder.Opcode.LOAD => {
                 const addr: u32 = @truncate(rs1 +% imm);
@@ -425,7 +425,7 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LB => blk: {
                         const b = self.memory.loadByte(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load byte segfault";
+                            self.faultReason = "Load byte segfault";
                             return;
                         };
                         // Sign-extend byte to u64
@@ -434,7 +434,7 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LH => blk: {
                         const h = self.memory.loadHalfword(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load halfword fault";
+                            self.faultReason = "Load halfword fault";
                             return;
                         };
                         // Sign-extend halfword to u64
@@ -443,7 +443,7 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LW => blk: {
                         const w = self.memory.loadWord(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load word fault";
+                            self.faultReason = "Load word fault";
                             return;
                         };
                         // Sign-extend word to u64
@@ -452,7 +452,7 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LBU => blk: {
                         const b = self.memory.loadByte(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load byte unsigned fault";
+                            self.faultReason = "Load byte unsigned fault";
                             return;
                         };
                         // Zero-extend byte to u64
@@ -461,7 +461,7 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LHU => blk: {
                         const h = self.memory.loadHalfword(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load halfword unsigned fault";
+                            self.faultReason = "Load halfword unsigned fault";
                             return;
                         };
                         // Zero-extend halfword to u64
@@ -470,7 +470,7 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LWU => blk: {
                         const w = self.memory.loadWord(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load word unsigned fault";
+                            self.faultReason = "Load word unsigned fault";
                             return;
                         };
                         // Zero-extend word to u64
@@ -479,14 +479,14 @@ pub const ForgeVM = struct {
                     decoder.Funct3.LD => blk: {
                         const dw = self.memory.loadDoubleword(addr) catch {
                             self.status = .fault;
-                            self.fault_reason = "Load doubleword fault";
+                            self.faultReason = "Load doubleword fault";
                             return;
                         };
                         break :blk dw;
                     },
                     else => {
                         self.status = .fault;
-                        self.fault_reason = "Invalid load funct3";
+                        self.faultReason = "Invalid load funct3";
                         return;
                     },
                 };
@@ -494,15 +494,15 @@ pub const ForgeVM = struct {
             },
             decoder.Opcode.JALR => {
                 // JALR: rd = PC+4, jump to (rs1 + imm) & ~1
-                const return_addr = self.pc +% 4;
+                const returnAddr = self.pc +% 4;
                 const target: u32 = @truncate((rs1 +% imm) & 0xFFFFFFFE); // Clear bit 0, truncate to u32
-                self.regs[i.rd] = return_addr;
+                self.regs[i.rd] = returnAddr;
                 self.pc = target;
-                self.pc_updated = true;
+                self.pcUpdated = true;
             },
             else => {
                 self.status = .fault;
-                self.fault_reason = "Unexpected opcode in I-type";
+                self.faultReason = "Unexpected opcode in I-type";
             },
         }
     }
@@ -520,34 +520,34 @@ pub const ForgeVM = struct {
             decoder.Funct3.SB => {
                 self.memory.storeByte(addr, @truncate(rs2)) catch {
                     self.status = .fault;
-                    self.fault_reason = "Store byte fault";
+                    self.faultReason = "Store byte fault";
                     return;
                 };
             },
             decoder.Funct3.SH => {
                 self.memory.storeHalfword(addr, @truncate(rs2)) catch {
                     self.status = .fault;
-                    self.fault_reason = "Store halfword fault";
+                    self.faultReason = "Store halfword fault";
                     return;
                 };
             },
             decoder.Funct3.SW => {
                 self.memory.storeWord(addr, @truncate(rs2)) catch {
                     self.status = .fault;
-                    self.fault_reason = "Store word fault";
+                    self.faultReason = "Store word fault";
                     return;
                 };
             },
             decoder.Funct3.SD => {
                 self.memory.storeDoubleword(addr, rs2) catch {
                     self.status = .fault;
-                    self.fault_reason = "Store doubleword fault";
+                    self.faultReason = "Store doubleword fault";
                     return;
                 };
             },
             else => {
                 self.status = .fault;
-                self.fault_reason = "Invalid store funct3";
+                self.faultReason = "Invalid store funct3";
             },
         }
     }
@@ -571,7 +571,7 @@ pub const ForgeVM = struct {
             decoder.Funct3.BGEU => rs1 >= rs2,
             else => {
                 self.status = .fault;
-                self.fault_reason = "Invalid branch funct3";
+                self.faultReason = "Invalid branch funct3";
                 return;
             },
         };
@@ -579,7 +579,7 @@ pub const ForgeVM = struct {
         if (taken) {
             const target: u32 = @truncate(self.pc +% @as(u64, @bitCast(b.imm)));
             self.pc = target;
-            self.pc_updated = true;
+            self.pcUpdated = true;
         }
     }
 
@@ -606,7 +606,7 @@ pub const ForgeVM = struct {
             },
             else => {
                 self.status = .fault;
-                self.fault_reason = "Unexpected opcode in U-type";
+                self.faultReason = "Unexpected opcode in U-type";
             },
         }
     }
@@ -619,7 +619,7 @@ pub const ForgeVM = struct {
         // JAL: rd = PC+4, jump to PC + signExtend(imm)
         self.regs[j.rd] = self.pc +% 4;
         self.pc = @truncate(self.pc +% @as(u64, @bitCast(j.imm)));
-        self.pc_updated = true;
+        self.pcUpdated = true;
     }
 
     // -------------------------------------------------------------------
@@ -629,7 +629,7 @@ pub const ForgeVM = struct {
     fn execSystem(self: *ForgeVM, sys: decoder.SystemOp) void {
         switch (sys) {
             .ecall => {
-                if (self.syscall_handler) |handler| {
+                if (self.syscallHandler) |handler| {
                     handler(self) catch |err| {
                         switch (err) {
                             error.ReturnData => {
@@ -639,28 +639,28 @@ pub const ForgeVM = struct {
                                 self.status = .reverted;
                             },
                             error.SelfDestruct => {
-                                self.status = .self_destruct;
+                                self.status = .selfDestruct;
                             },
                             error.OutOfGas => {
-                                self.status = .out_of_gas;
+                                self.status = .outOfGas;
                             },
                             error.UnknownSyscall => {
                                 self.status = .fault;
-                                self.fault_reason = "Unknown syscall";
+                                self.faultReason = "Unknown syscall";
                             },
                             error.SegFault => {
                                 self.status = .fault;
-                                self.fault_reason = "Syscall segfault";
+                                self.faultReason = "Syscall segfault";
                             },
                             error.InternalError => {
                                 self.status = .fault;
-                                self.fault_reason = "Syscall internal error";
+                                self.faultReason = "Syscall internal error";
                             },
                         }
                     };
                 } else {
                     self.status = .fault;
-                    self.fault_reason = "No syscall handler installed";
+                    self.faultReason = "No syscall handler installed";
                 }
             },
             .ebreak => {
@@ -668,7 +668,6 @@ pub const ForgeVM = struct {
             },
         }
     }
-
 
     // -------------------------------------------------------------------
     // Custom (ZEPH) instruction dispatch
@@ -681,110 +680,110 @@ pub const ForgeVM = struct {
     //   a0-a5  = arguments 0-5 (input)
     //   a0     = return value
     //
-    // This is different from the ECALL convention (a0=syscall_id, a1=arg0).
+    // This is different from the ECALL convention (a0=syscallId, a1=arg0).
     // execCustom bridges the two: it maps ZephCustomOp → SyscallId and
     // rearranges registers so the existing syscall handlers work correctly.
 
     fn execCustom(self: *ForgeVM, c: decoder.CustomType) void {
-        if (self.syscall_handler == null) {
+        if (self.syscallHandler == null) {
             self.status = .fault;
-            self.fault_reason = "No syscall handler for ZEPH custom instruction";
+            self.faultReason = "No syscall handler for ZEPH custom instruction";
             return;
         }
 
         // Map ZephCustomOp value to the SyscallId the dispatch.zig handlers expect.
         // ZEPH args are in a0-a5; ECALL handlers read args from a1-a5 (a0 = syscall ID).
-        // We shift: save a0→scratch, set a0=syscall_id, move original a0→a1, a1→a2, etc.
+        // We shift: save a0→scratch, set a0=syscallId, move original a0→a1, a1→a2, etc.
         // For ops that return values in a0, the shift is reversed by the handler.
-        const op = c.op_val;
-        const orig_a0 = self.regs[10];
-        const orig_a1 = self.regs[11];
-        const orig_a2 = self.regs[12];
-        const orig_a3 = self.regs[13];
-        const orig_a4 = self.regs[14];
+        const op = c.opVal;
+        const origA0 = self.regs[10];
+        const origA1 = self.regs[11];
+        const origA2 = self.regs[12];
+        const origA3 = self.regs[13];
+        const origA4 = self.regs[14];
 
         // Determine the SyscallId and any special handling needed
-        const syscall_id: u32 = switch (op) {
+        const syscallId: u32 = switch (op) {
             0x00 => blk: { // STATE_READ: a0=field_id, a1=key → a0=value
                 // Remap: a1=field_id(orig a0), a2=key(orig a1) — storage_load reads key from a1
-                self.regs[11] = orig_a0; // field_id as key ptr
-                self.regs[12] = orig_a1; // key_ptr as result ptr (output goes here)
+                self.regs[11] = origA0; // field_id as key ptr
+                self.regs[12] = origA1; // key_ptr as result ptr (output goes here)
                 break :blk 0x01; // STORAGE_LOAD
             },
             0x01 => blk: { // STATE_WRITE: a0=field_id, a1=key, a2=value
-                self.regs[11] = orig_a0; // key ptr
-                self.regs[12] = orig_a1; // value ptr
+                self.regs[11] = origA0; // key ptr
+                self.regs[12] = origA1; // value ptr
                 break :blk 0x02; // STORAGE_STORE
             },
             0x02 => blk: { // STATE_EXISTS: a0=field_id, a1=key → a0=bool
-                self.regs[11] = orig_a0;
-                self.regs[12] = orig_a1;
+                self.regs[11] = origA0;
+                self.regs[12] = origA1;
                 break :blk 0x01; // STORAGE_LOAD, then check if result is non-zero
             },
             0x03 => blk: { // STATE_DELETE: store zero
-                self.regs[11] = orig_a0;
+                self.regs[11] = origA0;
                 self.regs[12] = 0; // zero value
                 break :blk 0x02; // STORAGE_STORE
             },
             0x10 => blk: { // AUTH_CHECK: a0=auth_id → a0=bool
                 self.regs[10] = 0x20; // AUTHORITY_CHECK
-                self.regs[11] = orig_a0; // addr ptr
-                self.regs[12] = orig_a0; // role ptr (same as addr for simple check)
-                self.regs[13] = orig_a0; // account ptr
+                self.regs[11] = origA0; // addr ptr
+                self.regs[12] = origA0; // role ptr (same as addr for simple check)
+                self.regs[13] = origA0; // account ptr
                 break :blk 0x20; // AUTHORITY_CHECK
             },
             0x20 => blk: { // ASSET_TRANSFER: a0=asset_id, a1=from, a2=to, a3=amount
-                self.regs[11] = orig_a0; // asset_id
-                self.regs[12] = orig_a1; // from
-                self.regs[13] = orig_a2; // to
-                self.regs[14] = orig_a3; // amount
+                self.regs[11] = origA0; // asset_id
+                self.regs[12] = origA1; // from
+                self.regs[13] = origA2; // to
+                self.regs[14] = origA3; // amount
                 break :blk 0x10; // ASSET_TRANSFER
             },
             0x21 => blk: { // ASSET_MINT: a0=asset_id, a1=to, a2=amount
-                self.regs[11] = orig_a0;
-                self.regs[12] = orig_a1;
-                self.regs[13] = orig_a2;
+                self.regs[11] = origA0;
+                self.regs[12] = origA1;
+                self.regs[13] = origA2;
                 break :blk 0x12; // ASSET_CREATE
             },
             0x22 => blk: { // ASSET_BURN: a0=asset_id, a1=from, a2=amount
-                self.regs[11] = orig_a0;
-                self.regs[12] = orig_a1;
-                self.regs[13] = orig_a2;
+                self.regs[11] = origA0;
+                self.regs[12] = origA1;
+                self.regs[13] = origA2;
                 break :blk 0x13; // ASSET_BURN
             },
             0x23 => blk: { // NATIVE_PAY: a0=to, a1=amount → ASSET_TRANSFER with ZPH asset_id=0
-                self.regs[11] = 0;        // ZPH asset_id = 0
-                self.regs[12] = 0;        // from = zero (deducted from caller by runtime)
-                self.regs[13] = orig_a0;  // to
-                self.regs[14] = orig_a1;  // amount
+                self.regs[11] = 0; // ZPH asset_id = 0
+                self.regs[12] = 0; // from = zero (deducted from caller by runtime)
+                self.regs[13] = origA0; // to
+                self.regs[14] = origA1; // amount
                 break :blk 0x10; // ASSET_TRANSFER
             },
             0x30 => blk: { // EMIT_EVENT: a0=event_id, a1=data_ptr, a2=data_len
-                self.regs[11] = 0;        // topic_count = 0 (event_id goes as first topic)
-                self.regs[12] = orig_a0;  // topics_ptr (we treat event_id as a topic ptr)
-                self.regs[13] = orig_a1;  // data_ptr
-                self.regs[14] = orig_a2;  // data_len
+                self.regs[11] = 0; // topic_count = 0 (event_id goes as first topic)
+                self.regs[12] = origA0; // topics_ptr (we treat event_id as a topic ptr)
+                self.regs[13] = origA1; // data_ptr
+                self.regs[14] = origA2; // data_len
                 break :blk 0x30; // EMIT_EVENT
             },
             0x31 => blk: { // SCHEDULE_CALL: a0=selector, a1=to, a2=delay
-                self.regs[11] = orig_a1;  // to addr ptr
-                self.regs[12] = 0;        // value = 0
-                self.regs[13] = 0;        // data ptr
-                self.regs[14] = 0;        // data len
+                self.regs[11] = origA1; // to addr ptr
+                self.regs[12] = 0; // value = 0
+                self.regs[13] = 0; // data ptr
+                self.regs[14] = 0; // data len
                 break :blk 0x40; // CALL_CONTRACT
             },
             0x32 => blk: { // REVERT: a0=error_ptr, a1=error_len
-                self.regs[11] = orig_a0;
-                self.regs[12] = orig_a1;
+                self.regs[11] = origA0;
+                self.regs[12] = origA1;
                 break :blk 0x51; // REVERT
             },
             0x33 => blk: { // LOG_DIAGNOSTIC: a0=msg_ptr, a1=msg_len
-                self.regs[11] = orig_a0;
-                self.regs[12] = orig_a1;
+                self.regs[11] = origA0;
+                self.regs[12] = origA1;
                 break :blk 0xFF; // DEBUG_LOG
             },
             0x34 => blk: { // GET_CALLER: → a0=addr_ptr (caller writes to memory[a1])
-                self.regs[11] = orig_a0; // buffer ptr the caller put in a0
+                self.regs[11] = origA0; // buffer ptr the caller put in a0
                 break :blk 0x60; // GET_CALLER
             },
             0x35 => blk: { // GET_NOW: → a0=timestamp
@@ -798,33 +797,33 @@ pub const ForgeVM = struct {
             },
             else => {
                 self.status = .fault;
-                self.fault_reason = "Unknown ZEPH custom op";
+                self.faultReason = "Unknown ZEPH custom op";
                 return;
             },
         };
 
         // Set a0 = syscall ID so dispatch.zig can route it
-        self.regs[10] = syscall_id;
+        self.regs[10] = syscallId;
 
         // Call through the standard syscall handler
-        if (self.syscall_handler) |handler| {
+        if (self.syscallHandler) |handler| {
             handler(self) catch |err| {
                 switch (err) {
-                    error.ReturnData    => self.status = .returned,
-                    error.Revert        => self.status = .reverted,
-                    error.SelfDestruct  => self.status = .self_destruct,
-                    error.OutOfGas      => self.status = .out_of_gas,
+                    error.ReturnData => self.status = .returned,
+                    error.Revert => self.status = .reverted,
+                    error.SelfDestruct => self.status = .selfDestruct,
+                    error.OutOfGas => self.status = .outOfGas,
                     error.UnknownSyscall => {
                         self.status = .fault;
-                        self.fault_reason = "Unknown syscall via ZEPH custom";
+                        self.faultReason = "Unknown syscall via ZEPH custom";
                     },
                     error.SegFault => {
                         self.status = .fault;
-                        self.fault_reason = "Syscall segfault via ZEPH custom";
+                        self.faultReason = "Syscall segfault via ZEPH custom";
                     },
                     error.InternalError => {
                         self.status = .fault;
-                        self.fault_reason = "Syscall internal error via ZEPH custom";
+                        self.faultReason = "Syscall internal error via ZEPH custom";
                     },
                 }
             };
@@ -837,7 +836,7 @@ pub const ForgeVM = struct {
             self.regs[10] = if (self.regs[10] != 0) 1 else 0;
         }
 
-        _ = orig_a4; // suppress unused warning
+        _ = origA4; // suppress unused warning
     }
 
     // -------------------------------------------------------------------
@@ -847,12 +846,12 @@ pub const ForgeVM = struct {
     pub fn buildResult(self: *const ForgeVM) ExecutionResult {
         return .{
             .status = self.status,
-            .gas_used = self.gas.used,
-            .gas_remaining = self.gas.remaining(),
-            .return_data_offset = self.return_data_offset,
-            .return_data_len = self.return_data_len,
-            .fault_pc = if (self.status == .fault) self.pc else 0,
-            .fault_reason = self.fault_reason,
+            .gasUsed = self.gas.used,
+            .gasRemaining = self.gas.remaining(),
+            .returnDataOffset = self.returnDataOffset,
+            .returnDataLen = self.returnDataLen,
+            .faultPc = if (self.status == .fault) self.pc else 0,
+            .faultReason = self.faultReason,
         };
     }
 
@@ -1079,7 +1078,7 @@ test "out of gas stops execution" {
     ctx.fixMemPtr();
     defer ctx.mem.deinit();
     const result = ctx.vm.execute();
-    try testing.expectEqual(ExecutionStatus.out_of_gas, result.status);
+    try testing.expectEqual(ExecutionStatus.outOfGas, result.status);
     try testing.expectEqual(@as(u32, 2), ctx.vm.regs[1]); // Only 2 executed
 }
 
@@ -1118,7 +1117,7 @@ test "simple program: compute 5 + 3 = 8" {
 }
 
 test "SW + LW round-trip in heap" {
-    const heap_base = sandbox.HEAP_START;
+    const heap_base = sandbox.heapStart;
     const code = [_]u32{
         // ADDI x1, x0, 0x42 (value to store)
         encodeI(1, 0, 0, 0x42, decoder.Opcode.OP_IMM),

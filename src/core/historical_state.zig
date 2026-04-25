@@ -67,11 +67,11 @@ pub const HistoricalState = struct {
 
     pub fn getBalanceAt(self: *Self, address: types.Address, block: u64) !u256 {
         if (block >= self.head_block) {
-            return self.current_state.get_balance(address);
+            return self.current_state.getBalance(address);
         }
 
         const target_epoch = block / EPOCH_SIZE;
-        var balance = self.current_state.get_balance(address);
+        var balance = self.current_state.getBalance(address);
 
         var epoch = self.head_epoch;
         while (epoch > target_epoch) {
@@ -93,11 +93,11 @@ pub const HistoricalState = struct {
 
     pub fn getNonceAt(self: *Self, address: types.Address, block: u64) !u64 {
         if (block >= self.head_block) {
-            return self.current_state.get_nonce(address);
+            return self.current_state.getNonce(address);
         }
 
         const target_epoch = block / EPOCH_SIZE;
-        var nonce = self.current_state.get_nonce(address);
+        var nonce = self.current_state.getNonce(address);
 
         var epoch = self.head_epoch;
         while (epoch > target_epoch) {

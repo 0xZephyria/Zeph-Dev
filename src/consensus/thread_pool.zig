@@ -112,7 +112,7 @@ pub const ThreadAttestationPool = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        const tid = attestation.thread_id;
+        const tid = attestation.threadId;
         if (tid >= types.MAX_THREADS) {
             self.total_attestations_rejected += 1;
             return false;
@@ -125,14 +125,14 @@ pub const ThreadAttestationPool = struct {
         }
 
         // Deduplicate
-        if (self.attested_validators[tid].contains(attestation.validator_index)) {
+        if (self.attested_validators[tid].contains(attestation.validatorIndex)) {
             return false;
         }
 
         // Store attestation
         try self.attestations[tid].append(self.allocator, attestation);
-        try self.attested_validators[tid].put(attestation.validator_index, {});
-        self.attested_stake[tid] += attestation.attesting_stake;
+        try self.attested_validators[tid].put(attestation.validatorIndex, {});
+        self.attested_stake[tid] += attestation.attestingStake;
         self.total_attestations_received += 1;
 
         // Check if we've reached quorum for this thread
@@ -165,9 +165,9 @@ pub const ThreadAttestationPool = struct {
         // Build weaver bitmap
         var weaver_bitmap: [32]u8 = [_]u8{0} ** 32;
         for (atts) |att| {
-            if (att.validator_index < 256) {
-                const byte_idx = att.validator_index / 8;
-                const bit_idx: u3 = @intCast(att.validator_index % 8);
+            if (att.validatorIndex < 256) {
+                const byte_idx = att.validatorIndex / 8;
+                const bit_idx: u3 = @intCast(att.validatorIndex % 8);
                 weaver_bitmap[byte_idx] |= (@as(u8, 1) << bit_idx);
             }
         }
@@ -178,7 +178,7 @@ pub const ThreadAttestationPool = struct {
 
         for (atts) |att| {
             var sig_affine = std.mem.zeroes(blst_c.blst_p2_affine);
-            const res = blst_c.blst_p2_uncompress(&sig_affine, &att.bls_signature);
+            const res = blst_c.blst_p2_uncompress(&sig_affine, &att.blsSignature);
             if (res != blst_c.BLST_SUCCESS) continue;
 
             var sig_jac = std.mem.zeroes(blst_c.blst_p2);
@@ -197,12 +197,12 @@ pub const ThreadAttestationPool = struct {
 
         return types.ThreadCertificate{
             .slot = self.current_slot,
-            .thread_id = thread_id,
+            .threadId = thread_id,
             .thread_root = thread_root,
-            .aggregate_signature = agg_sig_bytes,
-            .weaver_bitmap = weaver_bitmap,
-            .attesting_stake = self.attested_stake[tid],
-            .total_eligible_stake = self.eligible_stake[tid],
+            .aggregateSignature = agg_sig_bytes,
+            .weaverBitmap = weaver_bitmap,
+            .attestingStake = self.attested_stake[tid],
+            .totalEligibleStake = self.eligible_stake[tid],
         };
     }
 

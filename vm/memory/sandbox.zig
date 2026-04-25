@@ -7,9 +7,9 @@ const std = @import("std");
 
 /// Memory access permissions
 pub const Permission = enum {
-    read_execute, // Code region: read + execute, no write
-    read_write, // Heap, Stack, Return regions
-    read_only, // Calldata region
+    readExecute, // Code region: read + execute, no write
+    readWrite, // Heap, Stack, Return regions
+    readOnly, // Calldata region
 };
 
 /// A named memory region with offset, size, and permission
@@ -22,47 +22,47 @@ pub const Region = struct {
 
 /// Memory region layout — matches architecture doc exactly.
 pub const REGIONS = [_]Region{
-    .{ .start = 0x0000_0000, .end = 0x0001_FFFF, .perm = .read_execute, .name = "Code" }, // 128 KB
-    .{ .start = 0x0002_0000, .end = 0x0005_FFFF, .perm = .read_write, .name = "Heap" }, // 256 KB
-    .{ .start = 0x0006_0000, .end = 0x0006_FFFF, .perm = .read_write, .name = "Stack" }, // 64 KB
-    .{ .start = 0x0007_0000, .end = 0x0007_3FFF, .perm = .read_only, .name = "Calldata" }, // 16 KB
-    .{ .start = 0x0007_4000, .end = 0x0007_7FFF, .perm = .read_write, .name = "Return" }, // 16 KB
-    .{ .start = 0x0007_8000, .end = 0x0007_FFFF, .perm = .read_write, .name = "Scratch" }, // 32 KB
+    .{ .start = 0x0000_0000, .end = 0x0001_FFFF, .perm = .readExecute, .name = "Code" }, // 128 KB
+    .{ .start = 0x0002_0000, .end = 0x0005_FFFF, .perm = .readWrite, .name = "Heap" }, // 256 KB
+    .{ .start = 0x0006_0000, .end = 0x0006_FFFF, .perm = .readWrite, .name = "Stack" }, // 64 KB
+    .{ .start = 0x0007_0000, .end = 0x0007_3FFF, .perm = .readOnly, .name = "Calldata" }, // 16 KB
+    .{ .start = 0x0007_4000, .end = 0x0007_7FFF, .perm = .readWrite, .name = "Return" }, // 16 KB
+    .{ .start = 0x0007_8000, .end = 0x0007_FFFF, .perm = .readWrite, .name = "Scratch" }, // 32 KB
 };
 
 /// Total memory size (512 KB)
-pub const MEMORY_SIZE: u32 = 0x0008_0000;
+pub const memorySize: u32 = 0x0008_0000;
 
 /// Code region constants
-pub const CODE_START: u32 = 0x0000_0000;
-pub const CODE_END: u32 = 0x0001_FFFF;
-pub const CODE_SIZE: u32 = 0x0002_0000; // 128 KB
+pub const codeStart: u32 = 0x0000_0000;
+pub const codeEnd: u32 = 0x0001_FFFF;
+pub const codeSize: u32 = 0x0002_0000; // 128 KB
 
 /// Heap region constants
-pub const HEAP_START: u32 = 0x0002_0000;
-pub const HEAP_END: u32 = 0x0005_FFFF;
+pub const heapStart: u32 = 0x0002_0000;
+pub const heapEnd: u32 = 0x0005_FFFF;
 
 /// Stack region constants
-pub const STACK_START: u32 = 0x0006_0000;
-pub const STACK_END:   u32 = 0x0006_FFFF;
-/// STACK_TOP must be 8-byte aligned so the compiler prologue's first
+pub const stackStart: u32 = 0x0006_0000;
+pub const stackEnd:   u32 = 0x0006_FFFF;
+/// stackTop must be 8-byte aligned so the compiler prologue's first
 /// SD (store doubleword) after ADDI sp, sp, -N lands on an aligned address.
 /// 0x0006_FFFC was only 4-byte aligned → storeDoubleword fault on every call.
-pub const STACK_TOP:   u32 = 0x0006_FFF8;
+pub const stackTop:   u32 = 0x0006_FFF8;
 
 /// Calldata region constants
-pub const CALLDATA_START: u32 = 0x0007_0000;
-pub const CALLDATA_END: u32 = 0x0007_3FFF;
-pub const CALLDATA_SIZE: u32 = 0x0000_4000; // 16 KB
+pub const calldataStart: u32 = 0x0007_0000;
+pub const calldataEnd: u32 = 0x0007_3FFF;
+pub const calldataSize: u32 = 0x0000_4000; // 16 KB
 
 /// Return data region constants
-pub const RETURN_START: u32 = 0x0007_4000;
-pub const RETURN_END: u32 = 0x0007_7FFF;
-pub const RETURN_SIZE: u32 = 0x0000_4000; // 16 KB
+pub const returnStart: u32 = 0x0007_4000;
+pub const returnEnd: u32 = 0x0007_7FFF;
+pub const returnSize: u32 = 0x0000_4000; // 16 KB
 
 /// Scratch region constants
-pub const SCRATCH_START: u32 = 0x0007_8000;
-pub const SCRATCH_END: u32 = 0x0007_FFFF;
+pub const scratchStart: u32 = 0x0007_8000;
+pub const scratchEnd: u32 = 0x0007_FFFF;
 
 pub const MemoryError = error{
     SegFault, // Access outside any valid region
@@ -78,7 +78,7 @@ pub const SandboxMemory = struct {
 
     /// Create a new sandbox memory instance.
     pub fn init(allocator: std.mem.Allocator) !SandboxMemory {
-        const backing = try allocator.alloc(u8, MEMORY_SIZE);
+        const backing = try allocator.alloc(u8, memorySize);
         @memset(backing, 0);
         return .{
             .backing = backing,
@@ -107,15 +107,15 @@ pub const SandboxMemory = struct {
     /// Only clears heap, stack, calldata, and return regions — code region is overwritten by loadCode.
     pub fn reset(self: *SandboxMemory) void {
         // Clear heap (256 KB)
-        @memset(self.backing[HEAP_START .. HEAP_END + 1], 0);
+        @memset(self.backing[heapStart .. heapEnd + 1], 0);
         // Clear stack (64 KB)
-        @memset(self.backing[STACK_START .. STACK_END + 1], 0);
+        @memset(self.backing[stackStart .. stackEnd + 1], 0);
         // Clear calldata (16 KB)
-        @memset(self.backing[CALLDATA_START .. CALLDATA_END + 1], 0);
+        @memset(self.backing[calldataStart .. calldataEnd + 1], 0);
         // Clear return data (16 KB)
-        @memset(self.backing[RETURN_START .. RETURN_END + 1], 0);
+        @memset(self.backing[returnStart .. returnEnd + 1], 0);
         // Clear scratch (32 KB)
-        @memset(self.backing[SCRATCH_START .. SCRATCH_END + 1], 0);
+        @memset(self.backing[scratchStart .. scratchEnd + 1], 0);
     }
 
     // -------------------------------------------------------------------
@@ -203,24 +203,24 @@ pub const SandboxMemory = struct {
     /// Write a slice of bytes into the backing memory at the given offset.
     /// Bypasses permission checks — used for initial setup only.
     pub fn loadCode(self: *SandboxMemory, code: []const u8) MemoryError!void {
-        if (code.len > CODE_SIZE) return MemoryError.SegFault;
-        @memcpy(self.backing[CODE_START..][0..code.len], code);
+        if (code.len > codeSize) return MemoryError.SegFault;
+        @memcpy(self.backing[codeStart..][0..code.len], code);
     }
 
     /// Write calldata into the calldata region.
     pub fn loadCalldata(self: *SandboxMemory, calldata: []const u8) MemoryError!void {
-        if (calldata.len > CALLDATA_SIZE) return MemoryError.SegFault;
-        @memcpy(self.backing[CALLDATA_START..][0..calldata.len], calldata);
+        if (calldata.len > calldataSize) return MemoryError.SegFault;
+        @memcpy(self.backing[calldataStart..][0..calldata.len], calldata);
     }
 
     /// Read return data from the return region.
     pub fn getReturnData(self: *const SandboxMemory, offset: u64, len: u64) MemoryError![]const u8 {
-        if (offset > RETURN_END or len > RETURN_SIZE) return MemoryError.SegFault;
+        if (offset > returnEnd or len > returnSize) return MemoryError.SegFault;
         const offset32: u32 = @truncate(offset);
         const len32: u32 = @truncate(len);
-        const start = RETURN_START + offset32;
+        const start = returnStart + offset32;
         const end = start + len32;
-        if (end > RETURN_END + 1) return MemoryError.SegFault;
+        if (end > returnEnd + 1) return MemoryError.SegFault;
         return self.backing[start..end];
     }
 
@@ -268,42 +268,42 @@ pub const SandboxMemory = struct {
     fn checkAccess(self: *const SandboxMemory, addr: u64, size: u64, mode: AccessMode) MemoryError!void {
         _ = self;
         if (size == 0) return;
-        const end_addr = addr +| (size - 1); // saturating add
-        if (end_addr >= MEMORY_SIZE) return MemoryError.SegFault;
+        const endAddr = addr +| (size - 1); // saturating add
+        if (endAddr >= memorySize) return MemoryError.SegFault;
 
         // Fast-path: direct address range comparisons (replaces region loop scan).
         // Ordered by access frequency: Heap > Stack > Code > Return > Calldata.
         // This eliminates a 5-iteration loop on every memory access.
 
         // Heap (256 KB) — most common access pattern
-        if (addr >= HEAP_START and end_addr <= HEAP_END) {
+        if (addr >= heapStart and endAddr <= heapEnd) {
             return; // Heap is RW — always OK
         }
 
         // Stack (64 KB) — second most common
-        if (addr >= STACK_START and end_addr <= STACK_END) {
+        if (addr >= stackStart and endAddr <= stackEnd) {
             return; // Stack is RW — always OK
         }
 
         // Code (64 KB) — read/execute only
-        if (addr >= CODE_START and end_addr <= CODE_END) {
+        if (addr >= codeStart and endAddr <= codeEnd) {
             if (mode == .write) return MemoryError.PermissionDenied;
             return;
         }
 
         // Return data (16 KB) — writable
-        if (addr >= RETURN_START and end_addr <= RETURN_END) {
+        if (addr >= returnStart and endAddr <= returnEnd) {
             return; // Return is RW
         }
 
         // Calldata (16 KB) — read-only
-        if (addr >= CALLDATA_START and end_addr <= CALLDATA_END) {
+        if (addr >= calldataStart and endAddr <= calldataEnd) {
             if (mode == .write) return MemoryError.PermissionDenied;
             return;
         }
 
         // Scratch data (32 KB) — writable
-        if (addr >= SCRATCH_START and end_addr <= SCRATCH_END) {
+        if (addr >= scratchStart and endAddr <= scratchEnd) {
             return;
         }
 
@@ -321,44 +321,44 @@ const testing = std.testing;
 test "init and deinit" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    try testing.expectEqual(@as(usize, MEMORY_SIZE), mem.backing.len);
+    try testing.expectEqual(@as(usize, memorySize), mem.backing.len);
 }
 
 test "load/store word in heap" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    try mem.storeWord(HEAP_START, 0xDEADBEEF);
-    const val = try mem.loadWord(HEAP_START);
+    try mem.storeWord(heapStart, 0xDEADBEEF);
+    const val = try mem.loadWord(heapStart);
     try testing.expectEqual(@as(u32, 0xDEADBEEF), val);
 }
 
 test "load/store byte in heap" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    try mem.storeByte(HEAP_START + 100, 0x42);
-    const val = try mem.loadByte(HEAP_START + 100);
+    try mem.storeByte(heapStart + 100, 0x42);
+    const val = try mem.loadByte(heapStart + 100);
     try testing.expectEqual(@as(u8, 0x42), val);
 }
 
 test "load/store halfword in stack" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    try mem.storeHalfword(STACK_START, 0xBEEF);
-    const val = try mem.loadHalfword(STACK_START);
+    try mem.storeHalfword(stackStart, 0xBEEF);
+    const val = try mem.loadHalfword(stackStart);
     try testing.expectEqual(@as(u16, 0xBEEF), val);
 }
 
 test "write to code region fails" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    const result = mem.storeWord(CODE_START, 0x12345678);
+    const result = mem.storeWord(codeStart, 0x12345678);
     try testing.expectError(MemoryError.PermissionDenied, result);
 }
 
 test "write to calldata region fails" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    const result = mem.storeByte(CALLDATA_START, 0xFF);
+    const result = mem.storeByte(calldataStart, 0xFF);
     try testing.expectError(MemoryError.PermissionDenied, result);
 }
 
@@ -367,14 +367,14 @@ test "read from code region succeeds" {
     defer mem.deinit();
     // Load code bypasses permissions
     try mem.loadCode(&[_]u8{ 0x13, 0x00, 0x00, 0x00 }); // NOP
-    const val = try mem.loadWord(CODE_START);
+    const val = try mem.loadWord(codeStart);
     try testing.expectEqual(@as(u32, 0x00000013), val);
 }
 
 test "access beyond memory size returns SegFault" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    const result = mem.loadByte(MEMORY_SIZE);
+    const result = mem.loadByte(memorySize);
     try testing.expectError(MemoryError.SegFault, result);
 }
 
@@ -383,14 +383,14 @@ test "access beyond memory size returns SegFault" {
 test "misaligned word access returns error" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    const result = mem.loadWord(HEAP_START + 1);
+    const result = mem.loadWord(heapStart + 1);
     try testing.expectError(MemoryError.MisalignedAccess, result);
 }
 
 test "misaligned halfword access returns error" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    const result = mem.loadHalfword(HEAP_START + 1);
+    const result = mem.loadHalfword(heapStart + 1);
     try testing.expectError(MemoryError.MisalignedAccess, result);
 }
 
@@ -399,14 +399,14 @@ test "loadCalldata and read back" {
     defer mem.deinit();
     const cd = [_]u8{ 0xA0, 0xB0, 0xC0, 0xD0 };
     try mem.loadCalldata(&cd);
-    try testing.expectEqual(@as(u8, 0xA0), try mem.loadByte(CALLDATA_START));
-    try testing.expectEqual(@as(u8, 0xD0), try mem.loadByte(CALLDATA_START + 3));
+    try testing.expectEqual(@as(u8, 0xA0), try mem.loadByte(calldataStart));
+    try testing.expectEqual(@as(u8, 0xD0), try mem.loadByte(calldataStart + 3));
 }
 
 test "return region is writable" {
     var mem = try SandboxMemory.init(testing.allocator);
     defer mem.deinit();
-    try mem.storeWord(RETURN_START, 0x12345678);
-    const val = try mem.loadWord(RETURN_START);
+    try mem.storeWord(returnStart, 0x12345678);
+    const val = try mem.loadWord(returnStart);
     try testing.expectEqual(@as(u32, 0x12345678), val);
 }

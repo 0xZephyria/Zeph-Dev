@@ -44,7 +44,7 @@ pub const DecodedInsn = struct {
     /// Original opcode (for I-type/U-type disambiguation that uses re-fetch)
     opcode: u7,
     /// Pre-computed gas cost for this instruction
-    gas_cost: u64,
+    gasCost: u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,15 +54,15 @@ pub const DecodedInsn = struct {
 /// Pre-decode an entire program into a DecodedInsn array.
 /// Called once at contract load time. The result is cached for reuse
 /// across multiple executions of the same contract.
-pub fn preDecodeProgram(allocator: std.mem.Allocator, code: []const u8, code_len: u32) ![]DecodedInsn {
-    const insn_count = code_len / 4;
-    if (insn_count == 0) return allocator.alloc(DecodedInsn, 0);
+pub fn preDecodeProgram(allocator: std.mem.Allocator, code: []const u8, codeLen: u32) ![]DecodedInsn {
+    const insnCount = codeLen / 4;
+    if (insnCount == 0) return allocator.alloc(DecodedInsn, 0);
 
-    var insns = try allocator.alloc(DecodedInsn, insn_count);
+    var insns = try allocator.alloc(DecodedInsn, insnCount);
     errdefer allocator.free(insns);
 
     var i: u32 = 0;
-    while (i < insn_count) : (i += 1) {
+    while (i < insnCount) : (i += 1) {
         const pc = i * 4;
         const word = std.mem.readInt(u32, code[pc..][0..4], .little);
         const opcode: u7 = @truncate(word & 0x7F);
@@ -72,22 +72,22 @@ pub fn preDecodeProgram(allocator: std.mem.Allocator, code: []const u8, code_len
             insns[i] = .{
                 .insn = .{ .system = .ebreak },
                 .opcode = 0,
-                .gas_cost = 0,
+                .gasCost = 0,
             };
             continue;
         };
 
         // Compute gas cost
-        var gas_cost = gas_table.OPCODE_GAS_TABLE[opcode];
+        var gasCost = gas_table.OPCODE_GAS_TABLE[opcode];
         if (insn == .r_type and insn.r_type.funct7 == decoder.Funct7.MULDIV) {
             const extra = gas_table.instructionCost(insn) -| gas_table.InstructionGas.ALU;
-            gas_cost += extra;
+            gasCost += extra;
         }
 
         insns[i] = .{
             .insn = insn,
             .opcode = opcode,
-            .gas_cost = gas_cost,
+            .gasCost = gasCost,
         };
     }
 
@@ -115,7 +115,7 @@ pub fn executeThreaded(
         const insn_idx = vm.pc / 4;
         if (insn_idx >= decoded.len) {
             vm.status = .fault;
-            vm.fault_reason = "PC out of bounds";
+            vm.faultReason = "PC out of bounds";
             break;
         }
 
@@ -125,11 +125,11 @@ pub fn executeThreaded(
         if (analysis) |a| {
             const block_idx = a.getBlockForPC(vm.pc);
             if (block_idx) |bi| {
-                if (bi < a.block_count) {
+                if (bi < a.blockCount) {
                     const block = a.blocks[bi];
                     // Only pre-charge if we're at the start of the block
-                    if (vm.pc == block.start_pc) {
-                        vm.gas.consume(block.total_gas) catch {
+                    if (vm.pc == block.startPc) {
+                        vm.gas.consume(block.totalGas) catch {
                             vm.status = .out_of_gas;
                             break;
                         };
@@ -144,27 +144,27 @@ pub fn executeThreaded(
 
         // ---- Fallback: per-instruction execution (when no analysis or mid-block entry) ----
         // Step limit check
-        vm.step_count += 1;
-        if (vm.step_count > vm.max_steps) {
+        vm.stepCount += 1;
+        if (vm.stepCount > vm.maxSteps) {
             vm.status = .fault;
-            vm.fault_reason = "Execution step limit exceeded";
+            vm.faultReason = "Execution step limit exceeded";
             break;
         }
 
         const di = decoded[insn_idx];
 
         // Per-instruction gas (only when not using block-level gas)
-        vm.gas.consume(di.gas_cost) catch {
+        vm.gas.consume(di.gasCost) catch {
             vm.status = .out_of_gas;
             break;
         };
 
         // Dispatch
-        vm.pc_updated = false;
+        vm.pcUpdated = false;
         dispatchDecoded(vm, di);
         vm.regs[0] = 0; // Enforce x0 = 0
 
-        if (!vm.pc_updated and vm.status == .running) {
+        if (!vm.pcUpdated and vm.status == .running) {
             vm.pc +%= 4;
         }
     }
@@ -179,32 +179,32 @@ fn executeBlock(
     decoded: []const DecodedInsn,
     block: basic_block.BasicBlock,
 ) void {
-    var pc = block.start_pc;
+    var pc = block.startPc;
     var steps: u16 = 0;
 
-    while (steps < block.insn_count and vm.status == .running) : (steps += 1) {
+    while (steps < block.insnCount and vm.status == .running) : (steps += 1) {
         const insn_idx = pc / 4;
         if (insn_idx >= decoded.len) {
             vm.status = .fault;
-            vm.fault_reason = "PC out of bounds in block";
+            vm.faultReason = "PC out of bounds in block";
             return;
         }
 
-        vm.step_count += 1;
-        if (vm.step_count > vm.max_steps) {
+        vm.stepCount += 1;
+        if (vm.stepCount > vm.maxSteps) {
             vm.status = .fault;
-            vm.fault_reason = "Execution step limit exceeded";
+            vm.faultReason = "Execution step limit exceeded";
             return;
         }
 
         vm.pc = pc;
-        vm.pc_updated = false;
+        vm.pcUpdated = false;
 
         const di = decoded[insn_idx];
         dispatchDecoded(vm, di);
         vm.regs[0] = 0;
 
-        if (vm.pc_updated) {
+        if (vm.pcUpdated) {
             // Branch/jump taken — exit block, let outer loop handle
             return;
         }
@@ -213,7 +213,7 @@ fn executeBlock(
     }
 
     // Reached end of basic block normally — update PC past the block
-    vm.pc = block.end_pc +% 4;
+    vm.pc = block.endPc +% 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,37 +253,37 @@ inline fn execR(vm: *ForgeVM, r: decoder.RType) void {
     const result: u64 = switch (r.funct7) {
         decoder.Funct7.NORMAL => switch (r.funct3) {
             decoder.Funct3.ADD_SUB => rs1 +% rs2,
-            decoder.Funct3.SLL => rs1 << @truncate(if (r.word_op) rs2 & 0x1F else rs2 & 0x3F),
+            decoder.Funct3.SLL => rs1 << @truncate(if (r.wordOp) rs2 & 0x1F else rs2 & 0x3F),
             decoder.Funct3.SLT => if (@as(i64, @bitCast(rs1)) < @as(i64, @bitCast(rs2))) @as(u64, 1) else @as(u64, 0),
             decoder.Funct3.SLTU => if (rs1 < rs2) @as(u64, 1) else @as(u64, 0),
             decoder.Funct3.XOR => rs1 ^ rs2,
-            decoder.Funct3.SRL_SRA => rs1 >> @truncate(if (r.word_op) rs2 & 0x1F else rs2 & 0x3F),
+            decoder.Funct3.SRL_SRA => rs1 >> @truncate(if (r.wordOp) rs2 & 0x1F else rs2 & 0x3F),
             decoder.Funct3.OR => rs1 | rs2,
             decoder.Funct3.AND => rs1 & rs2,
         },
         decoder.Funct7.SUB_SRA => switch (r.funct3) {
             decoder.Funct3.ADD_SUB => rs1 -% rs2,
-            decoder.Funct3.SRL_SRA => @bitCast(@as(i64, @bitCast(rs1)) >> @truncate(if (r.word_op) rs2 & 0x1F else rs2 & 0x3F)),
+            decoder.Funct3.SRL_SRA => @bitCast(@as(i64, @bitCast(rs1)) >> @truncate(if (r.wordOp) rs2 & 0x1F else rs2 & 0x3F)),
             else => {
                 vm.status = .fault;
-                vm.fault_reason = "Invalid R-type funct3 with SUB/SRA";
+                vm.faultReason = "Invalid R-type funct3 with SUB/SRA";
                 return;
             },
         },
-        decoder.Funct7.MULDIV => execMulDiv(rs1, rs2, r.funct3, r.word_op),
+        decoder.Funct7.MULDIV => execMulDiv(rs1, rs2, r.funct3, r.wordOp),
         else => {
             vm.status = .fault;
-            vm.fault_reason = "Invalid R-type funct7";
+            vm.faultReason = "Invalid R-type funct7";
             return;
         },
     };
 
     if (vm.status == .running) {
-        vm.regs[r.rd] = if (r.word_op) signExtend32(result) else result;
+        vm.regs[r.rd] = if (r.wordOp) signExtend32(result) else result;
     }
 }
 
-inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
+inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, wordOp: bool) u64 {
     const s1: i64 = @bitCast(rs1);
     const s2: i64 = @bitCast(rs2);
 
@@ -304,7 +304,7 @@ inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
             break :blk @truncate(product >> 64);
         },
         decoder.Funct3.DIV => blk: {
-            if (word_op) {
+            if (wordOp) {
                 const ws1: i32 = @truncate(s1);
                 const ws2: i32 = @truncate(s2);
                 if (ws2 == 0) break :blk @as(u64, 0xFFFFFFFF_FFFFFFFF);
@@ -317,7 +317,7 @@ inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
             }
         },
         decoder.Funct3.DIVU => blk: {
-            if (word_op) {
+            if (wordOp) {
                 const wrs1: u32 = @truncate(rs1);
                 const wrs2: u32 = @truncate(rs2);
                 if (wrs2 == 0) break :blk @as(u64, 0xFFFFFFFF_FFFFFFFF);
@@ -328,7 +328,7 @@ inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
             }
         },
         decoder.Funct3.REM => blk: {
-            if (word_op) {
+            if (wordOp) {
                 const ws1: i32 = @truncate(s1);
                 const ws2: i32 = @truncate(s2);
                 if (ws2 == 0) break :blk rs1;
@@ -341,7 +341,7 @@ inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
             }
         },
         decoder.Funct3.REMU => blk: {
-            if (word_op) {
+            if (wordOp) {
                 const wrs1: u32 = @truncate(rs1);
                 const wrs2: u32 = @truncate(rs2);
                 if (wrs2 == 0) break :blk rs1;
@@ -359,7 +359,7 @@ inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, word_op: bool) u64 {
 inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
     const rs1 = vm.regs[i.rs1];
     const imm: u64 = @bitCast(i.imm);
-    const word_op = i.word_op;
+    const wordOp = i.wordOp;
 
     switch (opcode) {
         decoder.Opcode.OP_IMM, decoder.Opcode.OP_IMM_32 => {
@@ -370,9 +370,9 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.XOR => rs1 ^ imm,
                 decoder.Funct3.OR => rs1 | imm,
                 decoder.Funct3.AND => rs1 & imm,
-                decoder.Funct3.SLL => rs1 << @truncate(if (word_op) imm & 0x1F else imm & 0x3F),
+                decoder.Funct3.SLL => rs1 << @truncate(if (wordOp) imm & 0x1F else imm & 0x3F),
                 decoder.Funct3.SRL_SRA => blk: {
-                    const shamt: u6 = @truncate(if (word_op) imm & 0x1F else imm & 0x3F);
+                    const shamt: u6 = @truncate(if (wordOp) imm & 0x1F else imm & 0x3F);
                     if (imm & 0x400 != 0) {
                         break :blk @bitCast(@as(i64, @bitCast(rs1)) >> shamt);
                     } else {
@@ -380,7 +380,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                     }
                 },
             };
-            vm.regs[i.rd] = if (word_op) signExtend32(result) else result;
+            vm.regs[i.rd] = if (wordOp) signExtend32(result) else result;
         },
         decoder.Opcode.LOAD => {
             const addr: u32 = @truncate(rs1 +% imm);
@@ -388,7 +388,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LB => blk: {
                     const b = vm.memory.loadByte(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load byte segfault";
+                        vm.faultReason = "Load byte segfault";
                         return;
                     };
                     break :blk @bitCast(@as(i64, @as(i8, @bitCast(b))));
@@ -396,7 +396,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LH => blk: {
                     const h = vm.memory.loadHalfword(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load halfword fault";
+                        vm.faultReason = "Load halfword fault";
                         return;
                     };
                     break :blk @bitCast(@as(i64, @as(i16, @bitCast(h))));
@@ -404,7 +404,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LW => blk: {
                     const w = vm.memory.loadWord(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load word fault";
+                        vm.faultReason = "Load word fault";
                         return;
                     };
                     break :blk @bitCast(@as(i64, @as(i32, @bitCast(w))));
@@ -412,7 +412,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LBU => blk: {
                     const b = vm.memory.loadByte(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load byte unsigned fault";
+                        vm.faultReason = "Load byte unsigned fault";
                         return;
                     };
                     break :blk @as(u64, b);
@@ -420,7 +420,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LHU => blk: {
                     const h = vm.memory.loadHalfword(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load halfword unsigned fault";
+                        vm.faultReason = "Load halfword unsigned fault";
                         return;
                     };
                     break :blk @as(u64, h);
@@ -428,7 +428,7 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LWU => blk: {
                     const w = vm.memory.loadWord(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load word unsigned fault";
+                        vm.faultReason = "Load word unsigned fault";
                         return;
                     };
                     break :blk @as(u64, w);
@@ -436,14 +436,14 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
                 decoder.Funct3.LD => blk: {
                     const dw = vm.memory.loadDoubleword(addr) catch {
                         vm.status = .fault;
-                        vm.fault_reason = "Load doubleword fault";
+                        vm.faultReason = "Load doubleword fault";
                         return;
                     };
                     break :blk dw;
                 },
                 else => {
                     vm.status = .fault;
-                    vm.fault_reason = "Invalid load funct3";
+                    vm.faultReason = "Invalid load funct3";
                     return;
                 },
             };
@@ -454,11 +454,11 @@ inline fn execI(vm: *ForgeVM, i: decoder.IType, opcode: u7) void {
             const target: u32 = @truncate((rs1 +% imm) & 0xFFFFFFFE);
             vm.regs[i.rd] = return_addr;
             vm.pc = target;
-            vm.pc_updated = true;
+            vm.pcUpdated = true;
         },
         else => {
             vm.status = .fault;
-            vm.fault_reason = "Unexpected opcode in I-type";
+            vm.faultReason = "Unexpected opcode in I-type";
         },
     }
 }
@@ -472,34 +472,34 @@ inline fn execS(vm: *ForgeVM, s: decoder.SType) void {
         decoder.Funct3.SB => {
             vm.memory.storeByte(addr, @truncate(rs2)) catch {
                 vm.status = .fault;
-                vm.fault_reason = "Store byte fault";
+                vm.faultReason = "Store byte fault";
                 return;
             };
         },
         decoder.Funct3.SH => {
             vm.memory.storeHalfword(addr, @truncate(rs2)) catch {
                 vm.status = .fault;
-                vm.fault_reason = "Store halfword fault";
+                vm.faultReason = "Store halfword fault";
                 return;
             };
         },
         decoder.Funct3.SW => {
             vm.memory.storeWord(addr, @truncate(rs2)) catch {
                 vm.status = .fault;
-                vm.fault_reason = "Store word fault";
+                vm.faultReason = "Store word fault";
                 return;
             };
         },
         decoder.Funct3.SD => {
             vm.memory.storeDoubleword(addr, rs2) catch {
                 vm.status = .fault;
-                vm.fault_reason = "Store doubleword fault";
+                vm.faultReason = "Store doubleword fault";
                 return;
             };
         },
         else => {
             vm.status = .fault;
-            vm.fault_reason = "Invalid store funct3";
+            vm.faultReason = "Invalid store funct3";
         },
     }
 }
@@ -519,7 +519,7 @@ inline fn execB(vm: *ForgeVM, b: decoder.BType) void {
         decoder.Funct3.BGEU => rs1 >= rs2,
         else => {
             vm.status = .fault;
-            vm.fault_reason = "Invalid branch funct3";
+            vm.faultReason = "Invalid branch funct3";
             return;
         },
     };
@@ -527,7 +527,7 @@ inline fn execB(vm: *ForgeVM, b: decoder.BType) void {
     if (taken) {
         const target: u32 = @truncate(vm.pc +% @as(u64, @bitCast(b.imm)));
         vm.pc = target;
-        vm.pc_updated = true;
+        vm.pcUpdated = true;
     }
 }
 
@@ -542,7 +542,7 @@ inline fn execU(vm: *ForgeVM, u_val: decoder.UType, opcode: u7) void {
         },
         else => {
             vm.status = .fault;
-            vm.fault_reason = "Unexpected opcode in U-type";
+            vm.faultReason = "Unexpected opcode in U-type";
         },
     }
 }
@@ -550,13 +550,13 @@ inline fn execU(vm: *ForgeVM, u_val: decoder.UType, opcode: u7) void {
 inline fn execJ(vm: *ForgeVM, j: decoder.JType) void {
     vm.regs[j.rd] = vm.pc +% 4;
     vm.pc = @truncate(vm.pc +% @as(u64, @bitCast(j.imm)));
-    vm.pc_updated = true;
+    vm.pcUpdated = true;
 }
 
 inline fn execSystem(vm: *ForgeVM, sys: decoder.SystemOp) void {
     switch (sys) {
         .ecall => {
-            if (vm.syscall_handler) |handler| {
+            if (vm.syscallHandler) |handler| {
                 handler(vm) catch |err| {
                     switch (err) {
                         error.ReturnData => vm.status = .returned,
@@ -565,21 +565,21 @@ inline fn execSystem(vm: *ForgeVM, sys: decoder.SystemOp) void {
                         error.OutOfGas => vm.status = .out_of_gas,
                         error.UnknownSyscall => {
                             vm.status = .fault;
-                            vm.fault_reason = "Unknown syscall";
+                            vm.faultReason = "Unknown syscall";
                         },
                         error.SegFault => {
                             vm.status = .fault;
-                            vm.fault_reason = "Syscall segfault";
+                            vm.faultReason = "Syscall segfault";
                         },
                         error.InternalError => {
                             vm.status = .fault;
-                            vm.fault_reason = "Syscall internal error";
+                            vm.faultReason = "Syscall internal error";
                         },
                     }
                 };
             } else {
                 vm.status = .fault;
-                vm.fault_reason = "No syscall handler installed";
+                vm.faultReason = "No syscall handler installed";
             }
         },
         .ebreak => vm.status = .breakpoint,
@@ -632,9 +632,9 @@ fn createThreadedTestVM(code: []const u32, gas: u64) !struct {
     var mem = try SandboxMemory.init(testing.allocator);
     const code_bytes = std.mem.sliceAsBytes(code);
     try mem.loadCode(code_bytes);
-    const code_len: u32 = @intCast(code_bytes.len);
-    const decoded = try preDecodeProgram(testing.allocator, mem.backing[0..code_len], code_len);
-    const vm = ForgeVM.init(&mem, code_len, gas, null);
+    const codeLen: u32 = @intCast(code_bytes.len);
+    const decoded = try preDecodeProgram(testing.allocator, mem.backing[0..codeLen], codeLen);
+    const vm = ForgeVM.init(&mem, codeLen, gas, null);
     return .{ .vm = vm, .mem = mem, .decoded = decoded };
 }
 

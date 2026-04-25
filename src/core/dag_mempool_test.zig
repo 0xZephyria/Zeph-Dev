@@ -26,8 +26,8 @@ test "DAGVertex: write keys for simple transfer" {
 
     const tx = types.Transaction{
         .nonce = 0,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 21_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 21_000,
         .from = types.Address{ .bytes = [_]u8{0xAA} ** 20 },
         .to = types.Address{ .bytes = [_]u8{0xBB} ** 20 },
         .value = 1_000_000_000,
@@ -40,8 +40,8 @@ test "DAGVertex: write keys for simple transfer" {
     const vertex = dag_mempool.DAGVertex.computeWriteKeys(&tx);
 
     // Simple transfer: sender nonce + sender balance + recipient balance = 3 keys
-    try std.testing.expectEqual(@as(u8, 3), vertex.write_key_count);
-    try std.testing.expectEqual(tx.from.bytes[0], vertex.shard_id);
+    try std.testing.expectEqual(@as(u8, 3), vertex.writeKeyCount);
+    try std.testing.expectEqual(tx.from.bytes[0], vertex.shardId);
 }
 
 test "DAGVertex: write keys for contract call" {
@@ -51,8 +51,8 @@ test "DAGVertex: write keys for contract call" {
 
     const tx = types.Transaction{
         .nonce = 0,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 100_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 100_000,
         .from = types.Address{ .bytes = [_]u8{0xAA} ** 20 },
         .to = types.Address{ .bytes = [_]u8{0xCC} ** 20 },
         .value = 0,
@@ -65,7 +65,7 @@ test "DAGVertex: write keys for contract call" {
     const vertex = dag_mempool.DAGVertex.computeWriteKeys(&tx);
 
     // Contract call: sender nonce + sender balance + contract balance + per-user derived key = 4 keys
-    try std.testing.expectEqual(@as(u8, 4), vertex.write_key_count);
+    try std.testing.expectEqual(@as(u8, 4), vertex.writeKeyCount);
 }
 
 test "DAGVertex: write keys for contract creation" {
@@ -75,8 +75,8 @@ test "DAGVertex: write keys for contract creation" {
 
     const tx = types.Transaction{
         .nonce = 5,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 500_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 500_000,
         .from = types.Address{ .bytes = [_]u8{0xDD} ** 20 },
         .to = null,
         .value = 0,
@@ -89,7 +89,7 @@ test "DAGVertex: write keys for contract creation" {
     const vertex = dag_mempool.DAGVertex.computeWriteKeys(&tx);
 
     // Contract creation: sender nonce + sender balance + new_addr nonce + new_addr balance + new_addr code = 5 keys
-    try std.testing.expectEqual(@as(u8, 5), vertex.write_key_count);
+    try std.testing.expectEqual(@as(u8, 5), vertex.writeKeyCount);
 }
 
 test "DAGVertex: different senders never conflict" {
@@ -102,8 +102,8 @@ test "DAGVertex: different senders never conflict" {
     // Alice → Bob transfer
     const tx_alice = types.Transaction{
         .nonce = 0,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 21_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 21_000,
         .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 },
         .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 19 },
         .value = 100,
@@ -116,8 +116,8 @@ test "DAGVertex: different senders never conflict" {
     // Bob → Carol transfer
     const tx_bob = types.Transaction{
         .nonce = 0,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 21_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 21_000,
         .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 },
         .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 19 },
         .value = 50,
@@ -143,8 +143,8 @@ test "DAGVertex: same sender DOES conflict" {
 
     const tx1 = types.Transaction{
         .nonce = 0,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 21_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 21_000,
         .from = alice,
         .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 19 },
         .value = 100,
@@ -156,8 +156,8 @@ test "DAGVertex: same sender DOES conflict" {
 
     const tx2 = types.Transaction{
         .nonce = 1,
-        .gas_price = 1_000_000_000,
-        .gas_limit = 21_000,
+        .gasPrice = 1_000_000_000,
+        .gasLimit = 21_000,
         .from = alice,
         .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 19 },
         .value = 50,
@@ -189,8 +189,8 @@ test "AccountLane: nonce-ordered insertion" {
     // Insert TX with nonce 0
     const tx0 = types.Transaction{
         .nonce = 0,
-        .gas_price = 100,
-        .gas_limit = 21_000,
+        .gasPrice = 100,
+        .gasLimit = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
@@ -206,8 +206,8 @@ test "AccountLane: nonce-ordered insertion" {
     // Insert TX with nonce 1
     const tx1 = types.Transaction{
         .nonce = 1,
-        .gas_price = 100,
-        .gas_limit = 21_000,
+        .gasPrice = 100,
+        .gasLimit = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
@@ -239,8 +239,8 @@ test "AccountLane: replacement requires gas bump" {
     // Insert TX with nonce 0, gas price 100
     _ = try lane.insert(allocator, types.Transaction{
         .nonce = 0,
-        .gas_price = 100,
-        .gas_limit = 21_000,
+        .gasPrice = 100,
+        .gasLimit = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
@@ -253,8 +253,8 @@ test "AccountLane: replacement requires gas bump" {
     // Try replacement with insufficient gas bump (gas price 105, need 110)
     const result = lane.insert(allocator, types.Transaction{
         .nonce = 0,
-        .gas_price = 105,
-        .gas_limit = 21_000,
+        .gasPrice = 105,
+        .gasLimit = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
@@ -268,8 +268,8 @@ test "AccountLane: replacement requires gas bump" {
     // Replacement with sufficient gas bump (gas price 111, need 110)
     const replaced = try lane.insert(allocator, types.Transaction{
         .nonce = 0,
-        .gas_price = 111,
-        .gas_limit = 21_000,
+        .gasPrice = 111,
+        .gasLimit = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
@@ -279,7 +279,7 @@ test "AccountLane: replacement requires gas bump" {
         .s = 0,
     }, 10);
     try std.testing.expect(replaced != null);
-    try std.testing.expectEqual(@as(u256, 100), replaced.?.gas_price);
+    try std.testing.expectEqual(@as(u256, 100), replaced.?.gasPrice);
 }
 
 test "AccountLane: advance removes committed TXs" {
@@ -296,8 +296,8 @@ test "AccountLane: advance removes committed TXs" {
     for (0..3) |i| {
         _ = try lane.insert(allocator, types.Transaction{
             .nonce = @intCast(i),
-            .gas_price = 100,
-            .gas_limit = 21_000,
+            .gasPrice = 100,
+            .gasLimit = 21_000,
             .from = sender,
             .to = sender,
             .value = 0,
@@ -311,7 +311,7 @@ test "AccountLane: advance removes committed TXs" {
 
     // Advance to nonce 2 (remove first 2)
     lane.advance(allocator, 2);
-    try std.testing.expectEqual(@as(u64, 2), lane.base_nonce);
+    try std.testing.expectEqual(@as(u64, 2), lane.baseNonce);
     try std.testing.expectEqual(@as(u32, 1), lane.readyCount());
 }
 
@@ -328,8 +328,8 @@ test "AccountLane: nonce too low rejected" {
     // TX with nonce 3 (< base_nonce 5) should fail
     const result = lane.insert(allocator, types.Transaction{
         .nonce = 3,
-        .gas_price = 100,
-        .gas_limit = 21_000,
+        .gasPrice = 100,
+        .gasLimit = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
@@ -369,22 +369,22 @@ test "DAGScheduler: plan generation from TX list" {
 
     var txs = [_]types.Transaction{
         // Alice's TX
-        .{ .nonce = 0, .gas_price = 200, .gas_limit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 19 }, .value = 100, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
+        .{ .nonce = 0, .gasPrice = 200, .gasLimit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 19 }, .value = 100, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
         // Bob's TX
-        .{ .nonce = 0, .gas_price = 100, .gas_limit = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 19 }, .value = 50, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
+        .{ .nonce = 0, .gasPrice = 100, .gasLimit = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 19 }, .value = 50, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
         // Alice's second TX
-        .{ .nonce = 1, .gas_price = 200, .gas_limit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x05} ++ [_]u8{0} ** 19 }, .value = 75, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
+        .{ .nonce = 1, .gasPrice = 200, .gasLimit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x05} ++ [_]u8{0} ** 19 }, .value = 75, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
     };
 
     var plan = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{
-        .num_threads = 4,
-        .block_gas_limit = 1_000_000_000,
+        .numThreads = 4,
+        .blockGasLimit = 1_000_000_000,
     });
     defer plan.deinit();
 
     // Should produce 2 lanes (Alice and Bob)
     try std.testing.expectEqual(@as(usize, 2), plan.lanes.len);
-    try std.testing.expectEqual(@as(u32, 3), plan.total_txs);
+    try std.testing.expectEqual(@as(u32, 3), plan.totalTxs);
 
     // Alice's lane should have 2 TXs, Bob's should have 1
     var alice_count: u32 = 0;
@@ -407,8 +407,8 @@ test "DAGScheduler: plan validation passes for valid plan" {
     const allocator = std.testing.allocator;
 
     var txs = [_]types.Transaction{
-        .{ .nonce = 0, .gas_price = 100, .gas_limit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 19 }, .value = 10, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
-        .{ .nonce = 0, .gas_price = 100, .gas_limit = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 19 }, .value = 20, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
+        .{ .nonce = 0, .gasPrice = 100, .gasLimit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 19 }, .value = 10, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
+        .{ .nonce = 0, .gasPrice = 100, .gasLimit = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 19 }, .value = 20, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
     };
 
     var plan = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{});
@@ -425,7 +425,7 @@ test "DAGScheduler: DAG root is deterministic" {
     const allocator = std.testing.allocator;
 
     var txs = [_]types.Transaction{
-        .{ .nonce = 0, .gas_price = 100, .gas_limit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 }, .value = 10, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
+        .{ .nonce = 0, .gasPrice = 100, .gasLimit = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 }, .to = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 }, .value = 10, .data = &[_]u8{}, .v = 0, .r = 0, .s = 0 },
     };
 
     var plan1 = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{});
@@ -451,8 +451,8 @@ test "DAGScheduler: thread assignment is gas-balanced" {
     for (&txs, 0..) |*tx, i| {
         tx.* = types.Transaction{
             .nonce = 0,
-            .gas_price = 100,
-            .gas_limit = @as(u64, @intCast(21_000 * (i + 1))),
+            .gasPrice = 100,
+            .gasLimit = @as(u64, @intCast(21_000 * (i + 1))),
             .from = types.Address{ .bytes = [_]u8{@intCast(i + 1)} ++ [_]u8{0} ** 19 },
             .to = types.Address{ .bytes = [_]u8{0xFF} ++ [_]u8{0} ** 19 },
             .value = 0,
@@ -464,16 +464,16 @@ test "DAGScheduler: thread assignment is gas-balanced" {
     }
 
     var plan = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{
-        .num_threads = 2,
+        .numThreads = 2,
     });
     defer plan.deinit();
 
     // Should have 2 thread assignments
-    try std.testing.expectEqual(@as(usize, 2), plan.thread_assignments.len);
+    try std.testing.expectEqual(@as(usize, 2), plan.threadAssignments.len);
 
     // Both threads should have lanes assigned
-    for (plan.thread_assignments) |*ta| {
-        try std.testing.expect(ta.lane_indices.len > 0);
+    for (plan.threadAssignments) |*ta| {
+        try std.testing.expect(ta.laneIndices.len > 0);
     }
 }
 
@@ -484,23 +484,23 @@ test "Security: DAGSecurityConfig defaults are safe" {
     const config = core.security.DAGSecurityConfig{};
 
     // Lane depth limit prevents depth bomb
-    try std.testing.expect(config.max_txs_per_lane <= 256);
+    try std.testing.expect(config.maxTxsPerLane <= 256);
 
     // Total vertex limit prevents memory exhaustion
-    try std.testing.expect(config.max_total_vertices <= 1_000_000);
+    try std.testing.expect(config.maxTotalVertices <= 1_000_000);
 
     // Nonce gap limit prevents lane reservation attacks
-    try std.testing.expect(config.max_nonce_gap <= 64);
+    try std.testing.expect(config.maxNonceGap <= 64);
 
     // Orphan timeout prevents leaked memory
-    try std.testing.expect(config.orphan_timeout_s > 0);
+    try std.testing.expect(config.orphanTimeoutS > 0);
 
     // Hot-shard multiplier is reasonable
-    try std.testing.expect(config.hot_shard_multiplier >= 2);
+    try std.testing.expect(config.hotShardMultiplier >= 2);
 
     // Bloom filter is large enough
-    try std.testing.expect(config.bloom_size_bits >= 1_000_000);
+    try std.testing.expect(config.bloomSizeBits >= 1_000_000);
 
     // Cross-lane verification enabled by default
-    try std.testing.expect(config.enable_cross_lane_verification);
+    try std.testing.expect(config.enableCrossLaneVerification);
 }

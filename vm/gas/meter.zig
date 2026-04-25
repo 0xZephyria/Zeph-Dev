@@ -2,7 +2,7 @@
 // Gas metering engine for ForgeVM.
 // Tracks gas consumption per instruction and per syscall.
 
-const gas_table = @import("table.zig");
+const gasTable = @import("table.zig");
 const decoder = @import("../core/decoder.zig");
 
 /// Gas metering state for a single contract execution.
@@ -25,13 +25,13 @@ pub const GasMeter = struct {
     /// Consume gas for a decoded instruction.
     /// Returns error.OutOfGas if insufficient gas.
     pub fn consumeInstruction(self: *GasMeter, insn: decoder.Instruction) error{OutOfGas}!void {
-        const cost = gas_table.instructionCost(insn);
+        const cost = gasTable.instructionCost(insn);
         return self.consume(cost);
     }
 
     /// Consume gas for a raw opcode (fast path using lookup table).
     pub fn consumeOpcode(self: *GasMeter, opcode: u7) error{OutOfGas}!void {
-        const cost = gas_table.OPCODE_GAS_TABLE[opcode];
+        const cost = gasTable.OPCODE_GAS_TABLE[opcode];
         return self.consume(cost);
     }
 
@@ -49,9 +49,9 @@ pub const GasMeter = struct {
     /// Compute effective gas used after refund (capped at half spent).
     pub fn effectiveGasUsed(self: *const GasMeter) u64 {
         // EIP-3529: refund capped at 1/5 of gas used
-        const max_refund = self.used / 5;
-        const actual_refund = @min(self.refund, max_refund);
-        return self.used - actual_refund;
+        const maxRefund = self.used / 5;
+        const actualRefund = @min(self.refund, maxRefund);
+        return self.used - actualRefund;
     }
 };
 

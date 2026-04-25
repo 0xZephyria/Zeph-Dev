@@ -122,7 +122,7 @@ pub const ReceiptQueue = struct {
     pub fn sort(self: *ReceiptQueue) void {
         std.mem.sortUnstable(types.CreditReceipt, self.items.items, {}, struct {
             pub fn lessThan(_: void, a: types.CreditReceipt, b: types.CreditReceipt) bool {
-                return a.tx_index < b.tx_index;
+                return a.txIndex < b.txIndex;
             }
         }.lessThan);
     }
@@ -171,8 +171,8 @@ pub const DeltaQueue = struct {
         errdefer result.deinit();
         for (self.items.items) |delta| {
             const key = globalStorageKey(delta.contract, delta.slot);
-            const val = std.mem.readInt(u256, &delta.delta_value, .big);
-            const signed: i256 = if (delta.is_addition) @intCast(val) else -@as(i256, @intCast(val));
+            const val = std.mem.readInt(u256, &delta.deltaValue, .big);
+            const signed: i256 = if (delta.isAddition) @intCast(val) else -@as(i256, @intCast(val));
             const gop = try result.getOrPut(key);
             if (gop.found_existing) {
                 gop.value_ptr.* += signed;

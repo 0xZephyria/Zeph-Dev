@@ -14,6 +14,7 @@ const rlp = @import("encoding").rlp;
 
 // ── Primitives ──────────────────────────────────────────────────────────
 
+/// Represents a 20-byte account address.
 pub const Address = extern struct {
     bytes: [20]u8,
 
@@ -35,11 +36,12 @@ pub const Address = extern struct {
         return try rlp.deserialize([20]u8, allocator, serialized, &self.bytes);
     }
 
-    pub fn encodeToRLP(self: Address, allocator: std.mem.Allocator, list_data: *std.ArrayListUnmanaged(u8)) !void {
-        try rlp.serialize([20]u8, allocator, self.bytes, list_data);
+    pub fn encodeToRLP(self: Address, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
+        try rlp.serialize([20]u8, allocator, self.bytes, listData);
     }
 };
 
+/// Represents a 32-byte cryptographic hash (Keccak-256).
 pub const Hash = extern struct {
     bytes: [32]u8,
 
@@ -61,53 +63,54 @@ pub const Hash = extern struct {
         return try rlp.deserialize([32]u8, allocator, serialized, &self.bytes);
     }
 
-    pub fn encodeToRLP(self: Hash, allocator: std.mem.Allocator, list_data: *std.ArrayListUnmanaged(u8)) !void {
-        try rlp.serialize([32]u8, allocator, self.bytes, list_data);
+    pub fn encodeToRLP(self: Hash, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
+        try rlp.serialize([32]u8, allocator, self.bytes, listData);
     }
 };
 
 // ── Block Header ────────────────────────────────────────────────────────
 
+/// Represents a block header containing metadata and commitments.
 pub const Header = struct {
-    parent_hash: Hash,
+    parentHash: Hash,
     number: u64,
     time: u64,
-    verkle_root: Hash,
-    tx_hash: Hash,
+    verkleRoot: Hash,
+    txHash: Hash,
     coinbase: Address,
-    extra_data: []const u8,
-    gas_limit: u64,
-    gas_used: u64,
-    base_fee: u256,
+    extraData: []const u8,
+    gasLimit: u64,
+    gasUsed: u64,
+    baseFee: u256,
 
-    pub fn rlp_encode(self: Header, allocator: std.mem.Allocator) ![]u8 {
+    pub fn rlpEncode(self: Header, allocator: std.mem.Allocator) ![]u8 {
         var list = std.ArrayListUnmanaged(u8){};
         defer list.deinit(allocator);
         try self.encodeToRLP(allocator, &list);
         return list.toOwnedSlice(allocator);
     }
 
-    pub fn rlp_decode(allocator: std.mem.Allocator, data: []const u8) !Header {
+    pub fn rlpDecode(allocator: std.mem.Allocator, data: []const u8) !Header {
         var header: Header = undefined;
         _ = try header.decodeFromRLP(allocator, data);
         return header;
     }
 
-    pub fn encodeToRLP(self: Header, allocator: std.mem.Allocator, list_data: *std.ArrayListUnmanaged(u8)) !void {
+    pub fn encodeToRLP(self: Header, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
         var inner = std.ArrayListUnmanaged(u8){};
         defer inner.deinit(allocator);
-        try self.parent_hash.encodeToRLP(allocator, &inner);
+        try self.parentHash.encodeToRLP(allocator, &inner);
         try rlp.serialize(u64, allocator, self.number, &inner);
         try rlp.serialize(u64, allocator, self.time, &inner);
-        try self.verkle_root.encodeToRLP(allocator, &inner);
-        try self.tx_hash.encodeToRLP(allocator, &inner);
+        try self.verkleRoot.encodeToRLP(allocator, &inner);
+        try self.txHash.encodeToRLP(allocator, &inner);
         try self.coinbase.encodeToRLP(allocator, &inner);
-        try rlp.serialize([]const u8, allocator, self.extra_data, &inner);
-        try rlp.serialize(u64, allocator, self.gas_limit, &inner);
-        try rlp.serialize(u64, allocator, self.gas_used, &inner);
-        try rlp.serialize(u256, allocator, self.base_fee, &inner);
-        try rlp.encodeListHeader(allocator, inner.items.len, list_data);
-        try list_data.appendSlice(allocator, inner.items);
+        try rlp.serialize([]const u8, allocator, self.extraData, &inner);
+        try rlp.serialize(u64, allocator, self.gasLimit, &inner);
+        try rlp.serialize(u64, allocator, self.gasUsed, &inner);
+        try rlp.serialize(u256, allocator, self.baseFee, &inner);
+        try rlp.encodeListHeader(allocator, inner.items.len, listData);
+        try listData.appendSlice(allocator, inner.items);
     }
 
     pub fn decodeFromRLP(self: *Header, allocator: std.mem.Allocator, serialized: []const u8) !usize {
@@ -129,25 +132,25 @@ pub const Header = struct {
         }
 
         if (offset + list_len > serialized.len) return error.Truncated;
-        const list_data = serialized[offset .. offset + list_len];
-        var item_offset: usize = 0;
+        const listData = serialized[offset .. offset + list_len];
+        var itemOffset: usize = 0;
 
-        item_offset += try self.parent_hash.decodeFromRLP(allocator, list_data[item_offset..]);
-        item_offset += try rlp.deserialize(u64, allocator, list_data[item_offset..], &self.number);
-        item_offset += try rlp.deserialize(u64, allocator, list_data[item_offset..], &self.time);
-        item_offset += try self.verkle_root.decodeFromRLP(allocator, list_data[item_offset..]);
-        item_offset += try self.tx_hash.decodeFromRLP(allocator, list_data[item_offset..]);
-        item_offset += try self.coinbase.decodeFromRLP(allocator, list_data[item_offset..]);
-        item_offset += try rlp.deserialize([]const u8, allocator, list_data[item_offset..], &self.extra_data);
-        item_offset += try rlp.deserialize(u64, allocator, list_data[item_offset..], &self.gas_limit);
-        item_offset += try rlp.deserialize(u64, allocator, list_data[item_offset..], &self.gas_used);
-        item_offset += try rlp.deserialize(u256, allocator, list_data[item_offset..], &self.base_fee);
+        itemOffset += try self.parentHash.decodeFromRLP(allocator, listData[itemOffset..]);
+        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.number);
+        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.time);
+        itemOffset += try self.verkleRoot.decodeFromRLP(allocator, listData[itemOffset..]);
+        itemOffset += try self.txHash.decodeFromRLP(allocator, listData[itemOffset..]);
+        itemOffset += try self.coinbase.decodeFromRLP(allocator, listData[itemOffset..]);
+        itemOffset += try rlp.deserialize([]const u8, allocator, listData[itemOffset..], &self.extraData);
+        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.gasLimit);
+        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.gasUsed);
+        itemOffset += try rlp.deserialize(u256, allocator, listData[itemOffset..], &self.baseFee);
 
         return offset + list_len;
     }
 
     pub fn deinit(self: Header, allocator: std.mem.Allocator) void {
-        allocator.free(self.extra_data);
+        allocator.free(self.extraData);
     }
 };
 
@@ -158,10 +161,13 @@ pub const Header = struct {
 // and contract storage touch patterns (via static analysis at submission)
 // to construct the dependency graph for parallel execution ordering.
 
+/// Represents a Zephyria native transaction.
+/// Note: This format does not include EVM-style access lists; dependencies
+/// are determined by the DAG mempool.
 pub const Transaction = struct {
     nonce: u64,
-    gas_price: u256,
-    gas_limit: u64,
+    gasPrice: u256,
+    gasLimit: u64,
     from: Address,
     to: ?Address,
     value: u256,
@@ -173,8 +179,8 @@ pub const Transaction = struct {
     /// Serialization format excludes `from` (derived from signature)
     const WireFormat = struct {
         nonce: u64,
-        gas_price: u256,
-        gas_limit: u64,
+        gasPrice: u256,
+        gasLimit: u64,
         to: ?Address,
         value: u256,
         data: []const u8,
@@ -183,11 +189,11 @@ pub const Transaction = struct {
         s: u256,
     };
 
-    pub fn encodeToRLP(self: Transaction, allocator: std.mem.Allocator, list_data: *std.ArrayListUnmanaged(u8)) !void {
+    pub fn encodeToRLP(self: Transaction, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
         const wire = WireFormat{
             .nonce = self.nonce,
-            .gas_price = self.gas_price,
-            .gas_limit = self.gas_limit,
+            .gasPrice = self.gasPrice,
+            .gasLimit = self.gasLimit,
             .to = self.to,
             .value = self.value,
             .data = self.data,
@@ -195,7 +201,7 @@ pub const Transaction = struct {
             .r = self.r,
             .s = self.s,
         };
-        try rlp.serialize(WireFormat, allocator, wire, list_data);
+        try rlp.serialize(WireFormat, allocator, wire, listData);
     }
 
     pub fn decodeFromRLP(self: *Transaction, allocator: std.mem.Allocator, serialized: []const u8) !usize {
@@ -203,8 +209,8 @@ pub const Transaction = struct {
         const consumed = try rlp.deserialize(WireFormat, allocator, serialized, &wire);
         self.* = Transaction{
             .nonce = wire.nonce,
-            .gas_price = wire.gas_price,
-            .gas_limit = wire.gas_limit,
+            .gasPrice = wire.gasPrice,
+            .gasLimit = wire.gasLimit,
             .from = Address.zero(), // Recovered from signature by caller
             .to = wire.to,
             .value = wire.value,
@@ -247,15 +253,16 @@ pub const Transaction = struct {
 
 // ── Block ───────────────────────────────────────────────────────────────
 
+/// Represents a complete block consisting of a header and a list of transactions.
 pub const Block = struct {
     header: Header,
     transactions: []Transaction,
 
-    pub fn rlp_encode(self: Block, allocator: std.mem.Allocator) ![]u8 {
+    pub fn rlpEncode(self: Block, allocator: std.mem.Allocator) ![]u8 {
         return try rlp.encode(allocator, self);
     }
 
-    pub fn rlp_decode(allocator: std.mem.Allocator, data: []const u8) !Block {
+    pub fn rlpDecode(allocator: std.mem.Allocator, data: []const u8) !Block {
         return try rlp.decode(allocator, Block, data);
     }
 
@@ -263,14 +270,14 @@ pub const Block = struct {
         var h_res = Hash.zero();
         var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
         const ally = std.heap.page_allocator;
-        const encoded = self.header.rlp_encode(ally) catch return h_res;
+        const encoded = self.header.rlpEncode(ally) catch return h_res;
         defer ally.free(encoded);
         hasher.update(encoded);
         hasher.final(&h_res.bytes);
         return h_res;
     }
 
-    pub fn encodeToRLP(self: Block, allocator: std.mem.Allocator, list_data: *std.ArrayListUnmanaged(u8)) !void {
+    pub fn encodeToRLP(self: Block, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
         var inner = std.ArrayListUnmanaged(u8){};
         defer inner.deinit(allocator);
 
@@ -278,16 +285,16 @@ pub const Block = struct {
         try self.header.encodeToRLP(allocator, &inner);
 
         // 2. Transactions (List of items)
-        var tx_list = std.ArrayListUnmanaged(u8){};
-        defer tx_list.deinit(allocator);
+        var txList = std.ArrayListUnmanaged(u8){};
+        defer txList.deinit(allocator);
         for (self.transactions) |tx| {
-            try tx.encodeToRLP(allocator, &tx_list);
+            try tx.encodeToRLP(allocator, &txList);
         }
-        try rlp.encodeListHeader(allocator, tx_list.items.len, &inner);
-        try inner.appendSlice(allocator, tx_list.items);
+        try rlp.encodeListHeader(allocator, txList.items.len, &inner);
+        try inner.appendSlice(allocator, txList.items);
 
-        try rlp.encodeListHeader(allocator, inner.items.len, list_data);
-        try list_data.appendSlice(allocator, inner.items);
+        try rlp.encodeListHeader(allocator, inner.items.len, listData);
+        try listData.appendSlice(allocator, inner.items);
     }
 
     pub fn decodeFromRLP(self: *Block, allocator: std.mem.Allocator, serialized: []const u8) !usize {
@@ -309,40 +316,40 @@ pub const Block = struct {
         }
 
         if (offset + list_len > serialized.len) return error.Truncated;
-        const list_data = serialized[offset .. offset + list_len];
-        var item_offset: usize = 0;
+        const listData = serialized[offset .. offset + list_len];
+        var itemOffset: usize = 0;
 
         // 1. Header
-        item_offset += try self.header.decodeFromRLP(allocator, list_data[item_offset..]);
+        itemOffset += try self.header.decodeFromRLP(allocator, listData[itemOffset..]);
 
         // 2. Transactions
-        const tx_prefix = list_data[item_offset];
-        var tx_list_len: usize = 0;
-        var tx_offset_start: usize = 0;
-        if (tx_prefix >= 0xc0 and tx_prefix <= 0xf7) {
-            tx_list_len = @as(usize, tx_prefix - 0xc0);
-            tx_offset_start = 1;
-        } else if (tx_prefix >= 0xf8) {
-            const tx_ll = @as(usize, tx_prefix - 0xf7);
-            for (list_data[item_offset + 1 .. item_offset + 1 + tx_ll]) |b| tx_list_len = (tx_list_len << 8) | b;
-            tx_offset_start = 1 + tx_ll;
+        const txPrefix = listData[itemOffset];
+        var txList_len: usize = 0;
+        var txOffsetStart: usize = 0;
+        if (txPrefix >= 0xc0 and txPrefix <= 0xf7) {
+            txList_len = @as(usize, txPrefix - 0xc0);
+            txOffsetStart = 1;
+        } else if (txPrefix >= 0xf8) {
+            const tx_ll = @as(usize, txPrefix - 0xf7);
+            for (listData[itemOffset + 1 .. itemOffset + 1 + tx_ll]) |b| txList_len = (txList_len << 8) | b;
+            txOffsetStart = 1 + tx_ll;
         } else {
             return error.ExpectedList;
         }
 
-        const tx_data = list_data[item_offset + tx_offset_start .. item_offset + tx_offset_start + tx_list_len];
-        var tx_item_offset: usize = 0;
+        const txData = listData[itemOffset + txOffsetStart .. itemOffset + txOffsetStart + txList_len];
+        var tx_itemOffset: usize = 0;
         var txs = std.ArrayListUnmanaged(Transaction){};
         defer txs.deinit(allocator);
 
-        while (tx_item_offset < tx_data.len) {
+        while (tx_itemOffset < txData.len) {
             var tx: Transaction = undefined;
-            const consumed = try tx.decodeFromRLP(allocator, tx_data[tx_item_offset..]);
+            const consumed = try tx.decodeFromRLP(allocator, txData[tx_itemOffset..]);
             try txs.append(allocator, tx);
-            tx_item_offset += consumed;
+            tx_itemOffset += consumed;
         }
 
-        item_offset += tx_offset_start + tx_list_len;
+        itemOffset += txOffsetStart + txList_len;
 
         self.transactions = try txs.toOwnedSlice(allocator);
         return offset + list_len;
@@ -359,6 +366,7 @@ pub const Block = struct {
 
 // ── Account Type Classification ─────────────────────────────────────────
 
+/// Classification of account types in the Verkle trie.
 pub const AccountType = enum(u8) {
     EOA = 0,
     ContractRoot = 1,
@@ -372,6 +380,7 @@ pub const AccountType = enum(u8) {
 
 // ── Slot Classification ─────────────────────────────────────────────────
 
+/// Classification of storage slots for parallel execution analysis.
 pub const SlotClassification = enum {
     PerUser,
     Global,
@@ -387,9 +396,9 @@ pub const CreditReceipt = struct {
     recipient: Address,
     contract: Address,
     slot: [32]u8,
-    delta_value: [32]u8,
-    is_addition: bool,
-    tx_index: u32,
+    deltaValue: [32]u8,
+    isAddition: bool,
+    txIndex: u32,
 };
 
 /// Accumulator delta for commutative global state (totalSupply, reserves).
@@ -398,17 +407,18 @@ pub const CreditReceipt = struct {
 pub const AccumulatorDelta = struct {
     contract: Address,
     slot: [32]u8,
-    delta_value: [32]u8,
-    is_addition: bool,
-    tx_index: u32,
+    deltaValue: [32]u8,
+    isAddition: bool,
+    txIndex: u32,
 };
 
 /// Result of parallel transaction execution
+/// Result of parallel transaction execution, including gas usage and state deltas.
 pub const ParallelTxResult = struct {
     success: bool,
-    gas_used: u64,
+    gasUsed: u64,
     fee: u256,
-    error_message: ?[]const u8,
+    errorMessage: ?[]const u8,
     receipts: []CreditReceipt,
     deltas: []AccumulatorDelta,
 };

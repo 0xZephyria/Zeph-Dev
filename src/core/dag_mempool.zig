@@ -35,41 +35,42 @@ const log = @import("logger.zig");
 
 pub const SHARD_COUNT: u16 = 256;
 
+/// Configuration options for the DAG-based mempool.
 pub const DAGConfig = struct {
     /// Maximum pending TXs per sender lane
-    max_txs_per_lane: u32 = 256,
+    maxTxsPerLane: u32 = 256,
     /// Maximum total vertices across all shards
-    max_total_vertices: u32 = 500_000,
+    maxTotalVertices: u32 = 500_000,
     /// Maximum gas budget per sender lane
-    max_lane_gas: u64 = 100_000_000,
+    maxLaneGas: u64 = 100_000_000,
     /// Orphan lane timeout in seconds
-    orphan_timeout_s: u64 = 60,
+    orphanTimeoutS: u64 = 60,
     /// Maximum nonce gap from state nonce
-    max_nonce_gap: u64 = 64,
+    maxNonceGap: u64 = 64,
     /// Minimum gas price (1 Gwei anti-spam floor)
-    min_gas_price: u256 = 1_000_000_000,
+    minGasPrice: u256 = 1_000_000_000,
     /// Gas price bump required for TX replacement (10%)
-    replacement_bump_pct: u32 = 10,
+    replacementBumpPct: u32 = 10,
     /// Hot-shard threshold multiplier (2x mean triggers premium)
-    hot_shard_multiplier: u32 = 2,
+    hotShardMultiplier: u32 = 2,
     /// Hot-shard gas price premium (150% = 1.5x)
-    hot_shard_premium_pct: u32 = 150,
+    hotShardPremiumPct: u32 = 150,
     /// Bloom filter size in bits (2M bits = 256KB)
-    bloom_size_bits: u32 = 2_097_152,
+    bloomSizeBits: u32 = 2_097_152,
     /// Enable deep TX sanitization
-    enable_sanitization: bool = true,
+    enableSanitization: bool = true,
     /// Maximum calldata size
-    max_calldata: u32 = 96 * 1024,
+    maxCalldata: u32 = 96 * 1024,
     /// Minimum gas limit for any TX
-    min_gas_limit: u64 = 21_000,
+    minGasLimit: u64 = 21_000,
     /// Maximum gas limit for any TX
-    max_gas_limit: u64 = 30_000_000,
+    maxGasLimit: u64 = 30_000_000,
     /// Maximum gas price (anti-grief)
-    max_gas_price: u256 = 10_000_000_000_000_000_000_000,
+    maxGasPrice: u256 = 10_000_000_000_000_000_000_000,
     /// Maximum value transfer
-    max_value: u256 = 1_000_000_000_000_000_000_000_000_000,
+    maxValue: u256 = 1_000_000_000_000_000_000_000_000_000,
     /// Chain ID for replay protection
-    chain_id: u64 = 99999,
+    chainId: u64 = 99999,
 };
 
 // ── Account Lane ────────────────────────────────────────────────────────
@@ -78,30 +79,35 @@ pub const DAGConfig = struct {
 // This IS the DAG: same-sender TXs form a chain (nonce N depends on N-1).
 // Different senders' lanes are completely independent — zero edges between them.
 
+/// Represents a per-sender transaction queue (a "lane").
+/// In Zephyria, same-sender transactions must be executed in nonce order,
+/// forming a linear dependency chain within the lane.
 pub const AccountLane = struct {
     sender: types.Address,
-    /// Nonce-ordered TX queue. Index 0 = base_nonce, Index 1 = base_nonce+1, etc.
+    /// Nonce-ordered TX queue. Index 0 = baseNonce, Index 1 = baseNonce+1, etc.
     txs: std.ArrayListUnmanaged(LaneTx),
     /// Current confirmed state nonce for this sender
-    base_nonce: u64,
+    baseNonce: u64,
     /// Total gas reserved by all TXs in this lane
-    total_gas: u64,
+    totalGas: u64,
     /// Monotonic timestamp of last TX addition (for GC)
-    last_touch_ns: i128,
+    lastTouchNs: i128,
     /// Number of TXs that have been extracted for execution
-    extracted_count: u32,
+    extractedCount: u32,
 
-    pub fn init(sender: types.Address, base_nonce: u64) AccountLane {
+    /// Initializes a new AccountLane.
+    pub fn init(sender: types.Address, baseNonce: u64) AccountLane {
         return .{
             .sender = sender,
             .txs = .{},
-            .base_nonce = base_nonce,
-            .total_gas = 0,
-            .last_touch_ns = std.time.nanoTimestamp(),
-            .extracted_count = 0,
+            .baseNonce = baseNonce,
+            .totalGas = 0,
+            .lastTouchNs = std.time.nanoTimestamp(),
+            .extractedCount = 0,
         };
     }
 
+    /// Deinitializes the AccountLane.
     pub fn deinit(self: *AccountLane, allocator: std.mem.Allocator) void {
         self.txs.deinit(allocator);
     }
@@ -112,90 +118,90 @@ pub const AccountLane = struct {
         self: *AccountLane,
         allocator: std.mem.Allocator,
         tx: types.Transaction,
-        replacement_bump_pct: u32,
+        replacementBumpPct: u32,
     ) !?types.Transaction {
-        if (tx.nonce < self.base_nonce) return error.NonceTooLow;
+        if (tx.nonce < self.baseNonce) return error.NonceTooLow;
 
-        const idx = tx.nonce - self.base_nonce;
+        const idx = tx.nonce - self.baseNonce;
 
         // Check if this is a replacement
         if (idx < self.txs.items.len) {
             const existing = &self.txs.items[idx];
             // Enforce gas price bump for replacement
-            const min_new_price = existing.tx.gas_price +
-                (existing.tx.gas_price * @as(u256, replacement_bump_pct)) / 100;
-            if (tx.gas_price < min_new_price) return error.ReplacementGasTooLow;
+            const minNewPrice = existing.tx.gasPrice +
+                (existing.tx.gasPrice * @as(u256, replacementBumpPct)) / 100;
+            if (tx.gasPrice < minNewPrice) return error.ReplacementGasTooLow;
 
             // Replace
-            const old_tx = existing.tx;
-            self.total_gas -= old_tx.gas_limit;
+            const oldTx = existing.tx;
+            self.totalGas -= oldTx.gasLimit;
             existing.tx = tx;
-            existing.inserted_at = std.time.nanoTimestamp();
-            self.total_gas += tx.gas_limit;
-            self.last_touch_ns = std.time.nanoTimestamp();
-            return old_tx;
+            existing.insertedAt = std.time.nanoTimestamp();
+            self.totalGas += tx.gasLimit;
+            self.lastTouchNs = std.time.nanoTimestamp();
+            return oldTx;
         }
 
         // Append at position (may leave gaps — nonce gap protection handles)
         while (self.txs.items.len < idx) {
             try self.txs.append(allocator, LaneTx{
                 .tx = undefined,
-                .inserted_at = 0,
-                .is_placeholder = true,
+                .insertedAt = 0,
+                .isPlaceholder = true,
             });
         }
 
         try self.txs.append(allocator, LaneTx{
             .tx = tx,
-            .inserted_at = std.time.nanoTimestamp(),
-            .is_placeholder = false,
+            .insertedAt = std.time.nanoTimestamp(),
+            .isPlaceholder = false,
         });
 
-        self.total_gas += tx.gas_limit;
-        self.last_touch_ns = std.time.nanoTimestamp();
+        self.totalGas += tx.gasLimit;
+        self.lastTouchNs = std.time.nanoTimestamp();
         return null;
     }
 
-    /// Get the contiguous sequence of ready TXs starting from base_nonce.
+    /// Get the contiguous sequence of ready TXs starting from baseNonce.
     /// These are guaranteed to be executable in order.
     pub fn getReady(self: *const AccountLane) []const LaneTx {
         var count: usize = 0;
         for (self.txs.items) |*lt| {
-            if (lt.is_placeholder) break;
+            if (lt.isPlaceholder) break;
             count += 1;
         }
         return self.txs.items[0..count];
     }
 
-    /// Remove TXs that have been committed (nonce < new_base_nonce).
-    pub fn advance(self: *AccountLane, allocator: std.mem.Allocator, new_base_nonce: u64) void {
-        if (new_base_nonce <= self.base_nonce) return;
+    /// Remove TXs that have been committed (nonce < new_baseNonce).
+    pub fn advance(self: *AccountLane, allocator: std.mem.Allocator, newBaseNonce: u64) void {
+        if (newBaseNonce <= self.baseNonce) return;
 
-        const remove_count = @min(
-            new_base_nonce - self.base_nonce,
+        const removeCount = @min(
+            newBaseNonce - self.baseNonce,
             self.txs.items.len,
         );
 
-        for (self.txs.items[0..remove_count]) |*lt| {
-            if (!lt.is_placeholder) {
-                self.total_gas -|= lt.tx.gas_limit;
+        for (self.txs.items[0..removeCount]) |*lt| {
+            if (!lt.isPlaceholder) {
+                self.totalGas -|= lt.tx.gasLimit;
             }
         }
 
         // Shift remaining TXs down
-        if (remove_count < self.txs.items.len) {
-            const remaining = self.txs.items.len - remove_count;
+        if (removeCount < self.txs.items.len) {
+            const remaining = self.txs.items.len - removeCount;
             std.mem.copyForwards(
                 LaneTx,
                 self.txs.items[0..remaining],
-                self.txs.items[remove_count..self.txs.items.len],
+                self.txs.items[removeCount..self.txs.items.len],
             );
             self.txs.items.len = remaining;
         } else {
             self.txs.items.len = 0;
         }
 
-        self.base_nonce = new_base_nonce;
+        self.baseNonce = newBaseNonce;
         _ = allocator;
     }
 
@@ -203,7 +209,7 @@ pub const AccountLane = struct {
     pub fn readyCount(self: *const AccountLane) u32 {
         var count: u32 = 0;
         for (self.txs.items) |*lt| {
-            if (lt.is_placeholder) break;
+            if (lt.isPlaceholder) break;
             count += 1;
         }
         return count;
@@ -215,10 +221,11 @@ pub const AccountLane = struct {
     }
 };
 
+/// Wrapper for a transaction stored within a lane.
 pub const LaneTx = struct {
     tx: types.Transaction,
-    inserted_at: i128,
-    is_placeholder: bool,
+    insertedAt: i128,
+    isPlaceholder: bool,
 };
 
 // ── Shard ───────────────────────────────────────────────────────────────
@@ -226,18 +233,20 @@ pub const LaneTx = struct {
 // One of 256 shards. Each shard has its own mutex — only locked during
 // admission/extraction for accounts that hash to this shard.
 
+/// Represents a mempool shard, containing a subset of account lanes.
 pub const Shard = struct {
     lock: std.Thread.Mutex,
     accounts: std.AutoHashMap(types.Address, *AccountLane),
-    vertex_count: u32,
-    total_gas: u64,
+    vertexCount: u32,
+    totalGas: u64,
 
+    /// Initializes a new Shard.
     pub fn init() Shard {
         return .{
             .lock = .{},
             .accounts = undefined,
-            .vertex_count = 0,
-            .total_gas = 0,
+            .vertexCount = 0,
+            .totalGas = 0,
         };
     }
 };
@@ -247,70 +256,72 @@ pub const Shard = struct {
 // Represents a TX's position in the implicit DAG. Write keys are computed
 // from the isolated account model at admission time.
 
+/// Represents a vertex in the implicit transaction dependency DAG.
 pub const DAGVertex = struct {
-    tx_hash: types.Hash,
+    txHash: types.Hash,
     sender: types.Address,
     nonce: u64,
-    write_keys: [MAX_WRITE_KEYS][32]u8,
-    write_key_count: u8,
-    gas_limit: u64,
-    gas_price: u256,
-    shard_id: u8,
+    writeKeys: [MAX_WRITE_KEYS][32]u8,
+    writeKeyCount: u8,
+    gasLimit: u64,
+    gasPrice: u256,
+    shardId: u8,
 
+    /// Maximum number of unique state keys a transaction is expected to write.
     pub const MAX_WRITE_KEYS = 8;
 
     /// Compute write keys from TX structure using isolated account model.
     pub fn computeWriteKeys(tx: *const types.Transaction) DAGVertex {
         const State = state_mod.State;
         var vertex = DAGVertex{
-            .tx_hash = tx.hash(),
+            .txHash = tx.hash(),
             .sender = tx.from,
             .nonce = tx.nonce,
-            .write_keys = undefined,
-            .write_key_count = 0,
-            .gas_limit = tx.gas_limit,
-            .gas_price = tx.gas_price,
-            .shard_id = tx.from.bytes[0],
+            .writeKeys = undefined,
+            .writeKeyCount = 0,
+            .gasLimit = tx.gasLimit,
+            .gasPrice = tx.gasPrice,
+            .shardId = tx.from.bytes[0],
         };
 
         // 1. Sender nonce + balance (ALWAYS written)
-        vertex.addKey(State.nonce_key(tx.from));
-        vertex.addKey(State.balance_key(tx.from));
+        vertex.addKey(State.nonceKey(tx.from));
+        vertex.addKey(State.balanceKey(tx.from));
 
         // 2. Recipient
-        if (tx.to) |to_addr| {
-            vertex.addKey(State.balance_key(to_addr));
+        if (tx.to) |toAddr| {
+            vertex.addKey(State.balanceKey(toAddr));
 
             // 3. Contract call: per-user derived key (NEVER conflicts with other users)
             if (tx.data.len >= 4) {
-                var sender_slot: [32]u8 = [_]u8{0} ** 32;
-                @memcpy(sender_slot[0..20], &tx.from.bytes);
-                vertex.addKey(State.derived_storage_key(tx.from, to_addr, sender_slot));
+                var senderSlot: [32]u8 = [_]u8{0} ** 32;
+                @memcpy(senderSlot[0..20], &tx.from.bytes);
+                vertex.addKey(State.derivedStorageKey(tx.from, toAddr, senderSlot));
             }
         } else {
             // Contract creation
-            const new_addr = tx.deriveContractAddress();
-            vertex.addKey(State.nonce_key(new_addr));
-            vertex.addKey(State.balance_key(new_addr));
-            vertex.addKey(State.code_hash_key(new_addr));
+            const newAddr = tx.deriveContractAddress();
+            vertex.addKey(State.nonceKey(newAddr));
+            vertex.addKey(State.balanceKey(newAddr));
+            vertex.addKey(State.codeHashKey(newAddr));
         }
 
         return vertex;
     }
 
     fn addKey(self: *DAGVertex, key: [32]u8) void {
-        if (self.write_key_count >= MAX_WRITE_KEYS) return;
-        self.write_keys[self.write_key_count] = key;
-        self.write_key_count += 1;
+        if (self.writeKeyCount >= MAX_WRITE_KEYS) return;
+        self.writeKeys[self.writeKeyCount] = key;
+        self.writeKeyCount += 1;
     }
 
     /// Check if this vertex conflicts with another vertex.
     /// In Zephyria's isolated model, conflicts ONLY happen between
     /// same-sender TXs (shared nonce + balance keys).
     pub fn conflictsWith(self: *const DAGVertex, other: *const DAGVertex) bool {
-        for (self.write_keys[0..self.write_key_count]) |key_a| {
-            for (other.write_keys[0..other.write_key_count]) |key_b| {
-                if (std.mem.eql(u8, &key_a, &key_b)) return true;
+        for (self.writeKeys[0..self.writeKeyCount]) |keyA| {
+            for (other.writeKeys[0..other.writeKeyCount]) |keyB| {
+                if (std.mem.eql(u8, &keyA, &keyB)) return true;
             }
         }
         return false;
@@ -319,12 +330,14 @@ pub const DAGVertex = struct {
 
 // ── Extraction Result ───────────────────────────────────────────────────
 
+/// Result of extracting execution-ready lanes from the mempool.
 pub const ExtractionResult = struct {
     lanes: []ExtractedLane,
-    total_txs: u32,
-    total_gas: u64,
+    totalTxs: u32,
+    totalGas: u64,
     allocator: std.mem.Allocator,
 
+    /// Deinitializes the extraction result and frees all lane memory.
     pub fn deinit(self: *ExtractionResult) void {
         for (self.lanes) |*lane| {
             self.allocator.free(lane.txs);
@@ -333,33 +346,37 @@ pub const ExtractionResult = struct {
     }
 };
 
+/// Represents a sender-isolated lane of transactions extracted for parallel execution.
 pub const ExtractedLane = struct {
     sender: types.Address,
     txs: []types.Transaction,
-    base_nonce: u64,
+    baseNonce: u64,
 };
 
 // ── Metrics ─────────────────────────────────────────────────────────────
 
+/// Performance and health metrics for the DAG mempool.
 pub const Metrics = struct {
-    total_added: u64,
-    total_rejected: u64,
-    total_evicted: u64,
-    total_extracted: u64,
-    total_gc_evicted: u64,
-    duplicate_rejected: u64,
-    rate_limited: u64,
-    nonce_rejected: u64,
-    gas_price_rejected: u64,
-    sanitization_rejected: u64,
-    hot_shard_premium_applied: u64,
-    replacement_count: u64,
-    shard_max_load: u32,
-    active_lanes: u32,
+    totalAdded: u64,
+    totalRejected: u64,
+    totalEvicted: u64,
+    totalExtracted: u64,
+    totalGcEvicted: u64,
+    duplicateRejected: u64,
+    rateLimited: u64,
+    nonceRejected: u64,
+    gasPriceRejected: u64,
+    sanitizationRejected: u64,
+    hotShardPremiumApplied: u64,
+    replacementCount: u64,
+    shardMaxLoad: u32,
+    activeLanes: u32,
 };
 
 // ── DAG Mempool ─────────────────────────────────────────────────────────
 
+/// High-throughput sharded mempool designed for the zero-conflict execution model.
+/// Spans 256 shards to minimize lock contention and support massive parallel intake.
 pub const DAGMempool = struct {
     allocator: std.mem.Allocator,
     state: *state_mod.State,
@@ -370,8 +387,8 @@ pub const DAGMempool = struct {
     sanitizer: security.TxSanitizer,
 
     // Global counters (atomic for cross-shard visibility)
-    total_vertices: std.atomic.Value(u32),
-    total_gas: std.atomic.Value(u64),
+    totalVertices: std.atomic.Value(u32),
+    totalGas: std.atomic.Value(u64),
 
     // Metrics
     metrics: Metrics,
@@ -381,6 +398,7 @@ pub const DAGMempool = struct {
     by_hash: std.AutoHashMap(types.Hash, TxLocation),
     by_hash_lock: std.Thread.Mutex,
 
+    /// Initializes a new DAGMempool instance with 256 shards.
     pub fn init(
         allocator: std.mem.Allocator,
         state: *state_mod.State,
@@ -399,19 +417,19 @@ pub const DAGMempool = struct {
             .state = state,
             .config = config,
             .shards = shards,
-            .bloom = try security.TxBloomFilter.init(allocator, config.bloom_size_bits),
+            .bloom = try security.TxBloomFilter.init(allocator, config.bloomSizeBits),
             .rate_limiter = security.RateLimiter.init(allocator, .{}),
             .sanitizer = security.TxSanitizer.init(.{
-                .max_calldata = config.max_calldata,
-                .min_gas_limit = config.min_gas_limit,
-                .max_gas_limit = config.max_gas_limit,
-                .max_gas_price = config.max_gas_price,
-                .max_value = config.max_value,
-                .chain_id = config.chain_id,
-                .max_nonce_gap = config.max_nonce_gap,
+                .maxCalldata = config.maxCalldata,
+                .minGasLimit = config.minGasLimit,
+                .maxGasLimit = config.maxGasLimit,
+                .maxGasPrice = config.maxGasPrice,
+                .maxValue = config.maxValue,
+                .chainId = config.chainId,
+                .maxNonceGap = config.maxNonceGap,
             }),
-            .total_vertices = std.atomic.Value(u32).init(0),
-            .total_gas = std.atomic.Value(u64).init(0),
+            .totalVertices = std.atomic.Value(u32).init(0),
+            .totalGas = std.atomic.Value(u64).init(0),
             .metrics = std.mem.zeroes(Metrics),
             .metrics_lock = .{},
             .by_hash = std.AutoHashMap(types.Hash, TxLocation).init(allocator),
@@ -441,56 +459,57 @@ pub const DAGMempool = struct {
 
     /// Add a transaction to the DAG mempool.
     /// Thread-safe: only locks the target shard + brief hash index lock.
+    /// Admits a new transaction into the mempool, performing sharded locking and sanitization.
     pub fn add(self: *DAGMempool, tx: *const types.Transaction) !void {
-        const tx_hash = tx.hash();
+        const txHash = tx.hash();
 
         // 1. Bloom filter pre-check (O(1), no lock needed — false positives OK)
-        if (self.bloom.mightContain(tx_hash)) {
+        if (self.bloom.mightContain(txHash)) {
             // Confirm with hash index (bloom has false positives)
             self.by_hash_lock.lock();
-            const exists = self.by_hash.contains(tx_hash);
+            const exists = self.by_hash.contains(txHash);
             self.by_hash_lock.unlock();
             if (exists) {
-                self.incrMetric(.duplicate_rejected);
+                self.incrMetric(.duplicateRejected);
                 return error.DuplicateTransaction;
             }
         }
 
         // 2. Global capacity check (atomic, no lock)
-        if (self.total_vertices.load(.acquire) >= self.config.max_total_vertices) {
+        if (self.totalVertices.load(.acquire) >= self.config.maxTotalVertices) {
             // Try to evict lowest gas price TX before rejecting
-            if (!self.evictLowestGlobal(tx.gas_price)) {
-                self.incrMetric(.total_rejected);
+            if (!self.evictLowestGlobal(tx.gasPrice)) {
+                self.incrMetric(.totalRejected);
                 return error.MempoolFull;
             }
         }
 
         // 3. Rate limiting (per-account token bucket)
         self.rate_limiter.checkAndConsume(tx.from) catch {
-            self.incrMetric(.rate_limited);
+            self.incrMetric(.rateLimited);
             return error.RateLimited;
         };
 
         // 4. Minimum gas price floor
         const effective_min_price = self.getEffectiveMinPrice(tx.from);
-        if (tx.gas_price < effective_min_price) {
-            self.incrMetric(.gas_price_rejected);
+        if (tx.gasPrice < effective_min_price) {
+            self.incrMetric(.gasPriceRejected);
             return error.GasPriceTooLow;
         }
 
         // 5. TX sanitization (signature, nonce bounds, balance, malleability)
-        if (self.config.enable_sanitization) {
-            const state_nonce = self.state.get_nonce(tx.from);
-            const state_balance = self.state.get_balance(tx.from);
+        if (self.config.enableSanitization) {
+            const state_nonce = self.state.getNonce(tx.from);
+            const state_balance = self.state.getBalance(tx.from);
             self.sanitizer.validate(tx, state_nonce, state_balance) catch |err| {
-                self.incrMetric(.sanitization_rejected);
+                self.incrMetric(.sanitizationRejected);
                 return err;
             };
         }
 
         // 6. Lock ONLY the target shard
-        const shard_id = self.shardFor(tx.from);
-        var shard = &self.shards[shard_id];
+        const shardId = self.shardFor(tx.from);
+        var shard = &self.shards[shardId];
         shard.lock.lock();
         defer shard.lock.unlock();
 
@@ -498,19 +517,19 @@ pub const DAGMempool = struct {
         const lane = try self.getOrCreateLane(shard, tx.from);
 
         // 8. Lane depth check
-        if (lane.txs.items.len >= self.config.max_txs_per_lane) {
-            self.incrMetric(.total_rejected);
+        if (lane.txs.items.len >= self.config.maxTxsPerLane) {
+            self.incrMetric(.totalRejected);
             return error.LaneDepthExceeded;
         }
 
         // 9. Lane gas budget check
-        if (lane.total_gas + tx.gas_limit > self.config.max_lane_gas) {
-            self.incrMetric(.total_rejected);
+        if (lane.totalGas + tx.gasLimit > self.config.maxLaneGas) {
+            self.incrMetric(.totalRejected);
             return error.LaneGasBudgetExceeded;
         }
 
         // 10. Insert into lane (handles replacement)
-        const replaced = try lane.insert(self.allocator, tx.*, self.config.replacement_bump_pct);
+        const replaced = try lane.insert(self.allocator, tx.*, self.config.replacementBumpPct);
 
         if (replaced) |old_tx| {
             // Remove old TX from hash index
@@ -518,28 +537,28 @@ pub const DAGMempool = struct {
             self.by_hash_lock.lock();
             _ = self.by_hash.remove(old_hash);
             self.by_hash_lock.unlock();
-            self.incrMetric(.replacement_count);
+            self.incrMetric(.replacementCount);
         } else {
             // New TX — increment counters
-            _ = self.total_vertices.fetchAdd(1, .release);
-            shard.vertex_count += 1;
+            _ = self.totalVertices.fetchAdd(1, .release);
+            shard.vertexCount += 1;
         }
 
         // 11. Add to hash index and bloom filter
         self.by_hash_lock.lock();
-        self.by_hash.put(tx_hash, TxLocation{
-            .shard_id = shard_id,
+        self.by_hash.put(txHash, TxLocation{
+            .shardId = shardId,
             .sender = tx.from,
             .nonce = tx.nonce,
         }) catch {
             self.by_hash_lock.unlock();
-            self.incrMetric(.total_rejected);
+            self.incrMetric(.totalRejected);
             return error.HashIndexFull;
         };
         self.by_hash_lock.unlock();
 
-        self.bloom.add(tx_hash);
-        self.incrMetric(.total_added);
+        self.bloom.add(txHash);
+        self.incrMetric(.totalAdded);
     }
 
     // ── Extraction ──────────────────────────────────────────────────────
@@ -547,10 +566,11 @@ pub const DAGMempool = struct {
     /// Extract execution-ready TX lanes for block building.
     /// Returns independent lanes — guaranteed zero-conflict parallel execution.
     /// Each lane contains nonce-ordered TXs from a single sender.
+    /// Extracts execution-ready transaction lanes for block production, respecting the gas budget.
     pub fn extract(self: *DAGMempool, allocator: std.mem.Allocator, gas_budget: u64) !ExtractionResult {
         var lanes = std.ArrayListUnmanaged(ExtractedLane){};
         defer lanes.deinit(allocator); // only on error path
-        var total_txs: u32 = 0;
+        var totalTxs: u32 = 0;
         var remaining_gas = gas_budget;
 
         // Collect candidates from all shards
@@ -568,19 +588,19 @@ pub const DAGMempool = struct {
                 if (ready.len == 0) continue;
 
                 // Compute the highest gas price in this lane for priority
-                var max_gas_price: u256 = 0;
+                var maxGasPrice: u256 = 0;
                 var lane_gas: u64 = 0;
                 for (ready) |*lt| {
-                    if (lt.tx.gas_price > max_gas_price) max_gas_price = lt.tx.gas_price;
-                    lane_gas += lt.tx.gas_limit;
+                    if (lt.tx.gasPrice > maxGasPrice) maxGasPrice = lt.tx.gasPrice;
+                    lane_gas += lt.tx.gasLimit;
                 }
 
                 try candidates.append(allocator, LaneCandidate{
                     .sender = lane.sender,
                     .ready_count = @intCast(ready.len),
-                    .max_gas_price = max_gas_price,
-                    .total_gas = lane_gas,
-                    .base_nonce = lane.base_nonce,
+                    .maxGasPrice = maxGasPrice,
+                    .totalGas = lane_gas,
+                    .baseNonce = lane.baseNonce,
                 });
             }
         }
@@ -589,7 +609,7 @@ pub const DAGMempool = struct {
         std.mem.sortUnstable(LaneCandidate, candidates.items, {}, struct {
             pub fn lessThan(_: void, a: LaneCandidate, b: LaneCandidate) bool {
                 // Higher gas price = higher priority = comes first
-                return a.max_gas_price > b.max_gas_price;
+                return a.maxGasPrice > b.maxGasPrice;
             }
         }.lessThan);
 
@@ -597,8 +617,8 @@ pub const DAGMempool = struct {
         for (candidates.items) |*candidate| {
             if (remaining_gas < 21_000) break; // Can't fit even a simple transfer
 
-            const shard_id = self.shardFor(candidate.sender);
-            var shard = &self.shards[shard_id];
+            const shardId = self.shardFor(candidate.sender);
+            var shard = &self.shards[shardId];
             shard.lock.lock();
             defer shard.lock.unlock();
 
@@ -610,9 +630,9 @@ pub const DAGMempool = struct {
                 defer txs.deinit(allocator); // only on error
 
                 for (ready) |*lt| {
-                    if (lt.tx.gas_limit > remaining_gas) break;
+                    if (lt.tx.gasLimit > remaining_gas) break;
                     try txs.append(allocator, lt.tx);
-                    remaining_gas -= lt.tx.gas_limit;
+                    remaining_gas -= lt.tx.gasLimit;
                 }
 
                 if (txs.items.len > 0) {
@@ -622,9 +642,9 @@ pub const DAGMempool = struct {
                     try lanes.append(allocator, ExtractedLane{
                         .sender = candidate.sender,
                         .txs = tx_slice,
-                        .base_nonce = lane.base_nonce,
+                        .baseNonce = lane.baseNonce,
                     });
-                    total_txs += @intCast(txs.items.len);
+                    totalTxs += @intCast(txs.items.len);
                 }
             }
         }
@@ -634,8 +654,8 @@ pub const DAGMempool = struct {
 
         return ExtractionResult{
             .lanes = result_lanes,
-            .total_txs = total_txs,
-            .total_gas = gas_budget - remaining_gas,
+            .totalTxs = totalTxs,
+            .totalGas = gas_budget - remaining_gas,
             .allocator = allocator,
         };
     }
@@ -644,17 +664,18 @@ pub const DAGMempool = struct {
 
     /// Remove committed TXs and advance lane nonces.
     /// Called after block execution with the committed TX list.
+    /// Removes transactions that have been committed to a block from the mempool.
     pub fn removeCommitted(self: *DAGMempool, transactions: []const types.Transaction) void {
         // Group by sender for efficient lane advancement
         var sender_max_nonce = std.AutoHashMap(types.Address, u64).init(self.allocator);
         defer sender_max_nonce.deinit();
 
         for (transactions) |*tx| {
-            const tx_hash = tx.hash();
+            const txHash = tx.hash();
 
             // Remove from hash index
             self.by_hash_lock.lock();
-            _ = self.by_hash.remove(tx_hash);
+            _ = self.by_hash.remove(txHash);
             self.by_hash_lock.unlock();
 
             // Track max nonce per sender
@@ -663,7 +684,7 @@ pub const DAGMempool = struct {
                 gop.value_ptr.* = tx.nonce + 1;
             }
 
-            _ = self.total_vertices.fetchSub(1, .release);
+            _ = self.totalVertices.fetchSub(1, .release);
         }
 
         // Advance each sender's lane
@@ -671,8 +692,8 @@ pub const DAGMempool = struct {
         while (it.next()) |entry| {
             const sender = entry.key_ptr.*;
             const new_nonce = entry.value_ptr.*;
-            const shard_id = self.shardFor(sender);
-            var shard = &self.shards[shard_id];
+            const shardId = self.shardFor(sender);
+            var shard = &self.shards[shardId];
 
             shard.lock.lock();
             defer shard.lock.unlock();
@@ -681,7 +702,7 @@ pub const DAGMempool = struct {
                 const old_count = lane.txs.items.len;
                 lane.advance(self.allocator, new_nonce);
                 const removed = old_count - lane.txs.items.len;
-                shard.vertex_count -|= @intCast(removed);
+                shard.vertexCount -|= @intCast(removed);
 
                 // GC empty lanes
                 if (lane.isEmpty()) {
@@ -705,9 +726,9 @@ pub const DAGMempool = struct {
             var it = shard.accounts.iterator();
             while (it.next()) |entry| {
                 const lane = entry.value_ptr.*;
-                const current_nonce = self.state.get_nonce(lane.sender);
+                const current_nonce = self.state.getNonce(lane.sender);
 
-                if (current_nonce > lane.base_nonce) {
+                if (current_nonce > lane.baseNonce) {
                     lane.advance(self.allocator, current_nonce);
                 }
 
@@ -727,9 +748,10 @@ pub const DAGMempool = struct {
     // ── Garbage Collection ──────────────────────────────────────────────
 
     /// Evict orphan lanes that haven't received new TXs within the timeout.
+    /// Performs garbage collection to evict orphan lanes that have exceeded the timeout.
     pub fn gcOrphanLanes(self: *DAGMempool) u32 {
         const now = std.time.nanoTimestamp();
-        const timeout_ns: i128 = @as(i128, @intCast(self.config.orphan_timeout_s)) * 1_000_000_000;
+        const timeout_ns: i128 = @as(i128, @intCast(self.config.orphanTimeoutS)) * 1_000_000_000;
         var evicted: u32 = 0;
 
         for (&self.shards) |*shard| {
@@ -742,19 +764,19 @@ pub const DAGMempool = struct {
             var it = shard.accounts.iterator();
             while (it.next()) |entry| {
                 const lane = entry.value_ptr.*;
-                if (now - lane.last_touch_ns > timeout_ns) {
+                if (now - lane.lastTouchNs > timeout_ns) {
                     // Remove all TXs from hash index
                     for (lane.txs.items) |*lt| {
-                        if (!lt.is_placeholder) {
-                            const tx_hash = lt.tx.hash();
+                        if (!lt.isPlaceholder) {
+                            const txHash = lt.tx.hash();
                             self.by_hash_lock.lock();
-                            _ = self.by_hash.remove(tx_hash);
+                            _ = self.by_hash.remove(txHash);
                             self.by_hash_lock.unlock();
-                            _ = self.total_vertices.fetchSub(1, .release);
+                            _ = self.totalVertices.fetchSub(1, .release);
                         }
                     }
 
-                    shard.vertex_count -|= @intCast(lane.readyCount());
+                    shard.vertexCount -|= @intCast(lane.readyCount());
                     evicted += lane.readyCount();
                     lane.deinit(self.allocator);
                     self.allocator.destroy(lane);
@@ -769,7 +791,7 @@ pub const DAGMempool = struct {
 
         if (evicted > 0) {
             self.metrics_lock.lock();
-            self.metrics.total_gc_evicted += evicted;
+            self.metrics.totalGcEvicted += evicted;
             self.metrics_lock.unlock();
         }
 
@@ -785,14 +807,14 @@ pub const DAGMempool = struct {
         self.by_hash_lock.unlock();
 
         if (loc) |location| {
-            var shard = &self.shards[location.shard_id];
+            var shard = &self.shards[location.shardId];
             shard.lock.lock();
             defer shard.lock.unlock();
 
             if (shard.accounts.get(location.sender)) |lane| {
-                if (location.nonce >= lane.base_nonce) {
-                    const idx = location.nonce - lane.base_nonce;
-                    if (idx < lane.txs.items.len and !lane.txs.items[idx].is_placeholder) {
+                if (location.nonce >= lane.baseNonce) {
+                    const idx = location.nonce - lane.baseNonce;
+                    if (idx < lane.txs.items.len and !lane.txs.items[idx].isPlaceholder) {
                         return lane.txs.items[idx].tx;
                     }
                 }
@@ -803,15 +825,38 @@ pub const DAGMempool = struct {
 
     /// Get the pending nonce for an account (state nonce + pending TXs).
     pub fn pendingNonce(self: *DAGMempool, addr: types.Address) u64 {
-        const shard_id = self.shardFor(addr);
-        var shard = &self.shards[shard_id];
+        const shardId = self.shardFor(addr);
+        var shard = &self.shards[shardId];
         shard.lock.lock();
         defer shard.lock.unlock();
 
         if (shard.accounts.get(addr)) |lane| {
-            return lane.base_nonce + @as(u64, lane.readyCount());
+            return lane.baseNonce + @as(u64, lane.readyCount());
         }
-        return self.state.get_nonce(addr);
+        return self.state.getNonce(addr);
+    }
+
+    /// Get all pending transactions.
+    pub fn pending(self: *DAGMempool, allocator: std.mem.Allocator) ![]types.Transaction {
+        var list = std.ArrayListUnmanaged(types.Transaction){};
+        errdefer list.deinit(allocator);
+
+        for (&self.shards) |*shard| {
+            shard.lock.lock();
+            defer shard.lock.unlock();
+
+            var it = shard.accounts.valueIterator();
+            while (it.next()) |lane_ptr| {
+                const lane = lane_ptr.*;
+                for (lane.txs.items) |lane_tx| {
+                    if (!lane_tx.isPlaceholder) {
+                        try list.append(allocator, lane_tx.tx);
+                    }
+                }
+            }
+        }
+
+        return list.toOwnedSlice(allocator);
     }
 
     /// Get pool statistics.
@@ -820,38 +865,38 @@ pub const DAGMempool = struct {
         defer self.metrics_lock.unlock();
 
         var total_vertices: u32 = 0;
-        var active_lanes: u32 = 0;
+        var activeLanes: u32 = 0;
         var max_shard_load: u32 = 0;
 
         for (&self.shards) |*shard| {
-            total_vertices += shard.vertex_count;
-            active_lanes += @intCast(shard.accounts.count());
-            if (shard.vertex_count > max_shard_load) {
-                max_shard_load = shard.vertex_count;
+            total_vertices += shard.vertexCount;
+            activeLanes += @intCast(shard.accounts.count());
+            if (shard.vertexCount > max_shard_load) {
+                max_shard_load = shard.vertexCount;
             }
         }
 
         return .{
-            .total_vertices = total_vertices,
-            .active_lanes = active_lanes,
-            .total_added = self.metrics.total_added,
-            .total_rejected = self.metrics.total_rejected,
-            .total_evicted = self.metrics.total_evicted,
-            .total_gc_evicted = self.metrics.total_gc_evicted,
-            .duplicate_rejected = self.metrics.duplicate_rejected,
-            .rate_limited = self.metrics.rate_limited,
-            .nonce_rejected = self.metrics.nonce_rejected,
-            .gas_price_rejected = self.metrics.gas_price_rejected,
-            .replacement_count = self.metrics.replacement_count,
-            .bloom_count = self.bloom.count,
-            .max_shard_load = max_shard_load,
-            .hot_shard_premium_applied = self.metrics.hot_shard_premium_applied,
+            .totalVertices = total_vertices,
+            .activeLanes = activeLanes,
+            .totalAdded = self.metrics.totalAdded,
+            .totalRejected = self.metrics.totalRejected,
+            .totalEvicted = self.metrics.totalEvicted,
+            .totalGcEvicted = self.metrics.totalGcEvicted,
+            .duplicateRejected = self.metrics.duplicateRejected,
+            .rateLimited = self.metrics.rateLimited,
+            .nonceRejected = self.metrics.nonceRejected,
+            .gasPriceRejected = self.metrics.gasPriceRejected,
+            .replacementCount = self.metrics.replacementCount,
+            .bloomCount = self.bloom.count,
+            .maxShardLoad = max_shard_load,
+            .hotShardPremiumApplied = self.metrics.hotShardPremiumApplied,
         };
     }
 
     /// Get the total number of pending TXs.
     pub fn count(self: *const DAGMempool) u32 {
-        return self.total_vertices.load(.acquire);
+        return self.totalVertices.load(.acquire);
     }
 
     // ── Internal ────────────────────────────────────────────────────────
@@ -870,7 +915,7 @@ pub const DAGMempool = struct {
         }
 
         const lane = try self.allocator.create(AccountLane);
-        lane.* = AccountLane.init(sender, self.state.get_nonce(sender));
+        lane.* = AccountLane.init(sender, self.state.getNonce(sender));
         try shard.accounts.put(sender, lane);
 
         return lane;
@@ -878,23 +923,23 @@ pub const DAGMempool = struct {
 
     /// Compute effective minimum gas price accounting for hot-shard premium.
     fn getEffectiveMinPrice(self: *DAGMempool, sender: types.Address) u256 {
-        const shard_id = self.shardFor(sender);
-        const shard = &self.shards[shard_id];
+        const shardId = self.shardFor(sender);
+        const shard = &self.shards[shardId];
 
         // Compute mean shard load
         var total: u64 = 0;
         for (&self.shards) |*s| {
-            total += s.vertex_count;
+            total += s.vertexCount;
         }
         const mean = total / SHARD_COUNT;
 
         // If this shard has > 2x the mean, apply premium
-        if (mean > 0 and shard.vertex_count > mean * self.config.hot_shard_multiplier) {
-            self.incrMetric(.hot_shard_premium_applied);
-            return (self.config.min_gas_price * @as(u256, self.config.hot_shard_premium_pct)) / 100;
+        if (mean > 0 and shard.vertexCount > mean * self.config.hotShardMultiplier) {
+            self.incrMetric(.hotShardPremiumApplied);
+            return (self.config.minGasPrice * @as(u256, self.config.hotShardPremiumPct)) / 100;
         }
 
-        return self.config.min_gas_price;
+        return self.config.minGasPrice;
     }
 
     /// Try to evict the lowest gas price TX globally to make room.
@@ -904,7 +949,7 @@ pub const DAGMempool = struct {
         var lowest_sender: ?types.Address = null;
 
         // Find the lowest gas price TX across all shards
-        for (&self.shards, 0..) |*shard, shard_idx| {
+        for (&self.shards, 0..) |*shard, shardIdx| {
             shard.lock.lock();
             defer shard.lock.unlock();
 
@@ -913,9 +958,9 @@ pub const DAGMempool = struct {
                 const lane = entry.value_ptr.*;
                 const ready = lane.getReady();
                 for (ready) |*lt| {
-                    if (lt.tx.gas_price < lowest_price) {
-                        lowest_price = lt.tx.gas_price;
-                        lowest_shard = @intCast(shard_idx);
+                    if (lt.tx.gasPrice < lowest_price) {
+                        lowest_price = lt.tx.gasPrice;
+                        lowest_shard = @intCast(shardIdx);
                         lowest_sender = lane.sender;
                     }
                 }
@@ -935,17 +980,17 @@ pub const DAGMempool = struct {
                     if (lane.txs.items.len > 0) {
                         const last_idx = lane.txs.items.len - 1;
                         const evicted = lane.txs.items[last_idx];
-                        if (!evicted.is_placeholder) {
-                            const tx_hash = evicted.tx.hash();
+                        if (!evicted.isPlaceholder) {
+                            const txHash = evicted.tx.hash();
                             self.by_hash_lock.lock();
-                            _ = self.by_hash.remove(tx_hash);
+                            _ = self.by_hash.remove(txHash);
                             self.by_hash_lock.unlock();
-                            lane.total_gas -|= evicted.tx.gas_limit;
+                            lane.totalGas -|= evicted.tx.gasLimit;
                         }
                         lane.txs.items.len -= 1;
-                        shard.vertex_count -|= 1;
-                        _ = self.total_vertices.fetchSub(1, .release);
-                        self.incrMetric(.total_evicted);
+                        shard.vertexCount -|= 1;
+                        _ = self.totalVertices.fetchSub(1, .release);
+                        self.incrMetric(.totalEvicted);
                         return true;
                     }
                 }
@@ -965,7 +1010,7 @@ pub const DAGMempool = struct {
 // ── Supporting Types ────────────────────────────────────────────────────
 
 const TxLocation = struct {
-    shard_id: u8,
+    shardId: u8,
     sender: types.Address,
     nonce: u64,
 };
@@ -973,24 +1018,24 @@ const TxLocation = struct {
 const LaneCandidate = struct {
     sender: types.Address,
     ready_count: u32,
-    max_gas_price: u256,
-    total_gas: u64,
-    base_nonce: u64,
+    maxGasPrice: u256,
+    totalGas: u64,
+    baseNonce: u64,
 };
 
 pub const DAGMempoolStats = struct {
-    total_vertices: u32,
-    active_lanes: u32,
-    total_added: u64,
-    total_rejected: u64,
-    total_evicted: u64,
-    total_gc_evicted: u64,
-    duplicate_rejected: u64,
-    rate_limited: u64,
-    nonce_rejected: u64,
-    gas_price_rejected: u64,
-    replacement_count: u64,
-    bloom_count: u32,
-    max_shard_load: u32,
-    hot_shard_premium_applied: u64,
+    totalVertices: u32,
+    activeLanes: u32,
+    totalAdded: u64,
+    totalRejected: u64,
+    totalEvicted: u64,
+    totalGcEvicted: u64,
+    duplicateRejected: u64,
+    rateLimited: u64,
+    nonceRejected: u64,
+    gasPriceRejected: u64,
+    replacementCount: u64,
+    bloomCount: u32,
+    maxShardLoad: u32,
+    hotShardPremiumApplied: u64,
 };

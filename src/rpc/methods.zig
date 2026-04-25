@@ -12,46 +12,43 @@ const filters = @import("filters.zig");
 pub const RpcHandler = struct {
     allocator: std.mem.Allocator,
     chain: *core.blockchain.Blockchain,
-    pool: *core.tx_pool.TxPool,
-    exec: *core.executor.Executor,
+    dagPool: *core.dag_mempool.DAGMempool,
+    dagExecutor: *core.dag_executor.DAGExecutor,
     state: *core.state.State,
     p2p: ?*p2p.Server,
-    /// DAG mempool for parallel TX admission (primary path)
-    dag_pool: ?*core.dag_mempool.DAGMempool,
 
     // Historical state for time-travel queries (optional)
     historical: ?*core.HistoricalState,
 
     /// Filter engine for eth_newFilter / eth_getLogs
-    filter_engine: filters.FilterEngine,
+    filterEngine: filters.FilterEngine,
 
     /// Block filter tracking (filter_id → last_seen_block)
-    block_filters: std.AutoHashMap(u64, u64),
-    next_filter_id: u64,
+    blockFilters: std.AutoHashMap(u64, u64),
+    nextFilterId: u64,
 
     /// Node start time for uptime reporting
-    node_start_time: i64,
+    nodeStartTime: i64,
 
     pub fn init(
         allocator: std.mem.Allocator,
         chain: *core.blockchain.Blockchain,
-        pool: *core.tx_pool.TxPool,
-        exec: *core.executor.Executor,
+        dagPool: *core.dag_mempool.DAGMempool,
+        dagExecutor: *core.dag_executor.DAGExecutor,
         state: *core.state.State,
     ) RpcHandler {
         return .{
             .allocator = allocator,
             .chain = chain,
-            .pool = pool,
-            .exec = exec,
+            .dagPool = dagPool,
+            .dagExecutor = dagExecutor,
             .state = state,
             .p2p = null,
-            .dag_pool = null,
             .historical = null,
-            .filter_engine = filters.FilterEngine.init(allocator),
-            .block_filters = std.AutoHashMap(u64, u64).init(allocator),
-            .next_filter_id = 0x10000,
-            .node_start_time = std.time.timestamp(),
+            .filterEngine = filters.FilterEngine.init(allocator),
+            .blockFilters = std.AutoHashMap(u64, u64).init(allocator),
+            .nextFilterId = 0x10000,
+            .nodeStartTime = std.time.timestamp(),
         };
     }
 
@@ -60,132 +57,131 @@ pub const RpcHandler = struct {
         self.historical = hist;
     }
 
-    /// Set DAG mempool for parallel TX routing.
-    pub fn setDAGPool(self: *RpcHandler, dag: *core.dag_mempool.DAGMempool) void {
-        self.dag_pool = dag;
+    pub fn setP2p(self: *RpcHandler, p2pServer: *p2p.Server) void {
+        self.p2p = p2pServer;
     }
 
-    pub fn set_p2p(self: *RpcHandler, p2p_server: *p2p.Server) void {
-        self.p2p = p2p_server;
+    pub fn setDagPool(self: *RpcHandler, dagPool: *core.dag_mempool.DAGMempool) void {
+        self.dagPool = dagPool;
     }
 
-    pub fn handle_request(self: *RpcHandler, allocator: std.mem.Allocator, method: []const u8, params: std.json.Value) anyerror!std.json.Value {
+    pub fn handleRequest(self: *RpcHandler, allocator: std.mem.Allocator, method: []const u8, params: std.json.Value) anyerror!std.json.Value {
         if (std.mem.eql(u8, method, "eth_chainId")) {
-            return self.eth_chainId(allocator);
+            return self.ethChainId(allocator);
         } else if (std.mem.eql(u8, method, "eth_blockNumber")) {
-            return self.eth_blockNumber(allocator);
+            return self.ethBlockNumber(allocator);
         } else if (std.mem.eql(u8, method, "net_version")) {
-            return self.net_version(allocator);
+            return self.netVersion(allocator);
         } else if (std.mem.eql(u8, method, "web3_clientVersion")) {
             return std.json.Value{ .string = "forgeyria/v1.0.0" };
         } else if (std.mem.eql(u8, method, "eth_getBalance")) {
-            return self.eth_getBalance(allocator, params);
+            return self.ethGetBalance(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_sendRawTransaction")) {
-            return self.eth_sendRawTransaction(allocator, params);
+            return self.ethSendRawTransaction(allocator, params);
         } else if (std.mem.eql(u8, method, "forge_getBalance")) {
-            return self.forge_getBalance(allocator, params);
+            return self.forgeGetBalance(allocator, params);
         } else if (std.mem.eql(u8, method, "forge_sendTransaction")) {
-            return self.forge_sendTransaction(allocator, params);
+            return self.forgeSendTransaction(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getTransactionCount")) {
-            return self.eth_getTransactionCount(allocator, params);
+            return self.ethGetTransactionCount(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getBlockByNumber")) {
-            return self.eth_getBlockByNumber(allocator, params);
+            return self.ethGetBlockByNumber(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_estimateGas")) {
-            return self.eth_estimateGas(allocator, params);
+            return self.ethEstimateGas(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_gasPrice")) {
-            return self.eth_gasPrice(allocator);
+            return self.ethGasPrice(allocator);
         } else if (std.mem.eql(u8, method, "eth_maxPriorityFeePerGas")) {
-            return self.eth_maxPriorityFeePerGas(allocator);
+            return self.ethMaxPriorityFeePerGas(allocator);
         } else if (std.mem.eql(u8, method, "eth_feeHistory")) {
-            return self.eth_feeHistory(allocator, params);
+            return self.ethFeeHistory(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_call")) {
-            return self.eth_call(allocator, params);
+            return self.ethCall(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getCode")) {
-            return self.eth_getCode(allocator, params);
+            return self.ethGetCode(allocator, params);
         } else if (std.mem.eql(u8, method, "net_listening")) {
-            return self.net_listening(allocator);
+            return self.netListening(allocator);
         } else if (std.mem.eql(u8, method, "net_peerCount")) {
-            return self.net_peerCount(allocator);
+            return self.netPeerCount(allocator);
         } else if (std.mem.eql(u8, method, "eth_getTransactionReceipt")) {
-            return self.eth_getTransactionReceipt(allocator, params);
+            return self.ethGetTransactionReceipt(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getBlockByHash")) {
-            return self.eth_getBlockByHash(allocator, params);
+            return self.ethGetBlockByHash(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_sendTransaction")) {
-            return self.eth_sendTransaction(allocator, params);
+            return self.ethSendTransaction(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getTransactionByHash")) {
-            return self.eth_getTransactionByHash(allocator, params);
+            return self.ethGetTransactionByHash(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getStorageAt")) {
-            return self.eth_getStorageAt(allocator, params);
+            return self.ethGetStorageAt(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_accounts")) {
-            return self.eth_accounts(allocator);
+            return self.ethAccounts(allocator);
         } else if (std.mem.eql(u8, method, "eth_syncing")) {
-            return self.eth_syncing(allocator);
+            return self.ethSyncing(allocator);
         } else if (std.mem.eql(u8, method, "eth_getLogs")) {
-            return self.eth_getLogs(allocator, params);
+            return self.ethGetLogs(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_mining")) {
-            return self.eth_mining(allocator);
+            return self.ethMining(allocator);
         } else if (std.mem.eql(u8, method, "eth_hashrate")) {
-            return self.eth_hashrate(allocator);
+            return self.ethHashrate(allocator);
         } else if (std.mem.eql(u8, method, "eth_getBlockTransactionCountByNumber")) {
-            return self.eth_getBlockTransactionCountByNumber(allocator, params);
+            return self.ethGetBlockTransactionCountByNumber(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getBlockTransactionCountByHash")) {
-            return self.eth_getBlockTransactionCountByHash(allocator, params);
+            return self.ethGetBlockTransactionCountByHash(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getUncleCountByBlockNumber")) {
-            return self.eth_getUncleCountByBlockNumber(allocator, params);
+            return self.ethGetUncleCountByBlockNumber(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getUncleCountByBlockHash")) {
-            return self.eth_getUncleCountByBlockHash(allocator, params);
+            return self.ethGetUncleCountByBlockHash(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_protocolVersion")) {
-            return self.eth_protocolVersion(allocator);
+            return self.ethProtocolVersion(allocator);
             // ── New eth_* methods ──
         } else if (std.mem.eql(u8, method, "eth_getTransactionByBlockNumberAndIndex")) {
-            return self.eth_getTransactionByBlockNumberAndIndex(allocator, params);
+            return self.ethGetTransactionByBlockNumberAndIndex(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getTransactionByBlockHashAndIndex")) {
-            return self.eth_getTransactionByBlockHashAndIndex(allocator, params);
+            return self.ethGetTransactionByBlockHashAndIndex(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_newFilter")) {
-            return self.eth_newFilter(allocator, params);
+            return self.ethNewFilter(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_newBlockFilter")) {
-            return self.eth_newBlockFilter(allocator);
+            return self.ethNewBlockFilter(allocator);
         } else if (std.mem.eql(u8, method, "eth_getFilterChanges")) {
-            return self.eth_getFilterChanges(allocator, params);
+            return self.ethGetFilterChanges(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_getFilterLogs")) {
-            return self.eth_getFilterLogs(allocator, params);
+            return self.ethGetFilterLogs(allocator, params);
         } else if (std.mem.eql(u8, method, "eth_uninstallFilter")) {
-            return self.eth_uninstallFilter(allocator, params);
+            return self.ethUninstallFilter(allocator, params);
         } else if (std.mem.eql(u8, method, "web3_sha3")) {
-            return self.web3_sha3(allocator, params);
+            return self.web3Sha3(allocator, params);
             // ── Zephyria-Specific RPC Methods ──
         } else if (std.mem.eql(u8, method, "forge_getDAGMetrics")) {
-            return self.forge_getDAGMetrics(allocator);
+            return self.forgeGetDAGMetrics(allocator);
         } else if (std.mem.eql(u8, method, "forge_getThreadInfo")) {
-            return self.forge_getThreadInfo(allocator);
+            return self.forgeGetThreadInfo(allocator);
         } else if (std.mem.eql(u8, method, "forge_getAccountTypes")) {
-            return self.forge_getAccountTypes(allocator);
+            return self.forgeGetAccountTypes(allocator);
         } else if (std.mem.eql(u8, method, "forge_getNodeInfo")) {
-            return self.forge_getNodeInfo(allocator);
+            return self.forgeGetNodeInfo(allocator);
         } else if (std.mem.eql(u8, method, "forge_getMempoolStats")) {
-            return self.forge_getMempoolStats(allocator);
+            return self.forgeGetMempoolStats(allocator);
         } else if (std.mem.eql(u8, method, "forge_getMempoolContent")) {
-            return self.forge_getMempoolContent(allocator);
+            return self.forgeGetMempoolContent(allocator);
         } else if (std.mem.eql(u8, method, "forge_getBlockProducerInfo")) {
-            return self.forge_getBlockProducerInfo(allocator);
+            return self.forgeGetBlockProducerInfo(allocator);
         } else if (std.mem.eql(u8, method, "forge_getPeers")) {
-            return self.forge_getPeers(allocator);
+            return self.forgeGetPeers(allocator);
         } else if (std.mem.eql(u8, method, "forge_getVMStats")) {
-            return self.forge_getVMStats(allocator);
+            return self.forgeGetVMStats(allocator);
         } else if (std.mem.eql(u8, method, "forge_getShardDistribution")) {
-            return self.forge_getShardDistribution(allocator);
+            return self.forgeGetShardDistribution(allocator);
         } else if (std.mem.eql(u8, method, "forge_getConfig")) {
-            return self.forge_getConfig(allocator);
+            return self.forgeGetConfig(allocator);
         } else if (std.mem.eql(u8, method, "forge_getExecutorStats")) {
-            return self.forge_getExecutorStats(allocator);
+            return self.forgeGetExecutorStats(allocator);
         } else if (std.mem.eql(u8, method, "forge_getStateMetrics")) {
-            return self.forge_getStateMetrics(allocator);
+            return self.forgeGetStateMetrics(allocator);
         } else if (std.mem.eql(u8, method, "forge_getChainMetrics")) {
-            return self.forge_getChainMetrics(allocator);
+            return self.forgeGetChainMetrics(allocator);
         } else if (std.mem.eql(u8, method, "forge_pendingTransactions")) {
-            return self.forge_pendingTransactions(allocator);
+            return self.forgePendingTransactions(allocator);
         } else if (std.mem.eql(u8, method, "forge_compileEOF") or std.mem.eql(u8, method, "forge_compile") or std.mem.eql(u8, method, "forgecompile")) {
-            return self.forge_compileEOF(allocator, params);
+            return self.forgeCompileEOF(allocator, params);
         }
 
         return error.MethodNotFound;
@@ -193,15 +189,15 @@ pub const RpcHandler = struct {
 
     // Methods
 
-    fn eth_chainId(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
-        const chain_id = self.chain.chain_id;
+    fn ethChainId(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+        const chain_id = self.chain.chainId;
         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{chain_id}) };
     }
 
-    fn eth_gasPrice(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethGasPrice(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         // Compute from recent block base fees if available
-        if (self.chain.current_block) |head| {
-            const base_fee = head.header.base_fee;
+        if (self.chain.currentBlock) |head| {
+            const base_fee = head.header.baseFee;
             if (base_fee > 0) {
                 // gas_price = base_fee + priority_fee (2 Gwei)
                 const priority_fee: u256 = 2_000_000_000;
@@ -213,14 +209,14 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = "0x4a817c800" };
     }
 
-    fn eth_maxPriorityFeePerGas(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethMaxPriorityFeePerGas(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         _ = allocator;
         // Return 2 Gwei (matches Go default)
         return std.json.Value{ .string = "0x77359400" };
     }
 
-    fn eth_feeHistory(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethFeeHistory(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = self;
         var count: usize = 1;
         if (params == .array and params.array.items.len > 0) {
@@ -273,8 +269,8 @@ pub const RpcHandler = struct {
         return std.json.Value{ .object = map };
     }
 
-    fn eth_estimateGas(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
-        log.debug("[RPC] eth_estimateGas\n", .{});
+    fn ethEstimateGas(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+        log.debug("[RPC] ethEstimateGas\n", .{});
         if (params != .array or params.array.items.len < 1) {
             // Default: simple transfer
             return std.json.Value{ .string = "0x5208" };
@@ -306,7 +302,7 @@ pub const RpcHandler = struct {
         }
 
         // VM simulation for gas estimation
-        if (self.exec.vm_callback != null) {
+        if (self.dagExecutor.vmCallback != null) {
             const from_str = if (tx_obj.object.get("from")) |v| (if (v == .string) v.string else null) else null;
             var from_addr: types.Address = types.Address.zero();
             if (from_str) |fs| {
@@ -329,15 +325,13 @@ pub const RpcHandler = struct {
             if (to_str == null and call_data.len > 0) {
                 // Contract creation — simulate initcode execution
 
-                var overlay = self.state.new_overlay() catch {
-                    return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{gas}) };
-                };
+                var overlay = core.state.Overlay.init(allocator, self.state);
                 defer overlay.deinit();
 
-                const vm_result = self.exec.vm_callback.?.execute(call_data, call_data, 30_000_000, &overlay, from_addr, value);
-                defer if (vm_result.output.len > 0) self.allocator.free(vm_result.output);
+                const vm_result = self.dagExecutor.vmCallback.?.execute(call_data, call_data, 30_000_000, &overlay, from_addr, value);
+                defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
                 if (vm_result.success) {
-                    gas += vm_result.gas_used;
+                    gas += vm_result.gasUsed;
                 }
             } else if (to_str) |ts| {
                 // Contract call — simulate on existing code
@@ -347,19 +341,19 @@ pub const RpcHandler = struct {
                     return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{gas}) };
                 };
 
-                const code = self.state.get_code(to_addr) catch &[_]u8{};
+                const code = self.state.getCode(to_addr) catch &[_]u8{};
                 defer if (code.len > 0) self.state.allocator.free(code);
 
                 if (code.len > 0) {
-                    var overlay = self.state.new_overlay() catch {
+                    var overlay = self.state.newOverlay() catch {
                         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{gas}) };
                     };
                     defer overlay.deinit();
 
-                    const vm_result = self.exec.vm_callback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, value);
-                    defer if (vm_result.output.len > 0) self.allocator.free(vm_result.output);
+                    const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, value);
+                    defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
                     if (vm_result.success) {
-                        gas = 21000 + vm_result.gas_used;
+                        gas = 21000 + vm_result.gasUsed;
                     }
                 }
             }
@@ -375,13 +369,13 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{gas}) };
     }
 
-    fn eth_call(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
-        log.debug("[RPC] eth_call\n", .{});
+    fn ethCall(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+        log.debug("[RPC] ethCall\n", .{});
         if (params != .array or params.array.items.len < 1) return std.json.Value{ .string = "0x" };
         const tx_obj = params.array.items[0];
         if (tx_obj != .object) return std.json.Value{ .string = "0x" };
 
-        // Parse "to" address — required for eth_call
+        // Parse "to" address — required for ethCall
         const to_str = if (tx_obj.object.get("to")) |v| (if (v == .string) v.string else null) else null;
         if (to_str == null) return std.json.Value{ .string = "0x" };
 
@@ -390,10 +384,10 @@ pub const RpcHandler = struct {
         _ = try std.fmt.hexToBytes(&to_addr.bytes, trimmed_to);
 
         // Check if target has code
-        const code = self.state.get_code(to_addr) catch &[_]u8{};
+        const code = self.state.getCode(to_addr) catch &[_]u8{};
         defer if (code.len > 0) self.state.allocator.free(code);
 
-        if (code.len == 0 or self.exec.vm_callback == null) {
+        if (code.len == 0 or self.dagExecutor.vmCallback == null) {
             return std.json.Value{ .string = "0x" };
         }
 
@@ -419,33 +413,33 @@ pub const RpcHandler = struct {
         } else 0;
 
         // Execute on a read-only overlay (not committed)
-        var overlay = try self.state.new_overlay();
+        var overlay = try self.state.newOverlay();
         defer overlay.deinit();
 
-        const vm_result = self.exec.vm_callback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, value);
-        defer if (vm_result.output.len > 0) self.allocator.free(vm_result.output);
+        const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, value);
+        defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
 
-        if (vm_result.success and vm_result.output.len > 0) {
-            const hex_out = try hex.encode(allocator, vm_result.output);
+        if (vm_result.success and vm_result.returnData.len > 0) {
+            const hex_out = try hex.encode(allocator, vm_result.returnData);
             return std.json.Value{ .string = hex_out };
         }
 
         return std.json.Value{ .string = "0x" };
     }
 
-    fn eth_getCode(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetCode(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const addr_str = params.array.items[0].string;
-        log.debug("[RPC] eth_getCode: {s}\n", .{addr_str});
+        log.debug("[RPC] ethGetCode: {s}\n", .{addr_str});
 
         var address: types.Address = undefined;
         const trimmed = if (std.mem.startsWith(u8, addr_str, "0x")) addr_str[2..] else addr_str;
         _ = try std.fmt.hexToBytes(&address.bytes, trimmed);
 
-        const code = try self.state.get_code(address);
+        const code = try self.state.getCode(address);
         defer self.state.allocator.free(code);
 
-        log.debug("[RPC] eth_getCode: Len={d}\n", .{code.len});
+        log.debug("[RPC] ethGetCode: Len={d}\n", .{code.len});
 
         // hex imported at top level
         const encoded = try hex.encode(allocator, code);
@@ -453,27 +447,27 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = result_str };
     }
 
-    fn net_version(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
-        return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "{d}", .{self.chain.chain_id}) };
+    fn netVersion(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+        return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "{d}", .{self.chain.chainId}) };
     }
 
-    fn eth_blockNumber(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
-        const height = self.chain.get_head_number();
-        log.debug("[RPC] eth_blockNumber: {d}\n", .{height});
+    fn ethBlockNumber(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+        const height = self.chain.getHeadNumber();
+        log.debug("[RPC] ethBlockNumber: {d}\n", .{height});
         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{height}) };
     }
 
-    fn net_listening(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn netListening(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         _ = allocator;
         return std.json.Value{ .bool = true };
     }
 
-    fn net_peerCount(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn netPeerCount(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var count: usize = 0;
         if (self.p2p) |p| {
-            p.lock.lock();
-            defer p.lock.unlock();
+            p.mutex.lock();
+            defer p.mutex.unlock();
             count = p.peers.items.len;
         }
         var b: [32]u8 = undefined;
@@ -481,7 +475,7 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = try allocator.dupe(u8, out) };
     }
 
-    fn eth_getBalance(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetBalance(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         // Ethereum-compatible: params: [address, blockTag]
         // blockTag can be: "latest", "earliest", "pending", or hex block number
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
@@ -504,7 +498,7 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = try hex.toHex(allocator, balance) };
     }
 
-    fn forge_getBalance(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn forgeGetBalance(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         // Ethereum-compatible: params: [address, blockTag]
         // blockTag can be: "latest", "earliest", "pending", or hex block number
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
@@ -527,7 +521,7 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = try hex.toHex(allocator, balance) };
     }
 
-    fn eth_getTransactionCount(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetTransactionCount(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         // Ethereum-compatible: params: [address, blockTag]
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
 
@@ -544,17 +538,12 @@ pub const RpcHandler = struct {
 
         var nonce = try self.getNonceAt(address, block_tag);
 
-        // For "pending" tag: use DAG mempool nonce or strict executable nonce
+        // For "pending" tag: use DAG mempool nonce
         if (std.mem.eql(u8, block_tag, "pending")) {
-            if (self.dag_pool) |dag| {
-                // DAG mempool tracks per-address pending nonces
-                nonce = dag.pendingNonce(address);
-            } else {
-                nonce = self.pool.get_executable_nonce(address);
-            }
+            nonce = self.dagPool.pendingNonce(address);
         }
 
-        log.debug("[RPC] eth_getTransactionCount: Tag={s} -> Nonce={d}\n", .{ block_tag, nonce });
+        log.debug("[RPC] ethGetTransactionCount: Tag={s} -> Nonce={d}\n", .{ block_tag, nonce });
         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{nonce}) };
     }
 
@@ -562,7 +551,7 @@ pub const RpcHandler = struct {
     fn getBalanceAt(self: *RpcHandler, address: types.Address, block_tag: []const u8) !u256 {
         // Handle special tags
         if (std.mem.eql(u8, block_tag, "latest") or std.mem.eql(u8, block_tag, "pending")) {
-            return self.state.get_balance(address);
+            return self.state.getBalance(address);
         }
 
         if (std.mem.eql(u8, block_tag, "earliest")) {
@@ -576,14 +565,14 @@ pub const RpcHandler = struct {
         // Parse hex block number
         const trimmed = if (std.mem.startsWith(u8, block_tag, "0x")) block_tag[2..] else block_tag;
         const block_num = std.fmt.parseInt(u64, trimmed, 16) catch {
-            return self.state.get_balance(address); // Fallback to latest
+            return self.state.getBalance(address); // Fallback to latest
         };
 
         // Check if querying historical block
-        const head = self.chain.get_head_number();
+        const head = self.chain.getHeadNumber();
         if (block_num >= head) {
             // Current or future block - use current state
-            return self.state.get_balance(address);
+            return self.state.getBalance(address);
         }
 
         // Historical query - use HistoricalState if available
@@ -593,13 +582,13 @@ pub const RpcHandler = struct {
 
         // No historical state connected - return current balance with warning
         std.log.warn("Historical query for block {d} but no HistoricalState connected", .{block_num});
-        return self.state.get_balance(address);
+        return self.state.getBalance(address);
     }
 
     /// Get nonce at a specific block (Ethereum-compatible)
     fn getNonceAt(self: *RpcHandler, address: types.Address, block_tag: []const u8) !u64 {
         if (std.mem.eql(u8, block_tag, "latest") or std.mem.eql(u8, block_tag, "pending")) {
-            return self.state.get_nonce(address);
+            return self.state.getNonce(address);
         }
 
         if (std.mem.eql(u8, block_tag, "earliest")) {
@@ -611,26 +600,26 @@ pub const RpcHandler = struct {
 
         const trimmed = if (std.mem.startsWith(u8, block_tag, "0x")) block_tag[2..] else block_tag;
         const block_num = std.fmt.parseInt(u64, trimmed, 16) catch {
-            return self.state.get_nonce(address);
+            return self.state.getNonce(address);
         };
 
-        const head = self.chain.get_head_number();
+        const head = self.chain.getHeadNumber();
         if (block_num >= head) {
-            return self.state.get_nonce(address);
+            return self.state.getNonce(address);
         }
 
         if (self.historical) |hist| {
             return hist.getNonceAt(address, block_num);
         }
 
-        return self.state.get_nonce(address);
+        return self.state.getNonce(address);
     }
 
-    fn eth_sendRawTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethSendRawTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
 
         const raw_tx_hex = params.array.items[0].string;
-        log.debug("[RPC] eth_sendRawTransaction: len={d}\n", .{raw_tx_hex.len});
+        log.debug("[RPC] ethSendRawTransaction: len={d}\n", .{raw_tx_hex.len});
 
         const trimmed = if (std.mem.startsWith(u8, raw_tx_hex, "0x")) raw_tx_hex[2..] else raw_tx_hex;
         const actual_bytes = hex.decode(allocator, trimmed) catch |err| {
@@ -638,68 +627,32 @@ pub const RpcHandler = struct {
             return error.InvalidParams;
         };
 
-        // Decode RLP transaction (this handles the missing 'from' field)
+        // Decode RLP transaction
         const tx_decode = @import("core").tx_decode;
         const tx = tx_decode.decodeTransaction(allocator, actual_bytes) catch |err| {
             log.debug("[RPC] TX decode failed: {}\n", .{err});
             return error.InvalidParams;
         };
 
-        // TxPool uses the global allocator (self.allocator) for persistent storage.
         const heap_tx = try self.allocator.create(types.Transaction);
         heap_tx.* = tx;
         heap_tx.data = try self.allocator.dupe(u8, tx.data);
 
-        // Route through DAG mempool if available (primary path)
-        if (self.dag_pool) |dag| {
-            dag.add(heap_tx) catch |err| {
-                log.debug("[RPC] DAG mempool rejected TX: {}\n", .{err});
-                // Fallback to legacy pool
-                self.pool.add(heap_tx) catch |add_err| {
-                    log.debug("[RPC] Legacy pool also rejected: {}\n", .{add_err});
-                    heap_tx.deinit(self.allocator);
-                    self.allocator.destroy(heap_tx);
-                };
-            };
-        } else {
-            // Legacy path: Add to TxPool
-            // MetaMask expects the hash back even if pool rejects (it polls receipt)
-            self.pool.add(heap_tx) catch |err| {
-                log.debug("[RPC] TxPool Add Failed: {}\n", .{err});
-                // Clean up the heap tx since pool rejected it
-                heap_tx.deinit(self.allocator);
-                self.allocator.destroy(heap_tx);
-                // For nonce-too-low or already-known, just return the hash
-                // MetaMask will handle it via receipt polling
-                if (err == error.NonceTooLow or err == error.InsufficientFunds or err == error.IntrinsicGasTooLow) {
-                    const balance = self.state.get_balance(tx.from);
-                    const cost = tx.value + (tx.gas_price * @as(u256, tx.gas_limit));
+        // Add to DAG mempool
+        self.dagPool.add(heap_tx) catch |err| {
+            log.debug("[RPC] DAG mempool rejected TX: {}\n", .{err});
+            heap_tx.deinit(self.allocator);
+            self.allocator.destroy(heap_tx);
 
-                    log.debug("[RPC] SILENT REJECTION: Hash={x} Reason={}\n", .{ tx.hash().bytes, err });
-                    log.debug("      Raw: {s}\n", .{params.array.items[0].string});
-                    log.debug("      Sender (Recovered): {x}\n", .{tx.from.bytes});
-                    if (tx.to) |t| log.debug("      To: {x}\n", .{t.bytes}) else log.debug("      To: null (Contract Creation)\n", .{});
-                    log.debug("      Nonce: {d}\n", .{tx.nonce});
-                    log.debug("      Value: {d}\n", .{tx.value});
-                    log.debug("      Gas Limit: {d} Price: {d}\n", .{ tx.gas_limit, tx.gas_price });
-                    log.debug("      V: {x}\n", .{tx.v});
-                    log.debug("      R: {x}\n", .{tx.r});
-                    log.debug("      S: {x}\n", .{tx.s});
-                    log.debug("      Balance: {d}\n", .{balance});
-                    log.debug("      Cost: {d}\n", .{cost});
-
-                    // Return hash so MetaMask doesn't hang, it will get null receipt
-                    var hash_out: [32]u8 = undefined;
-                    const h = tx.hash();
-                    @memcpy(&hash_out, &h.bytes);
-                    return std.json.Value{ .string = try hex.encode(allocator, &hash_out) };
-                }
-                return err;
-            };
-        }
-
-        // Transaction accepted — return hash
-        log.debug("[RPC] Transaction Added!\n", .{});
+            // For nonce-too-low or already-known, just return the hash so MetaMask doesn't hang
+            if (err == error.NonceTooLow or err == error.InsufficientFunds or err == error.IntrinsicGasTooLow) {
+                var hash_out: [32]u8 = undefined;
+                const h = tx.hash();
+                @memcpy(&hash_out, &h.bytes);
+                return std.json.Value{ .string = try hex.encode(allocator, &hash_out) };
+            }
+            return err;
+        };
 
         // Return Hash
         var hash_out: [32]u8 = undefined;
@@ -708,11 +661,11 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = try hex.encode(allocator, &hash_out) };
     }
 
-    fn forge_sendTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn forgeSendTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
 
         const raw_tx_hex = params.array.items[0].string;
-        log.debug("[RPC] forge_sendtransaction: len={d}\n", .{raw_tx_hex.len});
+        log.debug("[RPC] forgeSendTransaction: len={d}\n", .{raw_tx_hex.len});
 
         const trimmed = if (std.mem.startsWith(u8, raw_tx_hex, "0x")) raw_tx_hex[2..] else raw_tx_hex;
         const actual_bytes = hex.decode(allocator, trimmed) catch |err| {
@@ -720,68 +673,24 @@ pub const RpcHandler = struct {
             return error.InvalidParams;
         };
 
-        // Decode RLP transaction (this handles the missing 'from' field)
+        // Decode RLP transaction
         const tx_decode = @import("core").tx_decode;
         const tx = tx_decode.decodeTransaction(allocator, actual_bytes) catch |err| {
             log.debug("[RPC] TX decode failed: {}\n", .{err});
             return error.InvalidParams;
         };
 
-        // TxPool uses the global allocator (self.allocator) for persistent storage.
         const heap_tx = try self.allocator.create(types.Transaction);
         heap_tx.* = tx;
         heap_tx.data = try self.allocator.dupe(u8, tx.data);
 
-        // Route through DAG mempool if available (primary path)
-        if (self.dag_pool) |dag| {
-            dag.add(heap_tx) catch |err| {
-                log.debug("[RPC] DAG mempool rejected TX: {}\n", .{err});
-                // Fallback to legacy pool
-                self.pool.add(heap_tx) catch |add_err| {
-                    log.debug("[RPC] Legacy pool also rejected: {}\n", .{add_err});
-                    heap_tx.deinit(self.allocator);
-                    self.allocator.destroy(heap_tx);
-                };
-            };
-        } else {
-            // Legacy path: Add to TxPool
-            // MetaMask expects the hash back even if pool rejects (it polls receipt)
-            self.pool.add(heap_tx) catch |err| {
-                log.debug("[RPC] TxPool Add Failed: {}\n", .{err});
-                // Clean up the heap tx since pool rejected it
-                heap_tx.deinit(self.allocator);
-                self.allocator.destroy(heap_tx);
-                // For nonce-too-low or already-known, just return the hash
-                // MetaMask will handle it via receipt polling
-                if (err == error.NonceTooLow or err == error.InsufficientFunds or err == error.IntrinsicGasTooLow) {
-                    const balance = self.state.get_balance(tx.from);
-                    const cost = tx.value + (tx.gas_price * @as(u256, tx.gas_limit));
-
-                    log.debug("[RPC] SILENT REJECTION: Hash={x} Reason={}\n", .{ tx.hash().bytes, err });
-                    log.debug("      Raw: {s}\n", .{params.array.items[0].string});
-                    log.debug("      Sender (Recovered): {x}\n", .{tx.from.bytes});
-                    if (tx.to) |t| log.debug("      To: {x}\n", .{t.bytes}) else log.debug("      To: null (Contract Creation)\n", .{});
-                    log.debug("      Nonce: {d}\n", .{tx.nonce});
-                    log.debug("      Value: {d}\n", .{tx.value});
-                    log.debug("      Gas Limit: {d} Price: {d}\n", .{ tx.gas_limit, tx.gas_price });
-                    log.debug("      V: {x}\n", .{tx.v});
-                    log.debug("      R: {x}\n", .{tx.r});
-                    log.debug("      S: {x}\n", .{tx.s});
-                    log.debug("      Balance: {d}\n", .{balance});
-                    log.debug("      Cost: {d}\n", .{cost});
-
-                    // Return hash so MetaMask doesn't hang, it will get null receipt
-                    var hash_out: [32]u8 = undefined;
-                    const h = tx.hash();
-                    @memcpy(&hash_out, &h.bytes);
-                    return std.json.Value{ .string = try hex.encode(allocator, &hash_out) };
-                }
-                return err;
-            };
-        }
-
-        // Transaction accepted — return hash
-        log.debug("[RPC] Transaction Added!\n", .{});
+        // Add to DAG mempool
+        self.dagPool.add(heap_tx) catch |err| {
+            log.debug("[RPC] DAG mempool rejected TX: {}\n", .{err});
+            heap_tx.deinit(self.allocator);
+            self.allocator.destroy(heap_tx);
+            return err;
+        };
 
         // Return Hash
         var hash_out: [32]u8 = undefined;
@@ -799,28 +708,27 @@ pub const RpcHandler = struct {
         // Number
         try map.put("number", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.number}) });
 
-        // Compute block hash
         var h_res: [32]u8 = undefined;
         var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        const encoded = try block.header.rlp_encode(allocator);
+        const encoded = try block.header.rlpEncode(allocator);
         defer allocator.free(encoded);
         hasher.update(encoded);
         hasher.final(&h_res);
 
         try map.put("hash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &h_res)) });
-        try map.put("parentHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.parent_hash.bytes)) });
-        try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.verkle_root.bytes)) });
+        try map.put("parentHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.parentHash.bytes)) });
+        try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.verkleRoot.bytes)) });
 
         // PoS-compatible fields
         const zero_hash = [_]u8{0} ** 32;
         try map.put("sha3Uncles", std.json.Value{ .string = "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347" });
         try map.put("miner", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.coinbase.bytes)) });
-        try map.put("transactionsRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.tx_hash.bytes)) });
+        try map.put("transactionsRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.txHash.bytes)) });
         try map.put("receiptsRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &zero_hash)) });
         try map.put("logsBloom", std.json.Value{ .string = "0x" ++ "00" ** 256 });
         try map.put("difficulty", std.json.Value{ .string = "0x0" });
         try map.put("totalDifficulty", std.json.Value{ .string = "0x0" });
-        try map.put("extraData", std.json.Value{ .string = try hex.encode(allocator, block.header.extra_data) });
+        try map.put("extraData", std.json.Value{ .string = try hex.encode(allocator, block.header.extraData) });
         try map.put("size", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{encoded.len}) });
         try map.put("mixHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &zero_hash)) });
         try map.put("nonce", std.json.Value{ .string = "0x0000000000000000" }); // PoS zero nonce
@@ -845,11 +753,11 @@ pub const RpcHandler = struct {
                     try tx_map.put("to", std.json.Value.null);
                 }
                 try tx_map.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
-                try tx_map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_limit}) });
-                try tx_map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_price}) });
+                try tx_map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+                try tx_map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
                 try tx_map.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
                 try tx_map.put("type", std.json.Value{ .string = "0x2" }); // Default to EIP-1559 for now
-                try tx_map.put("chainId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.chain.chain_id}) });
+                try tx_map.put("chainId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.chain.chainId}) });
                 // Signature
                 try tx_map.put("v", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.v}) });
                 var r_bytes: [32]u8 = undefined;
@@ -868,13 +776,13 @@ pub const RpcHandler = struct {
 
         // Timestamp and gas
         try map.put("timestamp", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.time}) });
-        try map.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.gas_limit}) });
-        try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.gas_used}) });
-        try map.put("baseFeePerGas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.base_fee}) });
+        try map.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.gasLimit}) });
+        try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.gasUsed}) });
+        try map.put("baseFeePerGas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.baseFee}) });
 
         return std.json.Value{ .object = map };
     }
-    fn eth_getBlockByNumber(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetBlockByNumber(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const block_tag = params.array.items[0].string;
         const full_tx = if (params.array.items.len > 1) params.array.items[1].bool else false;
@@ -882,14 +790,14 @@ pub const RpcHandler = struct {
         var block: ?*types.Block = null;
 
         if (std.mem.eql(u8, block_tag, "latest")) {
-            if (self.chain.current_block) |head| {
+            if (self.chain.currentBlock) |head| {
                 // Return copy via get_block_by_number using head number
-                block = self.chain.get_block_by_number(head.header.number);
+                block = self.chain.getBlockByNumber(head.header.number);
             }
             // Fallback: use get_block_by_number with current height if head is null or whatever logic
-            // Actually self.chain.current_block might be the way.
-            // Let's assume get_block_by_number works.
-            // block = self.chain.get_block_by_number(self.chain.height);
+            // Actually self.chain.currentBlock might be the way.
+            // Let's assume getBlockByNumber works.
+            // block = self.chain.getBlockByNumber(self.chain.height);
             // Let's stick to safe path: parse hex or special tags.
         }
 
@@ -897,25 +805,25 @@ pub const RpcHandler = struct {
             // Try parsing number
             if (std.mem.startsWith(u8, block_tag, "0x")) {
                 const num = std.fmt.parseInt(u64, block_tag[2..], 16) catch return error.InvalidParams;
-                block = self.chain.get_block_by_number(num);
+                block = self.chain.getBlockByNumber(num);
             } else if (std.mem.eql(u8, block_tag, "latest")) {
-                // If current_block is null, maybe genesis?
-                // self.chain.current_block is ?*Block
-                if (self.chain.current_block) |head| {
-                    block = self.chain.get_block_by_number(head.header.number);
+                // If currentBlock is null, maybe genesis?
+                // self.chain.currentBlock is ?*Block
+                if (self.chain.currentBlock) |head| {
+                    block = self.chain.getBlockByNumber(head.header.number);
                 }
             } else if (std.mem.eql(u8, block_tag, "earliest")) {
-                block = self.chain.get_block_by_number(0);
+                block = self.chain.getBlockByNumber(0);
             }
         }
 
         if (block) |b| {
-            defer self.chain.free_block(b);
+            defer self.chain.freeBlock(b);
             return self.formatBlock(allocator, b, full_tx);
         }
         return std.json.Value.null;
     }
-    fn eth_getTransactionReceipt(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetTransactionReceipt(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const tx_hash_hex = params.array.items[0].string;
         log.debug("[RPC] eth_getTransactionReceipt: {s}\n", .{tx_hash_hex});
@@ -927,28 +835,28 @@ pub const RpcHandler = struct {
         };
 
         // 1. Get Transaction Location (catch errors gracefully)
-        const loc = self.chain.get_transaction_location(tx_hash) catch |err| {
-            log.debug("[RPC] get_transaction_location error: {}\n", .{err});
+        const loc = self.chain.getTransactionLocation(tx_hash) catch |err| {
+            log.debug("[RPC] getTransactionLocation error: {}\n", .{err});
             return std.json.Value.null;
         };
 
         if (loc) |location| {
-            log.debug("[RPC] Tx found at block, index {d}\n", .{location.tx_index});
+            log.debug("[RPC] Tx found at block, index {d}\n", .{location.txIndex});
             // 2. Get Block (catch RLP decode errors gracefully — corrupted/migrated data)
-            const block = self.chain.get_block_by_hash(location.block_hash) catch |err| {
-                log.debug("[RPC] get_block_by_hash failed (RLP issue?): {}\n", .{err});
+            const block = self.chain.getBlockByHash(location.blockHash) catch |err| {
+                log.debug("[RPC] getBlockByHash failed (RLP issue?): {}\n", .{err});
                 return std.json.Value.null;
             };
 
             if (block) |b| {
-                defer self.chain.free_block(b);
+                defer self.chain.freeBlock(b);
 
                 // 3. Find Transaction (we know index)
-                if (location.tx_index >= b.transactions.len) {
-                    log.debug("[RPC] Tx index {} out of bounds (len {})\n", .{ location.tx_index, b.transactions.len });
+                if (location.txIndex >= b.transactions.len) {
+                    log.debug("[RPC] Tx index {} out of bounds (len {})\n", .{ location.txIndex, b.transactions.len });
                     return std.json.Value.null;
                 }
-                const tx = b.transactions[location.tx_index];
+                const tx = b.transactions[location.txIndex];
 
                 // Recover real sender address from signature (decodeFromRLP sets from=zero)
                 const tx_decode = @import("core").tx_decode;
@@ -959,8 +867,8 @@ pub const RpcHandler = struct {
                 // hex imported at top level
 
                 try map.put("transactionHash", std.json.Value{ .string = try hex.encode(allocator, &tx_hash.bytes) });
-                try map.put("transactionIndex", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{location.tx_index}) });
-                try map.put("blockHash", std.json.Value{ .string = try hex.encode(allocator, &location.block_hash.bytes) });
+                try map.put("transactionIndex", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{location.txIndex}) });
+                try map.put("blockHash", std.json.Value{ .string = try hex.encode(allocator, &location.blockHash.bytes) });
                 try map.put("blockNumber", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{b.header.number}) });
                 try map.put("from", std.json.Value{ .string = try hex.encode(allocator, &real_from.bytes) });
 
@@ -975,13 +883,13 @@ pub const RpcHandler = struct {
                     try map.put("contractAddress", std.json.Value{ .string = try hex.encode(allocator, &contract_addr.bytes) });
                 }
 
-                try map.put("cumulativeGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_limit}) });
-                try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_limit}) });
+                try map.put("cumulativeGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+                try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
 
                 // EIP-1559 fields
-                var effective_gas_price = tx.gas_price;
-                if (b.header.base_fee > 0) {
-                    effective_gas_price = b.header.base_fee + (if (tx.gas_price > b.header.base_fee) tx.gas_price - b.header.base_fee else 0);
+                var effective_gas_price = tx.gasPrice;
+                if (b.header.baseFee > 0) {
+                    effective_gas_price = b.header.baseFee + (if (tx.gasPrice > b.header.baseFee) tx.gasPrice - b.header.baseFee else 0);
                 }
                 if (effective_gas_price == 0) effective_gas_price = 1000; // Minimal default
 
@@ -1001,7 +909,7 @@ pub const RpcHandler = struct {
         return std.json.Value.null;
     }
 
-    fn eth_getBlockByHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetBlockByHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const block_hash_hex = params.array.items[0].string;
         const full_tx = if (params.array.items.len > 1) params.array.items[1].bool else false;
@@ -1010,14 +918,14 @@ pub const RpcHandler = struct {
         const bytes = try std.fmt.hexToBytes(&block_hash.bytes, std.mem.trimLeft(u8, block_hash_hex, "0x"));
         if (bytes.len != 32) return error.InvalidParams;
 
-        if (try self.chain.get_block_by_hash(block_hash)) |block| {
-            defer self.chain.free_block(block);
+        if (try self.chain.getBlockByHash(block_hash)) |block| {
+            defer self.chain.freeBlock(block);
             return self.formatBlock(allocator, block, full_tx);
         }
         return std.json.Value.null;
     }
 
-    fn eth_getTransactionByHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetTransactionByHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const tx_hash_hex = params.array.items[0].string;
         log.debug("[RPC] eth_getTransactionByHash: {s}\n", .{tx_hash_hex});
@@ -1027,24 +935,24 @@ pub const RpcHandler = struct {
         if (bytes.len != 32) return error.InvalidParams;
 
         // 1. Check Blockchain
-        if (try self.chain.get_transaction_location(tx_hash)) |loc| {
-            log.debug("[RPC] eth_getTransactionByHash: Found in Chain at block index {d}\n", .{loc.tx_index});
-            if (try self.chain.get_block_by_hash(loc.block_hash)) |block| {
-                defer self.chain.free_block(block);
+        if (try self.chain.getTransactionLocation(tx_hash)) |loc| {
+            log.debug("[RPC] eth_getTransactionByHash: Found in Chain at block index {d}\n", .{loc.txIndex});
+            if (try self.chain.getBlockByHash(loc.blockHash)) |block| {
+                defer self.chain.freeBlock(block);
 
-                if (loc.tx_index < block.transactions.len) {
-                    const tx = block.transactions[loc.tx_index];
-                    return self.formatTransaction(allocator, tx, block, loc.tx_index, tx_hash);
+                if (loc.txIndex < block.transactions.len) {
+                    const tx = block.transactions[loc.txIndex];
+                    return self.formatTransaction(allocator, tx, block, loc.txIndex, tx_hash);
                 }
             }
         }
 
         // 2. Check Transaction Pool
-        if (self.pool.get(tx_hash)) |tx| {
+        if (self.dagPool.get(tx_hash)) |tx| {
             log.debug("[RPC] eth_getTransactionByHash: Found in Pool (Pending)\n", .{});
 
             // pool.get returns *Transaction, dereference for formatTransaction
-            return self.formatTransaction(allocator, tx.*, null, 0, tx_hash);
+            return self.formatTransaction(allocator, tx, null, 0, tx_hash);
         }
 
         log.debug("[RPC] eth_getTransactionByHash: Not Found\n", .{});
@@ -1080,8 +988,8 @@ pub const RpcHandler = struct {
         }
 
         try map.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
-        try map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_limit}) });
-        try map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_price}) });
+        try map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+        try map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
         try map.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
         try map.put("type", std.json.Value{ .string = "0x0" });
         try map.put("chainId", std.json.Value{ .string = "0x1869f" });
@@ -1131,7 +1039,7 @@ pub const RpcHandler = struct {
         }
     }
 
-    fn eth_sendTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethSendTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         log.debug("[RPC] eth_sendTransaction called\n", .{});
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const tx_obj = params.array.items[0];
@@ -1183,7 +1091,7 @@ pub const RpcHandler = struct {
         const data_bytes = try hex.decode(allocator, data_str);
 
         // Get Nonce from state
-        const nonce = self.state.get_nonce(address);
+        const nonce = self.state.getNonce(address);
         log.debug("[RPC] Nonce: {d}\n", .{nonce});
 
         // Sign it!
@@ -1222,7 +1130,7 @@ pub const RpcHandler = struct {
             .to = to_addr,
             .value = value,
             .data = data_bytes,
-            .chain_id = self.chain.chain_id,
+            .chain_id = self.chain.chainId,
         };
 
         var hash: [32]u8 = undefined;
@@ -1285,12 +1193,12 @@ pub const RpcHandler = struct {
         // 4. Construct Transaction
         const tx = types.Transaction{
             .nonce = nonce,
-            .gas_price = gas_price,
-            .gas_limit = gas_limit,
+            .gasPrice = gas_price,
+            .gasLimit = gas_limit,
             .to = to_addr,
             .value = value,
             .data = data_bytes,
-            .v = self.chain.chain_id * 2 + 35 + recovery_id,
+            .v = self.chain.chainId * 2 + 35 + recovery_id,
             .r = std.mem.readInt(u256, &r_bytes, .big),
             .s = std.mem.readInt(u256, &s_bytes, .big),
             .from = address,
@@ -1307,12 +1215,12 @@ pub const RpcHandler = struct {
         var new_params = std.json.Array.init(allocator);
         try new_params.append(std.json.Value{ .string = raw_tx_str });
 
-        return self.forge_sendTransaction(allocator, std.json.Value{ .array = new_params });
+        return self.forgeSendTransaction(allocator, std.json.Value{ .array = new_params });
     }
 
     // ── New MetaMask-required methods ──
 
-    fn eth_getStorageAt(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetStorageAt(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 2) return error.InvalidParams;
         const addr_str = params.array.items[0].string;
         const slot_str = params.array.items[1].string;
@@ -1327,20 +1235,20 @@ pub const RpcHandler = struct {
             _ = decoded;
         }
 
-        const value = self.state.get_storage(address, slot);
+        const value = self.state.getStorage(address, slot);
         return std.json.Value{ .string = try hex.encode(allocator, &value) };
     }
 
-    fn eth_accounts(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethAccounts(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         // MetaMask manages its own accounts — return empty array
         return std.json.Value{ .array = std.json.Array.init(allocator) };
     }
 
-    fn eth_syncing(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethSyncing(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = allocator;
         // Return sync status with block info
-        const head = self.chain.get_head_number();
+        const head = self.chain.getHeadNumber();
         if (head == 0) {
             // No blocks yet — could still be syncing
             return std.json.Value{ .bool = false };
@@ -1350,7 +1258,7 @@ pub const RpcHandler = struct {
         return std.json.Value{ .bool = false };
     }
 
-    fn eth_getLogs(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetLogs(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         // Parse filter params and return matching logs
         if (params != .array or params.array.items.len < 1) {
             return std.json.Value{ .array = std.json.Array.init(allocator) };
@@ -1362,7 +1270,7 @@ pub const RpcHandler = struct {
 
         // Parse block range
         var from_block: u64 = 0;
-        var to_block: u64 = self.chain.get_head_number();
+        var to_block: u64 = self.chain.getHeadNumber();
 
         if (filter_obj.object.get("fromBlock")) |v| {
             if (v == .string) {
@@ -1379,7 +1287,7 @@ pub const RpcHandler = struct {
         if (filter_obj.object.get("toBlock")) |v| {
             if (v == .string) {
                 if (std.mem.eql(u8, v.string, "latest")) {
-                    to_block = self.chain.get_head_number();
+                    to_block = self.chain.getHeadNumber();
                 } else if (!std.mem.eql(u8, v.string, "earliest")) {
                     const trimmed = if (std.mem.startsWith(u8, v.string, "0x")) v.string[2..] else v.string;
                     to_block = std.fmt.parseInt(u64, trimmed, 16) catch to_block;
@@ -1402,8 +1310,8 @@ pub const RpcHandler = struct {
         var result = std.json.Array.init(allocator);
         var block_num = from_block;
         while (block_num <= to_block) : (block_num += 1) {
-            if (self.chain.get_block_by_number(block_num)) |block| {
-                defer self.chain.free_block(block);
+            if (self.chain.getBlockByNumber(block_num)) |block| {
+                defer self.chain.freeBlock(block);
 
                 // For each transaction, check if address matches
                 for (block.transactions, 0..) |tx, tx_idx| {
@@ -1437,7 +1345,7 @@ pub const RpcHandler = struct {
 
                     var h_res: [32]u8 = undefined;
                     var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-                    const encoded = try block.header.rlp_encode(allocator);
+                    const encoded = try block.header.rlpEncode(allocator);
                     defer allocator.free(encoded);
                     hasher.update(encoded);
                     hasher.final(&h_res);
@@ -1462,56 +1370,56 @@ pub const RpcHandler = struct {
         return std.json.Value{ .array = result };
     }
 
-    fn eth_mining(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethMining(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         _ = allocator;
         return std.json.Value{ .bool = false };
     }
 
-    fn eth_hashrate(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethHashrate(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         _ = allocator;
         return std.json.Value{ .string = "0x0" };
     }
 
-    fn eth_getBlockTransactionCountByNumber(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetBlockTransactionCountByNumber(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const block_tag = params.array.items[0].string;
 
         var block: ?*types.Block = null;
         if (std.mem.eql(u8, block_tag, "latest")) {
-            if (self.chain.current_block) |head| {
-                block = self.chain.get_block_by_number(head.header.number);
+            if (self.chain.currentBlock) |head| {
+                block = self.chain.getBlockByNumber(head.header.number);
             }
         } else if (std.mem.startsWith(u8, block_tag, "0x")) {
             const num = std.fmt.parseInt(u64, block_tag[2..], 16) catch return error.InvalidParams;
-            block = self.chain.get_block_by_number(num);
+            block = self.chain.getBlockByNumber(num);
         } else if (std.mem.eql(u8, block_tag, "earliest")) {
-            block = self.chain.get_block_by_number(0);
+            block = self.chain.getBlockByNumber(0);
         }
 
         if (block) |b| {
-            defer self.chain.free_block(b);
+            defer self.chain.freeBlock(b);
             return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{b.transactions.len}) };
         }
         return std.json.Value.null;
     }
 
-    fn eth_getBlockTransactionCountByHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetBlockTransactionCountByHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const hash_hex = params.array.items[0].string;
 
         var block_hash: types.Hash = undefined;
         _ = try std.fmt.hexToBytes(&block_hash.bytes, std.mem.trimLeft(u8, hash_hex, "0x"));
 
-        if (try self.chain.get_block_by_hash(block_hash)) |b| {
-            defer self.chain.free_block(b);
+        if (try self.chain.getBlockByHash(block_hash)) |b| {
+            defer self.chain.freeBlock(b);
             return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{b.transactions.len}) };
         }
         return std.json.Value.null;
     }
 
-    fn eth_getUncleCountByBlockNumber(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetUncleCountByBlockNumber(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = self;
         _ = params;
         _ = allocator;
@@ -1519,20 +1427,20 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = "0x0" };
     }
 
-    fn eth_getUncleCountByBlockHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetUncleCountByBlockHash(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = self;
         _ = params;
         _ = allocator;
         return std.json.Value{ .string = "0x0" };
     }
 
-    fn eth_protocolVersion(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn ethProtocolVersion(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         _ = allocator;
         return std.json.Value{ .string = "0x44" }; // 68
     }
 
-    fn forge_compileEOF(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn forgeCompileEOF(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = self;
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const source_code = params.array.items[0].string;
@@ -1592,7 +1500,7 @@ pub const RpcHandler = struct {
     // New eth_* Methods
     // ================================================================
 
-    fn eth_getTransactionByBlockNumberAndIndex(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetTransactionByBlockNumberAndIndex(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 2) return error.InvalidParams;
         const block_tag = params.array.items[0].string;
         const index_str = params.array.items[1].string;
@@ -1604,18 +1512,18 @@ pub const RpcHandler = struct {
 
         var block: ?*types.Block = null;
         if (std.mem.eql(u8, block_tag, "latest")) {
-            if (self.chain.current_block) |head| {
-                block = self.chain.get_block_by_number(head.header.number);
+            if (self.chain.currentBlock) |head| {
+                block = self.chain.getBlockByNumber(head.header.number);
             }
         } else if (std.mem.startsWith(u8, block_tag, "0x")) {
             const num = std.fmt.parseInt(u64, block_tag[2..], 16) catch return error.InvalidParams;
-            block = self.chain.get_block_by_number(num);
+            block = self.chain.getBlockByNumber(num);
         } else if (std.mem.eql(u8, block_tag, "earliest")) {
-            block = self.chain.get_block_by_number(0);
+            block = self.chain.getBlockByNumber(0);
         }
 
         if (block) |b| {
-            defer self.chain.free_block(b);
+            defer self.chain.freeBlock(b);
             if (tx_index < b.transactions.len) {
                 const tx = b.transactions[tx_index];
                 return self.formatTransaction(allocator, tx, b, tx_index, tx.hash());
@@ -1624,7 +1532,7 @@ pub const RpcHandler = struct {
         return std.json.Value.null;
     }
 
-    fn eth_getTransactionByBlockHashAndIndex(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetTransactionByBlockHashAndIndex(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 2) return error.InvalidParams;
         const hash_hex = params.array.items[0].string;
         const index_str = params.array.items[1].string;
@@ -1637,8 +1545,8 @@ pub const RpcHandler = struct {
         var block_hash: types.Hash = undefined;
         _ = try std.fmt.hexToBytes(&block_hash.bytes, std.mem.trimLeft(u8, hash_hex, "0x"));
 
-        if (try self.chain.get_block_by_hash(block_hash)) |b| {
-            defer self.chain.free_block(b);
+        if (try self.chain.getBlockByHash(block_hash)) |b| {
+            defer self.chain.freeBlock(b);
             if (tx_index < b.transactions.len) {
                 const tx = b.transactions[tx_index];
                 return self.formatTransaction(allocator, tx, b, tx_index, tx.hash());
@@ -1647,7 +1555,7 @@ pub const RpcHandler = struct {
         return std.json.Value.null;
     }
 
-    fn eth_newFilter(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethNewFilter(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const filter_obj = params.array.items[0];
         if (filter_obj != .object) return error.InvalidParams;
@@ -1658,7 +1566,7 @@ pub const RpcHandler = struct {
         if (filter_obj.object.get("fromBlock")) |v| {
             if (v == .string) {
                 if (std.mem.eql(u8, v.string, "latest")) {
-                    from_block = self.chain.get_head_number();
+                    from_block = self.chain.getHeadNumber();
                 } else if (std.mem.eql(u8, v.string, "earliest")) {
                     from_block = 0;
                 } else {
@@ -1671,7 +1579,7 @@ pub const RpcHandler = struct {
         if (filter_obj.object.get("toBlock")) |v| {
             if (v == .string) {
                 if (std.mem.eql(u8, v.string, "latest")) {
-                    to_block = self.chain.get_head_number();
+                    to_block = self.chain.getHeadNumber();
                 } else {
                     const trimmed = if (std.mem.startsWith(u8, v.string, "0x")) v.string[2..] else v.string;
                     to_block = std.fmt.parseInt(u64, trimmed, 16) catch null;
@@ -1682,7 +1590,7 @@ pub const RpcHandler = struct {
         const empty_addrs = [_]types.Address{};
         const empty_topics = [4]?[]const types.Hash{ null, null, null, null };
 
-        const filter_id = try self.filter_engine.createFilter(
+        const filter_id = try self.filterEngine.createFilter(
             from_block,
             to_block,
             &empty_addrs,
@@ -1692,17 +1600,17 @@ pub const RpcHandler = struct {
         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{filter_id}) };
     }
 
-    fn eth_newBlockFilter(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
-        const filter_id = self.next_filter_id;
-        self.next_filter_id += 1;
+    fn ethNewBlockFilter(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+        const filter_id = self.nextFilterId;
+        self.nextFilterId += 1;
 
-        const current_head = self.chain.get_head_number();
-        try self.block_filters.put(filter_id, current_head);
+        const current_head = self.chain.getHeadNumber();
+        try self.blockFilters.put(filter_id, current_head);
 
         return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{filter_id}) };
     }
 
-    fn eth_getFilterChanges(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetFilterChanges(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const id_val = params.array.items[0];
         const filter_id = blk: {
@@ -1716,32 +1624,32 @@ pub const RpcHandler = struct {
         };
 
         // Check block filters first
-        if (self.block_filters.get(filter_id)) |last_block| {
-            const current_head = self.chain.get_head_number();
+        if (self.blockFilters.get(filter_id)) |last_block| {
+            const current_head = self.chain.getHeadNumber();
             var result = std.json.Array.init(allocator);
 
             if (current_head > last_block) {
                 var block_num = last_block + 1;
                 while (block_num <= current_head) : (block_num += 1) {
-                    if (self.chain.get_block_by_number(block_num)) |block| {
-                        defer self.chain.free_block(block);
+                    if (self.chain.getBlockByNumber(block_num)) |block| {
+                        defer self.chain.freeBlock(block);
                         var buf: [66]u8 = undefined;
                         var h_res: [32]u8 = undefined;
                         var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-                        const encoded = block.header.rlp_encode(allocator) catch continue;
+                        const encoded = block.header.rlpEncode(allocator) catch continue;
                         defer allocator.free(encoded);
                         hasher.update(encoded);
                         hasher.final(&h_res);
                         try result.append(std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &h_res)) });
                     }
                 }
-                self.block_filters.put(filter_id, current_head) catch {};
+                self.blockFilters.put(filter_id, current_head) catch {};
             }
             return std.json.Value{ .array = result };
         }
 
         // Check log filters
-        if (self.filter_engine.getFilter(filter_id)) |_| {
+        if (self.filterEngine.getFilter(filter_id)) |_| {
             // Return empty for now — no new logs yet
             return std.json.Value{ .array = std.json.Array.init(allocator) };
         }
@@ -1749,14 +1657,14 @@ pub const RpcHandler = struct {
         return error.InvalidParams;
     }
 
-    fn eth_getFilterLogs(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethGetFilterLogs(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = self;
         _ = params;
         // Same as eth_getLogs but scoped to a filter — return empty for now
         return std.json.Value{ .array = std.json.Array.init(allocator) };
     }
 
-    fn eth_uninstallFilter(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn ethUninstallFilter(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = allocator;
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const id_val = params.array.items[0];
@@ -1771,19 +1679,19 @@ pub const RpcHandler = struct {
         };
 
         // Try removing from block filters
-        if (self.block_filters.remove(filter_id)) {
+        if (self.blockFilters.remove(filter_id)) {
             return std.json.Value{ .bool = true };
         }
 
         // Try removing from log filters
-        if (self.filter_engine.removeFilter(filter_id)) {
+        if (self.filterEngine.removeFilter(filter_id)) {
             return std.json.Value{ .bool = true };
         }
 
         return std.json.Value{ .bool = false };
     }
 
-    fn web3_sha3(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
+    fn web3Sha3(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         _ = self;
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const data_hex = params.array.items[0].string;
@@ -1805,7 +1713,7 @@ pub const RpcHandler = struct {
     // ================================================================
 
     /// Returns live DAG execution pipeline metrics from the actual mempool.
-    fn forge_getDAGMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetDAGMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         // Pipeline architecture
@@ -1818,23 +1726,23 @@ pub const RpcHandler = struct {
         try map.put("maxExecutionLanes", std.json.Value{ .integer = 64 });
 
         // Live DAG mempool stats
-        if (self.dag_pool) |dag| {
-            const stats = dag.getStats();
+        if (true) {
+            const stats = self.dagPool.getStats();
             var live = std.json.ObjectMap.init(allocator);
-            try live.put("totalVertices", std.json.Value{ .integer = @intCast(stats.total_vertices) });
-            try live.put("activeLanes", std.json.Value{ .integer = @intCast(stats.active_lanes) });
-            try live.put("totalAdded", std.json.Value{ .integer = @intCast(stats.total_added) });
-            try live.put("totalRejected", std.json.Value{ .integer = @intCast(stats.total_rejected) });
-            try live.put("totalEvicted", std.json.Value{ .integer = @intCast(stats.total_evicted) });
-            try live.put("gcEvicted", std.json.Value{ .integer = @intCast(stats.total_gc_evicted) });
-            try live.put("duplicateRejected", std.json.Value{ .integer = @intCast(stats.duplicate_rejected) });
-            try live.put("rateLimited", std.json.Value{ .integer = @intCast(stats.rate_limited) });
-            try live.put("nonceRejected", std.json.Value{ .integer = @intCast(stats.nonce_rejected) });
-            try live.put("gasPriceRejected", std.json.Value{ .integer = @intCast(stats.gas_price_rejected) });
-            try live.put("replacementCount", std.json.Value{ .integer = @intCast(stats.replacement_count) });
-            try live.put("bloomCount", std.json.Value{ .integer = @intCast(stats.bloom_count) });
-            try live.put("maxShardLoad", std.json.Value{ .integer = @intCast(stats.max_shard_load) });
-            try live.put("hotShardPremiumApplied", std.json.Value{ .integer = @intCast(stats.hot_shard_premium_applied) });
+            try live.put("totalVertices", std.json.Value{ .integer = @intCast(stats.totalVertices) });
+            try live.put("activeLanes", std.json.Value{ .integer = @intCast(stats.activeLanes) });
+            try live.put("totalAdded", std.json.Value{ .integer = @intCast(stats.totalAdded) });
+            try live.put("totalRejected", std.json.Value{ .integer = @intCast(stats.totalRejected) });
+            try live.put("totalEvicted", std.json.Value{ .integer = @intCast(stats.totalEvicted) });
+            try live.put("gcEvicted", std.json.Value{ .integer = @intCast(stats.totalGcEvicted) });
+            try live.put("duplicateRejected", std.json.Value{ .integer = @intCast(stats.duplicateRejected) });
+            try live.put("rateLimited", std.json.Value{ .integer = @intCast(stats.rateLimited) });
+            try live.put("nonceRejected", std.json.Value{ .integer = @intCast(stats.nonceRejected) });
+            try live.put("gasPriceRejected", std.json.Value{ .integer = @intCast(stats.gasPriceRejected) });
+            try live.put("replacementCount", std.json.Value{ .integer = @intCast(stats.replacementCount) });
+            try live.put("bloomCount", std.json.Value{ .integer = @intCast(stats.bloomCount) });
+            try live.put("maxShardLoad", std.json.Value{ .integer = @intCast(stats.maxShardLoad) });
+            try live.put("hotShardPremiumApplied", std.json.Value{ .integer = @intCast(stats.hotShardPremiumApplied) });
             try map.put("live", std.json.Value{ .object = live });
         }
 
@@ -1842,7 +1750,7 @@ pub const RpcHandler = struct {
     }
 
     /// Returns consensus/thread info with runtime data.
-    fn forge_getThreadInfo(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetThreadInfo(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         // Consensus info
@@ -1853,25 +1761,25 @@ pub const RpcHandler = struct {
 
         // Runtime data
         const now = std.time.timestamp();
-        const uptime_secs = now - self.node_start_time;
+        const uptime_secs = now - self.nodeStartTime;
         try map.put("uptimeSeconds", std.json.Value{ .integer = uptime_secs });
-        try map.put("currentBlock", std.json.Value{ .integer = @intCast(self.chain.get_head_number()) });
+        try map.put("currentBlock", std.json.Value{ .integer = @intCast(self.chain.getHeadNumber()) });
 
         // P2P peer count
         var peer_count: usize = 0;
         if (self.p2p) |p| {
-            p.lock.lock();
-            defer p.lock.unlock();
+            p.mutex.lock();
+            defer p.mutex.unlock();
             peer_count = p.peers.items.len;
         }
         try map.put("connectedPeers", std.json.Value{ .integer = @intCast(peer_count) });
 
         // Block production rate
-        if (self.chain.current_block) |head| {
+        if (self.chain.currentBlock) |head| {
             if (head.header.number > 0) {
-                const first_block = self.chain.get_block_by_number(1);
+                const first_block = self.chain.getBlockByNumber(1);
                 if (first_block) |fb| {
-                    defer self.chain.free_block(fb);
+                    defer self.chain.freeBlock(fb);
                     const elapsed = if (head.header.time > fb.header.time) head.header.time - fb.header.time else 1;
                     const blocks = head.header.number;
                     if (elapsed > 0) {
@@ -1908,7 +1816,7 @@ pub const RpcHandler = struct {
     }
 
     /// Returns the isolated account type taxonomy used by Zephyria.
-    fn forge_getAccountTypes(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetAccountTypes(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         var types_arr = std.json.Array.init(allocator);
 
@@ -1946,27 +1854,27 @@ pub const RpcHandler = struct {
     // ================================================================
 
     /// Returns comprehensive node info: version, chain, genesis, uptime.
-    fn forge_getNodeInfo(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetNodeInfo(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         try map.put("client", std.json.Value{ .string = "Zephyria/v0.1.0/zig-edition" });
-        try map.put("chainId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.chain.chain_id}) });
-        try map.put("networkId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "{d}", .{self.chain.chain_id}) });
+        try map.put("chainId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.chain.chainId}) });
+        try map.put("networkId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "{d}", .{self.chain.chainId}) });
 
         var buf: [66]u8 = undefined;
-        try map.put("genesisHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &self.chain.genesis_hash.bytes)) });
+        try map.put("genesisHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &self.chain.genesisHash.bytes)) });
 
-        const head = self.chain.get_head_number();
+        const head = self.chain.getHeadNumber();
         try map.put("headBlock", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head}) });
 
-        if (self.chain.current_block) |block| {
+        if (self.chain.currentBlock) |block| {
             try map.put("headHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.hash().bytes)) });
             try map.put("headTimestamp", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.time}) });
         }
 
         // Uptime
         const now = std.time.timestamp();
-        const uptime = now - self.node_start_time;
+        const uptime = now - self.nodeStartTime;
         try map.put("uptimeSeconds", std.json.Value{ .integer = uptime });
 
         // Protocols
@@ -1978,8 +1886,8 @@ pub const RpcHandler = struct {
         // P2P info
         var peer_count: usize = 0;
         if (self.p2p) |p| {
-            p.lock.lock();
-            defer p.lock.unlock();
+            p.mutex.lock();
+            defer p.mutex.unlock();
             peer_count = p.peers.items.len;
         }
         try map.put("peerCount", std.json.Value{ .integer = @intCast(peer_count) });
@@ -1994,53 +1902,53 @@ pub const RpcHandler = struct {
     }
 
     /// Returns combined mempool stats from DAG and legacy pools.
-    fn forge_getMempoolStats(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetMempoolStats(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         // DAG mempool
-        if (self.dag_pool) |dag| {
-            const stats = dag.getStats();
+        if (true) {
+            const stats = self.dagPool.getStats();
             var dag_map = std.json.ObjectMap.init(allocator);
-            try dag_map.put("pending", std.json.Value{ .integer = @intCast(stats.total_vertices) });
-            try dag_map.put("activeSenders", std.json.Value{ .integer = @intCast(stats.active_lanes) });
-            try dag_map.put("totalAdmitted", std.json.Value{ .integer = @intCast(stats.total_added) });
-            try dag_map.put("totalRejected", std.json.Value{ .integer = @intCast(stats.total_rejected) });
-            try dag_map.put("totalEvicted", std.json.Value{ .integer = @intCast(stats.total_evicted) });
-            try dag_map.put("gcEvicted", std.json.Value{ .integer = @intCast(stats.total_gc_evicted) });
-            try dag_map.put("duplicates", std.json.Value{ .integer = @intCast(stats.duplicate_rejected) });
-            try dag_map.put("rateLimited", std.json.Value{ .integer = @intCast(stats.rate_limited) });
-            try dag_map.put("replacements", std.json.Value{ .integer = @intCast(stats.replacement_count) });
-            try dag_map.put("bloomFilterEntries", std.json.Value{ .integer = @intCast(stats.bloom_count) });
-            try dag_map.put("maxShardLoad", std.json.Value{ .integer = @intCast(stats.max_shard_load) });
+            try dag_map.put("pending", std.json.Value{ .integer = @intCast(stats.totalVertices) });
+            try dag_map.put("activeSenders", std.json.Value{ .integer = @intCast(stats.activeLanes) });
+            try dag_map.put("totalAdmitted", std.json.Value{ .integer = @intCast(stats.totalAdded) });
+            try dag_map.put("totalRejected", std.json.Value{ .integer = @intCast(stats.totalRejected) });
+            try dag_map.put("totalEvicted", std.json.Value{ .integer = @intCast(stats.totalEvicted) });
+            try dag_map.put("gcEvicted", std.json.Value{ .integer = @intCast(stats.totalGcEvicted) });
+            try dag_map.put("duplicates", std.json.Value{ .integer = @intCast(stats.duplicateRejected) });
+            try dag_map.put("rateLimited", std.json.Value{ .integer = @intCast(stats.rateLimited) });
+            try dag_map.put("replacements", std.json.Value{ .integer = @intCast(stats.replacementCount) });
+            try dag_map.put("bloomFilterEntries", std.json.Value{ .integer = @intCast(stats.bloomCount) });
+            try dag_map.put("maxShardLoad", std.json.Value{ .integer = @intCast(stats.maxShardLoad) });
             try dag_map.put("shardCount", std.json.Value{ .integer = 256 });
             try map.put("dag", std.json.Value{ .object = dag_map });
         }
 
         // Legacy pool
-        const pool_stats = self.pool.getStats();
+        const pool_stats = self.dagPool.getStats();
         var legacy_map = std.json.ObjectMap.init(allocator);
-        try legacy_map.put("pending", std.json.Value{ .integer = @intCast(pool_stats.total) });
-        try legacy_map.put("rejected", std.json.Value{ .integer = @intCast(pool_stats.rejected) });
-        try legacy_map.put("evicted", std.json.Value{ .integer = @intCast(pool_stats.evicted) });
-        try legacy_map.put("bloomEntries", std.json.Value{ .integer = @intCast(pool_stats.bloom_count) });
+        try legacy_map.put("pending", std.json.Value{ .integer = @intCast(pool_stats.totalVertices) });
+        try legacy_map.put("rejected", std.json.Value{ .integer = @intCast(pool_stats.totalRejected) });
+        try legacy_map.put("evicted", std.json.Value{ .integer = @intCast(pool_stats.totalEvicted) });
+        try legacy_map.put("bloomEntries", std.json.Value{ .integer = @intCast(pool_stats.bloomCount) });
         try map.put("legacy", std.json.Value{ .object = legacy_map });
 
         // Combined
-        const dag_count: u32 = if (self.dag_pool) |dag| dag.count() else 0;
-        try map.put("totalPending", std.json.Value{ .integer = @intCast(dag_count + pool_stats.total) });
-        try map.put("primaryPool", std.json.Value{ .string = if (self.dag_pool != null) "dag" else "legacy" });
+        const dag_count: u32 = self.dagPool.count();
+        try map.put("totalPending", std.json.Value{ .integer = @intCast(dag_count + pool_stats.totalVertices) });
+        try map.put("primaryPool", std.json.Value{ .string = "dag" });
 
         return std.json.Value{ .object = map };
     }
 
     /// Returns pending transactions grouped by sender (like txpool_content).
-    fn forge_getMempoolContent(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetMempoolContent(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
         var buf: [66]u8 = undefined;
 
         // Get pending from legacy pool
         var pending_map = std.json.ObjectMap.init(allocator);
-        const pending_txs = try self.pool.pending(allocator);
+        const pending_txs = try self.dagPool.pending(allocator);
         defer allocator.free(pending_txs);
 
         for (pending_txs) |tx| {
@@ -2048,8 +1956,8 @@ pub const RpcHandler = struct {
 
             var tx_obj = std.json.ObjectMap.init(allocator);
             try tx_obj.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.nonce}) });
-            try tx_obj.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_price}) });
-            try tx_obj.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_limit}) });
+            try tx_obj.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
+            try tx_obj.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
             try tx_obj.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
             if (tx.to) |to| {
                 try tx_obj.put("to", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &to.bytes)) });
@@ -2077,7 +1985,7 @@ pub const RpcHandler = struct {
     }
 
     /// Returns block producer info and gas configuration.
-    fn forge_getBlockProducerInfo(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetBlockProducerInfo(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         // Gas configuration
@@ -2085,10 +1993,10 @@ pub const RpcHandler = struct {
         try map.put("minGasPrice", std.json.Value{ .string = "0x3b9aca00" }); // 1 Gwei
         try map.put("baseFeeEnabled", std.json.Value{ .bool = true });
 
-        if (self.chain.current_block) |head| {
-            try map.put("latestBaseFee", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.base_fee}) });
-            try map.put("latestGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gas_used}) });
-            try map.put("latestGasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gas_limit}) });
+        if (self.chain.currentBlock) |head| {
+            try map.put("latestBaseFee", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.baseFee}) });
+            try map.put("latestGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasUsed}) });
+            try map.put("latestGasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasLimit}) });
 
             var buf: [66]u8 = undefined;
             try map.put("coinbase", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.coinbase.bytes)) });
@@ -2096,19 +2004,19 @@ pub const RpcHandler = struct {
 
         // Execution model
         try map.put("executionEngine", std.json.Value{ .string = "parallel_wave_executor" });
-        try map.put("vmTarget", std.json.Value{ .string = "RISC-V RV32IM" });
+        try map.put("vmTarget", std.json.Value{ .string = "RISC-V RV64IM" });
         try map.put("maxContractSize", std.json.Value{ .integer = 49152 }); // EIP-3860
 
         return std.json.Value{ .object = map };
     }
 
     /// Returns connected P2P peers with details.
-    fn forge_getPeers(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetPeers(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var result = std.json.Array.init(allocator);
 
         if (self.p2p) |p| {
-            p.lock.lock();
-            defer p.lock.unlock();
+            p.mutex.lock();
+            defer p.mutex.unlock();
 
             for (p.peers.items) |peer| {
                 var peer_obj = std.json.ObjectMap.init(allocator);
@@ -2127,11 +2035,11 @@ pub const RpcHandler = struct {
     }
 
     /// Returns VM pool statistics and code cache info.
-    fn forge_getVMStats(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetVMStats(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
         var map = std.json.ObjectMap.init(allocator);
 
-        try map.put("vmArchitecture", std.json.Value{ .string = "RISC-V RV32IM" });
+        try map.put("vmArchitecture", std.json.Value{ .string = "RISC-V RV64IM" });
         try map.put("executorType", std.json.Value{ .string = "threaded_interpreter" });
         try map.put("features", std.json.Value{ .string = "pre-decoded insn cache, per-block gas, basic block analysis, zero-copy SLOAD/SSTORE" });
         try map.put("callDepthLimit", std.json.Value{ .integer = 1024 });
@@ -2159,10 +2067,11 @@ pub const RpcHandler = struct {
     }
 
     /// Returns per-shard distribution of DAG mempool vertices.
-    fn forge_getShardDistribution(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetShardDistribution(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
-        if (self.dag_pool) |dag| {
+        if (true) {
+            const dag = self.dagPool;
             const dag_mempool = core.dag_mempool;
             var shard_data = std.json.Array.init(allocator);
             var total_vertices: u64 = 0;
@@ -2171,16 +2080,16 @@ pub const RpcHandler = struct {
 
             for (0..dag_mempool.SHARD_COUNT) |i| {
                 const shard = &dag.shards[i];
-                if (shard.vertex_count > 0) {
+                if (shard.vertexCount > 0) {
                     var shard_obj = std.json.ObjectMap.init(allocator);
                     try shard_obj.put("id", std.json.Value{ .integer = @intCast(i) });
-                    try shard_obj.put("vertices", std.json.Value{ .integer = @intCast(shard.vertex_count) });
-                    try shard_obj.put("gas", std.json.Value{ .integer = @intCast(shard.total_gas) });
+                    try shard_obj.put("vertices", std.json.Value{ .integer = @intCast(shard.vertexCount) });
+                    try shard_obj.put("gas", std.json.Value{ .integer = @intCast(shard.totalGas) });
                     try shard_data.append(std.json.Value{ .object = shard_obj });
                     non_empty_shards += 1;
-                    if (shard.vertex_count > max_load) max_load = shard.vertex_count;
+                    if (shard.vertexCount > max_load) max_load = shard.vertexCount;
                 }
-                total_vertices += shard.vertex_count;
+                total_vertices += shard.vertexCount;
             }
 
             try map.put("shards", std.json.Value{ .array = shard_data });
@@ -2198,29 +2107,30 @@ pub const RpcHandler = struct {
     }
 
     /// Returns node runtime configuration.
-    fn forge_getConfig(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetConfig(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         // Chain
         var chain_cfg = std.json.ObjectMap.init(allocator);
-        try chain_cfg.put("chainId", std.json.Value{ .integer = @intCast(self.chain.chain_id) });
+        try chain_cfg.put("chainId", std.json.Value{ .integer = @intCast(self.chain.chainId) });
         try chain_cfg.put("blockGasLimit", std.json.Value{ .integer = 30_000_000 });
         try map.put("chain", std.json.Value{ .object = chain_cfg });
 
         // Pool
         var pool_cfg = std.json.ObjectMap.init(allocator);
-        try pool_cfg.put("maxPoolSize", std.json.Value{ .integer = @intCast(self.pool.config.max_pool_size) });
-        try pool_cfg.put("minGasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.pool.config.min_gas_price}) });
-        try pool_cfg.put("replacementBumpPct", std.json.Value{ .integer = @intCast(self.pool.config.replacement_bump_pct) });
+        try pool_cfg.put("maxPoolSize", std.json.Value{ .integer = @intCast(self.dagPool.config.maxTotalVertices) });
+        try pool_cfg.put("minGasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.dagPool.config.minGasPrice}) });
+        try pool_cfg.put("replacementBumpPct", std.json.Value{ .integer = 10 });
         try map.put("txPool", std.json.Value{ .object = pool_cfg });
 
         // DAG
-        if (self.dag_pool) |dag| {
+        if (true) {
+            const dag = self.dagPool;
             var dag_cfg = std.json.ObjectMap.init(allocator);
-            try dag_cfg.put("maxTxsPerLane", std.json.Value{ .integer = @intCast(dag.config.max_txs_per_lane) });
-            try dag_cfg.put("maxTotalVertices", std.json.Value{ .integer = @intCast(dag.config.max_total_vertices) });
+            try dag_cfg.put("maxTxsPerLane", std.json.Value{ .integer = @intCast(dag.config.maxTxsPerLane) });
+            try dag_cfg.put("maxTotalVertices", std.json.Value{ .integer = @intCast(dag.config.maxTotalVertices) });
             try dag_cfg.put("shardCount", std.json.Value{ .integer = 256 });
-            try dag_cfg.put("minGasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{dag.config.min_gas_price}) });
+            try dag_cfg.put("minGasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{dag.config.minGasPrice}) });
             try map.put("dagMempool", std.json.Value{ .object = dag_cfg });
         }
 
@@ -2235,23 +2145,23 @@ pub const RpcHandler = struct {
     }
 
     /// Returns parallel executor statistics.
-    fn forge_getExecutorStats(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetExecutorStats(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         try map.put("type", std.json.Value{ .string = "parallel_wave_executor" });
-        try map.put("vmEnabled", std.json.Value{ .bool = self.exec.vm_callback != null });
+        try map.put("vmEnabled", std.json.Value{ .bool = self.dagExecutor.vmCallback != null });
 
         // Block processing stats from latest block
-        if (self.chain.current_block) |head| {
+        if (self.chain.currentBlock) |head| {
             var latest = std.json.ObjectMap.init(allocator);
             try latest.put("blockNumber", std.json.Value{ .integer = @intCast(head.header.number) });
             try latest.put("txCount", std.json.Value{ .integer = @intCast(head.transactions.len) });
-            try latest.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gas_used}) });
-            try latest.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gas_limit}) });
+            try latest.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasUsed}) });
+            try latest.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasLimit}) });
 
             // Gas utilization percentage
-            const utilization = if (head.header.gas_limit > 0)
-                (head.header.gas_used * 100) / head.header.gas_limit
+            const utilization = if (head.header.gasLimit > 0)
+                (head.header.gasUsed * 100) / head.header.gasLimit
             else
                 0;
             try latest.put("gasUtilizationPct", std.json.Value{ .integer = @intCast(utilization) });
@@ -2260,23 +2170,23 @@ pub const RpcHandler = struct {
 
         // Execution config
         var exec_cfg = std.json.ObjectMap.init(allocator);
-        try exec_cfg.put("blockGasLimit", std.json.Value{ .integer = @intCast(self.exec.config.block_gas_limit) });
-        try exec_cfg.put("maxThreads", std.json.Value{ .integer = @intCast(self.exec.config.max_threads) });
+        try exec_cfg.put("blockGasLimit", std.json.Value{ .integer = @intCast(self.dagExecutor.config.blockGasLimit) });
+        try exec_cfg.put("maxThreads", std.json.Value{ .integer = @intCast(self.dagExecutor.config.numThreads) });
         try map.put("config", std.json.Value{ .object = exec_cfg });
 
         return std.json.Value{ .object = map };
     }
 
     /// Returns state trie metrics.
-    fn forge_getStateMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetStateMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
         try map.put("type", std.json.Value{ .string = "verkle_trie" });
 
         // State root from latest block
-        if (self.chain.current_block) |head| {
+        if (self.chain.currentBlock) |head| {
             var buf: [66]u8 = undefined;
-            try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.verkle_root.bytes)) });
+            try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.verkleRoot.bytes)) });
         }
 
         // Trie size estimate
@@ -2296,12 +2206,12 @@ pub const RpcHandler = struct {
     }
 
     /// Returns chain-level metrics: block times, TPS, gas usage.
-    fn forge_getChainMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgeGetChainMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
-        const head_num = self.chain.get_head_number();
+        const head_num = self.chain.getHeadNumber();
         try map.put("headBlock", std.json.Value{ .integer = @intCast(head_num) });
-        try map.put("chainId", std.json.Value{ .integer = @intCast(self.chain.chain_id) });
+        try map.put("chainId", std.json.Value{ .integer = @intCast(self.chain.chainId) });
 
         // Compute metrics from recent blocks (last 10)
         const sample_size: u64 = 10;
@@ -2317,11 +2227,11 @@ pub const RpcHandler = struct {
 
         var bn = start_block;
         while (bn <= head_num) : (bn += 1) {
-            if (self.chain.get_block_by_number(bn)) |block| {
-                defer self.chain.free_block(block);
+            if (self.chain.getBlockByNumber(bn)) |block| {
+                defer self.chain.freeBlock(block);
 
                 total_txs += block.transactions.len;
-                total_gas += block.header.gas_used;
+                total_gas += block.header.gasUsed;
                 block_count += 1;
 
                 if (first_time == 0) first_time = block.header.time;
@@ -2347,20 +2257,20 @@ pub const RpcHandler = struct {
         try map.put("avgTxPerBlock", std.json.Value{ .integer = @intCast(if (block_count > 0) total_txs / block_count else 0) });
 
         // Current base fee
-        if (self.chain.current_block) |head| {
-            try map.put("currentBaseFee", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.base_fee}) });
+        if (self.chain.currentBlock) |head| {
+            try map.put("currentBaseFee", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.baseFee}) });
         }
 
         return std.json.Value{ .object = map };
     }
 
     /// Returns all pending transactions (like txpool_inspect).
-    fn forge_pendingTransactions(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
+    fn forgePendingTransactions(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var result = std.json.Array.init(allocator);
         var buf: [66]u8 = undefined;
 
         // Get from legacy pool
-        const pending = try self.pool.pending(allocator);
+        const pending = try self.dagPool.pending(allocator);
         defer allocator.free(pending);
 
         for (pending) |tx| {
@@ -2374,8 +2284,8 @@ pub const RpcHandler = struct {
             }
             try tx_obj.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.nonce}) });
             try tx_obj.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
-            try tx_obj.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_price}) });
-            try tx_obj.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gas_limit}) });
+            try tx_obj.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
+            try tx_obj.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
             try tx_obj.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
             try result.append(std.json.Value{ .object = tx_obj });
         }

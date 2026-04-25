@@ -12,59 +12,59 @@ const types = @import("types.zig");
 /// Uses ECDSA recovery from the v, r, s signature values.
 pub fn recoverFromTx(allocator: std.mem.Allocator, tx: types.Transaction) !types.Address {
     // Calculate recovery ID from v
-    // Legacy: v = 27 or 28  →  recovery_id = v - 27
-    // EIP-155: v = chain_id * 2 + 35 or 36  →  recovery_id = v - chain_id * 2 - 35
-    var recovery_id: u8 = 0;
+    // Legacy: v = 27 or 28  →  recoveryId = v - 27
+    // EIP-155: v = chainId * 2 + 35 or 36  →  recoveryId = v - chainId * 2 - 35
+    var recoveryId: u8 = 0;
     const v_u256 = tx.v;
     if (v_u256 >= 35) {
         // EIP-155
-        recovery_id = @intCast((v_u256 - 35) % 2);
+        recoveryId = @intCast((v_u256 - 35) % 2);
     } else if (v_u256 >= 27) {
         // Legacy
-        recovery_id = @intCast(v_u256 - 27);
+        recoveryId = @intCast(v_u256 - 27);
     }
 
     // Encode r and s as big-endian 32-byte arrays
-    var r_bytes: [32]u8 = undefined;
-    std.mem.writeInt(u256, &r_bytes, tx.r, .big);
-    var s_bytes: [32]u8 = undefined;
-    std.mem.writeInt(u256, &s_bytes, tx.s, .big);
+    var rBytes: [32]u8 = undefined;
+    std.mem.writeInt(u256, &rBytes, tx.r, .big);
+    var sBytes: [32]u8 = undefined;
+    std.mem.writeInt(u256, &sBytes, tx.s, .big);
 
     // Compute signing hash (RLP without v, r, s)
-    const msg_hash = try txSigningHash(allocator, tx);
+    const msgHash = try txSigningHash(allocator, tx);
 
     // Recover public key
     const eoa = @import("accounts/eoa.zig");
-    const pub_key = eoa.recoverPublicKey(msg_hash, r_bytes, s_bytes, recovery_id) catch
+    const pubKey = eoa.recoverPublicKey(msgHash, rBytes, sBytes, recoveryId) catch
         return types.Address.zero();
 
     // Derive address from public key
-    var addr_hash: [32]u8 = undefined;
-    std.crypto.hash.sha3.Keccak256.hash(pub_key[1..], &addr_hash, .{});
+    var addrHash: [32]u8 = undefined;
+    std.crypto.hash.sha3.Keccak256.hash(pubKey[1..], &addrHash, .{});
     var addr: types.Address = undefined;
-    @memcpy(&addr.bytes, addr_hash[12..32]);
+    @memcpy(&addr.bytes, addrHash[12..32]);
     return addr;
 }
 
 /// Compute the signing hash for a transaction (hash of RLP without signature fields).
 fn txSigningHash(allocator: std.mem.Allocator, tx: types.Transaction) ![32]u8 {
     const rlp = @import("encoding").rlp;
-    var list_data = std.ArrayListUnmanaged(u8){};
-    defer list_data.deinit(allocator);
+    var listData = std.ArrayListUnmanaged(u8){};
+    defer listData.deinit(allocator);
 
     var inner = std.ArrayListUnmanaged(u8){};
     defer inner.deinit(allocator);
 
     const v_u64 = @as(u64, @intCast(tx.v & 0xFF));
-    const is_eip155 = v_u64 >= 35;
-    const chain_id: u64 = if (is_eip155) (v_u64 - 35) / 2 else 0;
+    const isEip155 = v_u64 >= 35;
+    const chainId: u64 = if (isEip155) (v_u64 - 35) / 2 else 0;
 
     try rlp.serialize(u64, allocator, tx.nonce, &inner);
-    try rlp.serialize(u256, allocator, tx.gas_price, &inner);
-    try rlp.serialize(u64, allocator, tx.gas_limit, &inner);
+    try rlp.serialize(u256, allocator, tx.gasPrice, &inner);
+    try rlp.serialize(u64, allocator, tx.gasLimit, &inner);
 
-    if (tx.to) |to_addr| {
-        try to_addr.encodeToRLP(allocator, &inner);
+    if (tx.to) |toAddr| {
+        try toAddr.encodeToRLP(allocator, &inner);
     } else {
         try rlp.serialize([]const u8, allocator, &[_]u8{}, &inner);
     }
@@ -72,17 +72,17 @@ fn txSigningHash(allocator: std.mem.Allocator, tx: types.Transaction) ![32]u8 {
     try rlp.serialize(u256, allocator, tx.value, &inner);
     try rlp.serialize([]const u8, allocator, tx.data, &inner);
 
-    if (is_eip155) {
-        try rlp.serialize(u64, allocator, chain_id, &inner);
+    if (isEip155) {
+        try rlp.serialize(u64, allocator, chainId, &inner);
         try rlp.serialize(u64, allocator, 0, &inner);
         try rlp.serialize(u64, allocator, 0, &inner);
     }
 
-    try rlp.encodeListHeader(allocator, inner.items.len, &list_data);
-    try list_data.appendSlice(allocator, inner.items);
+    try rlp.encodeListHeader(allocator, inner.items.len, &listData);
+    try listData.appendSlice(allocator, inner.items);
 
     var h: [32]u8 = undefined;
-    std.crypto.hash.sha3.Keccak256.hash(list_data.items, &h, .{});
+    std.crypto.hash.sha3.Keccak256.hash(listData.items, &h, .{});
     return h;
 }
 

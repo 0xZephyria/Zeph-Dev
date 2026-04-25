@@ -12,32 +12,32 @@ const std = @import("std");
 pub const decoder = @import("core/decoder.zig");
 pub const executor = @import("core/executor.zig");
 pub const threaded_executor = @import("core/threaded_executor.zig");
-pub const basic_block = @import("core/basic_block.zig");
+pub const basicBlock = @import("core/basic_block.zig");
 pub const sandbox = @import("memory/sandbox.zig");
-pub const gas_meter = @import("gas/meter.zig");
-pub const gas_table = @import("gas/table.zig");
-pub const syscall_dispatch = @import("syscall/dispatch.zig");
-pub const forge_loader = @import("loader/forge_loader.zig");
-pub const forge_format = @import("loader/forge_format.zig");
-pub const contract_loader = @import("loader/contract_loader.zig");
-pub const zephbin_loader = @import("loader/zephbin_loader.zig");
-pub const vm_pool = @import("vm_pool.zig");
+pub const gasMeter = @import("gas/meter.zig");
+pub const gasTable = @import("gas/table.zig");
+pub const syscallDispatch = @import("syscall/dispatch.zig");
+pub const forgeLoader = @import("loader/forge_loader.zig");
+pub const forgeFormat = @import("loader/forge_format.zig");
+pub const contractLoader = @import("loader/contract_loader.zig");
+pub const zephbinLoader = @import("loader/zephbin_loader.zig");
+pub const vmPool = @import("vm_pool.zig");
 
 // Re-export key types
 pub const Instruction = decoder.Instruction;
 pub const DecodeError = decoder.DecodeError;
 pub const SandboxMemory = sandbox.SandboxMemory;
 pub const MemoryError = sandbox.MemoryError;
-pub const GasMeter = gas_meter.GasMeter;
+pub const GasMeter = gasMeter.GasMeter;
 pub const ExecutionStatus = executor.ExecutionStatus;
 pub const ExecutionResult = executor.ExecutionResult;
-pub const HostEnv = syscall_dispatch.HostEnv;
-pub const StorageBackend = syscall_dispatch.StorageBackend;
-pub const LogEntry = syscall_dispatch.LogEntry;
-pub const SyscallId = syscall_dispatch.SyscallId;
+pub const HostEnv = syscallDispatch.HostEnv;
+pub const StorageBackend = syscallDispatch.StorageBackend;
+pub const LogEntry = syscallDispatch.LogEntry;
+pub const SyscallId = syscallDispatch.SyscallId;
 pub const CoreVM = executor.ForgeVM;
 pub const DecodedInsn = threaded_executor.DecodedInsn;
-pub const ProgramAnalysis = basic_block.ProgramAnalysis;
+pub const ProgramAnalysis = basicBlock.ProgramAnalysis;
 
 /// High-level VM instance that owns its memory and manages lifecycle.
 pub const ForgeVM = struct {
@@ -67,7 +67,7 @@ pub const ForgeVM = struct {
         }
 
         // Create syscall handler
-        const handler = syscall_dispatch.createHandler(host);
+        const handler = syscallDispatch.createHandler(host);
 
         // Initialize core VM
         const core = CoreVM.init(
@@ -83,8 +83,8 @@ pub const ForgeVM = struct {
             .host = host,
             .allocator = allocator,
         };
-        // Wire host_ctx for thread-safe syscall dispatch (no shared static pointer)
-        vm_instance.core.host_ctx = host;
+        // Wire hostCtx for thread-safe syscall dispatch (no shared static pointer)
+        vm_instance.core.hostCtx = host;
 
         return vm_instance;
     }
@@ -93,7 +93,7 @@ pub const ForgeVM = struct {
     pub fn run(self: *ForgeVM) ExecutionResult {
         // Fix pointers invalidated when this struct was moved after create().
         self.core.memory = &self.memory;
-        self.core.host_ctx = self.host;
+        self.core.hostCtx = self.host;
         return self.core.execute();
     }
 
@@ -102,20 +102,20 @@ pub const ForgeVM = struct {
     /// This is the high-performance path — 2-3x faster than the switch-based run().
     pub fn runThreaded(self: *ForgeVM, allocator: std.mem.Allocator) !ExecutionResult {
         self.core.memory = &self.memory;
-        self.core.host_ctx = self.host;
+        self.core.hostCtx = self.host;
 
-        const code_len = self.core.code_len;
-        if (code_len == 0) return self.core.buildResult();
+        const codeLen = self.core.codeLen;
+        if (codeLen == 0) return self.core.buildResult();
 
         // Pre-decode all instructions
-        const code = self.memory.backing[0..code_len];
-        const decoded = try threaded_executor.preDecodeProgram(allocator, code, code_len);
+        const code = self.memory.backing[0..codeLen];
+        const decoded = try threaded_executor.preDecodeProgram(allocator, code, codeLen);
         defer allocator.free(decoded);
 
         // Analyze basic blocks
-        var analysis = try basic_block.analyze(allocator, code, code_len);
+        var analysis = try basicBlock.analyze(allocator, code, codeLen);
         defer analysis.deinit();
-        basic_block.resolveBranchTargets(&analysis, code);
+        basicBlock.resolveBranchTargets(&analysis, code);
 
         // Execute using threaded path
         return threaded_executor.executeThreaded(&self.core, decoded, &analysis);
@@ -124,7 +124,7 @@ pub const ForgeVM = struct {
     /// Execute a single instruction (for debugging/step-through).
     pub fn step(self: *ForgeVM) void {
         self.core.memory = &self.memory;
-        self.core.host_ctx = self.host;
+        self.core.hostCtx = self.host;
         self.core.step();
     }
 
@@ -145,10 +145,10 @@ pub const ForgeVM = struct {
 
     /// Get return data after successful execution.
     pub fn getReturnData(self: *const ForgeVM) ![]const u8 {
-        if (self.core.return_data_len == 0) return &[_]u8{};
+        if (self.core.returnDataLen == 0) return &[_]u8{};
         return self.memory.getReturnData(
-            self.core.return_data_offset,
-            self.core.return_data_len,
+            self.core.returnDataOffset,
+            self.core.returnDataLen,
         );
     }
 
@@ -226,6 +226,6 @@ test "ForgeVM: gas tracking" {
 
     const result = vm.run();
     try testing.expectEqual(ExecutionStatus.breakpoint, result.status);
-    try testing.expect(result.gas_used > 0);
+    try testing.expect(result.gasUsed > 0);
     try testing.expectEqual(@as(u32, 3), vm.getReg(1));
 }

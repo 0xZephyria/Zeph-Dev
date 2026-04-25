@@ -272,7 +272,7 @@ pub fn build(b: *std.Build) void {
     const forge_test_suite = b.addExecutable(.{
         .name = "forge_test_suite",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("forge_test_suite2.zig"),
+            .root_source_file = b.path("forge_test_suite.zig"),
             .target = target,
             .optimize = optimize,
         }),

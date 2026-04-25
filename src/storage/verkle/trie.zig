@@ -29,6 +29,7 @@ const getStem = node_mod.getStem;
 const getSuffix = node_mod.getSuffix;
 
 /// Verkle Proof for a single key access
+/// Represents a Verkle proof for a single key access, containing path commitments and indices.
 pub const VerkleProof = struct {
     /// Commitments along the path from root to leaf
     path_commitments: std.ArrayList(Element),
@@ -41,6 +42,7 @@ pub const VerkleProof = struct {
     /// Depth of the proof
     depth: u8,
 
+    /// Initializes a new VerkleProof.
     pub fn init(allocator: Allocator) VerkleProof {
         return VerkleProof{
             .path_commitments = std.ArrayList(Element).init(allocator),
@@ -51,6 +53,7 @@ pub const VerkleProof = struct {
         };
     }
 
+    /// Deinitializes the VerkleProof and frees associated memory.
     pub fn deinit(self: *VerkleProof, allocator: Allocator) void {
         self.path_commitments.deinit();
         self.path_indices.deinit();
@@ -60,7 +63,8 @@ pub const VerkleProof = struct {
     }
 };
 
-/// Production Verkle Trie with commitment caching and parallel subtree commit
+/// Production Verkle Trie implementation with commitment caching and parallel subtree commits.
+/// Supports high-performance state storage for the Zephyria blockchain.
 pub const VerkleTrie = struct {
     allocator: Allocator,
     db: DB,
@@ -107,12 +111,12 @@ pub const VerkleTrie = struct {
         tree_depth: u8 = 0,
     };
 
-    /// Initialize a new empty trie
+    /// Initializes a new empty VerkleTrie.
     pub fn init(allocator: Allocator, db: DB) !*Self {
         return initWithConfig(allocator, db, DEFAULT_COMMIT_THREADS);
     }
 
-    /// Initialize with configurable parallel commit thread count
+    /// Initializes a new VerkleTrie with a configurable number of commitment threads.
     pub fn initWithConfig(allocator: Allocator, db: DB, commit_threads: u8) !*Self {
         const self = try allocator.create(Self);
 
@@ -145,6 +149,7 @@ pub const VerkleTrie = struct {
         return self;
     }
 
+    /// Deinitializes the VerkleTrie and frees all associated nodes and resources.
     pub fn deinit(self: *Self) void {
         self.freeRoot();
         self.crs.deinit();
@@ -183,7 +188,7 @@ pub const VerkleTrie = struct {
         self.commitment_cache.clearRetainingCapacity();
     }
 
-    /// Get value for key
+    /// Retrieves a value from the trie for a given 32-byte key.
     pub fn get(self: *Self, key: [KEY_LENGTH]u8) !?[]u8 {
         if (self.root == null) return null;
 
@@ -201,7 +206,8 @@ pub const VerkleTrie = struct {
         return null;
     }
 
-    /// Put key/value
+    /// Inserts or updates a value in the trie for a given 32-byte key.
+    /// Marks the affected stem as dirty for incremental commitment.
     pub fn put(self: *Self, key: [KEY_LENGTH]u8, value: []const u8) !void {
         const stem = getStem(key);
         const suffix = getSuffix(key);
@@ -312,7 +318,7 @@ pub const VerkleTrie = struct {
         }
     }
 
-    /// Delete key
+    /// Deletes a key from the trie and marks its stem as dirty.
     pub fn delete(self: *Self, key: [KEY_LENGTH]u8) !void {
         if (self.root == null) return;
 
@@ -330,7 +336,7 @@ pub const VerkleTrie = struct {
         }
     }
 
-    /// Commit all changes to storage
+    /// Commits all pending changes to the database and recomputes affected commitments.
     pub fn commit(self: *Self) !void {
         if (self.root == null) {
             return;
@@ -361,6 +367,8 @@ pub const VerkleTrie = struct {
     ///
     /// Uses commitment caching: clean subtrees whose commitment is already in
     /// the cache are skipped entirely (O(1) lookup instead of O(tree_height) traversal).
+    /// Performs an incremental commit, only recomputing subtrees for dirty stems.
+    /// Uses parallel processing if the number of dirty stems exceeds a threshold.
     pub fn commitDirtyOnly(self: *Self) !void {
         if (self.root == null or self.dirty_count == 0) return;
 
@@ -491,7 +499,7 @@ pub const VerkleTrie = struct {
         self.commitment_cache.clearRetainingCapacity();
     }
 
-    /// Get root hash (commitment)
+    /// Returns the current root hash (commitment) of the trie.
     pub fn rootHash(self: *Self) [32]u8 {
         if (self.root) |root| {
             return root.getCommitment().toBytes();
@@ -499,7 +507,7 @@ pub const VerkleTrie = struct {
         return [_]u8{0} ** 32;
     }
 
-    /// Generate proof for key
+    /// Generates a Verkle proof for the given key.
     pub fn generateProof(self: *Self, key: [KEY_LENGTH]u8) !VerkleProof {
         var proof = VerkleProof.init(self.allocator);
         errdefer proof.deinit(self.allocator);

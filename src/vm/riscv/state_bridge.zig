@@ -29,7 +29,7 @@
 //      Overlay (same TX isolation boundary).
 //
 //   5. Each StateBridge carries full execution context (timestamp,
-//      tx_origin, gas_price, coinbase, prevrandao, base_fee) so
+//      tx_origin, gas_price, coinbase, prevRandao, base_fee) so
 //      nested calls see correct block/tx environment.
 
 const std = @import("std");
@@ -47,7 +47,7 @@ pub const StateBridge = struct {
     /// The current state overlay (transaction-scoped isolation)
     overlay: *anyopaque,
     /// Current executing contract address
-    self_address: [20]u8,
+    selfAddress: [20]u8,
     /// Message sender (msg.sender — changes per call frame)
     caller: [20]u8,
     /// Call value in wei
@@ -55,27 +55,27 @@ pub const StateBridge = struct {
     /// Call depth (for reentrancy protection)
     depth: u32,
     /// Maximum call depth (1024 per EIP)
-    max_depth: u32,
+    maxDepth: u32,
     /// Gas remaining for this call frame
-    gas_remaining: u64,
+    gasRemaining: u64,
 
     // ── Block/TX Context (propagated to all sub-calls) ──────────────
     /// Current block number
-    block_number: u64,
+    blockNumber: u64,
     /// Block timestamp (seconds since Unix epoch)
     timestamp: u64,
     /// Chain ID
-    chain_id_value: u64,
+    chainId: u64,
     /// Transaction originator (tx.origin — constant across all call frames)
-    tx_origin: [20]u8,
+    txOrigin: [20]u8,
     /// Transaction gas price
-    gas_price: u64,
+    gasPrice: u64,
     /// Block coinbase (validator/miner address)
     coinbase: [20]u8,
     /// Block base fee (EIP-1559)
-    base_fee: u64,
-    /// Block prevrandao (VRF randomness from consensus)
-    prevrandao: [32]u8,
+    baseFee: u64,
+    /// Block prevRandao (VRF randomness from consensus)
+    prevRandao: [32]u8,
 
     /// Accumulated logs for this call frame
     logs: std.ArrayList(Log),
@@ -89,9 +89,9 @@ pub const StateBridge = struct {
     // its declared set, the write is silently dropped and logged.
     // This prevents cross-lane state corruption even if the scheduler
     // has a bug. When null (legacy execution), all writes are allowed.
-    allowed_write_keys: ?[]const [32]u8,
+    allowedWriteKeys: ?[]const [32]u8,
     /// Counter for rejected writes (monitoring)
-    rejected_writes: u32,
+    rejectedWrites: u32,
 
     pub const Log = struct {
         address: [20]u8,
@@ -104,40 +104,40 @@ pub const StateBridge = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         overlay: *anyopaque,
-        self_address: [20]u8,
+        selfAddress: [20]u8,
         caller: [20]u8,
         value: [32]u8,
         gas: u64,
     ) Self {
         return Self{
             .overlay = overlay,
-            .self_address = self_address,
+            .selfAddress = selfAddress,
             .caller = caller,
             .value = value,
             .depth = 0,
-            .max_depth = 1024,
-            .gas_remaining = gas,
+            .maxDepth = 1024,
+            .gasRemaining = gas,
             // Block/TX context — must be set by the caller after init
-            .block_number = 0,
+            .blockNumber = 0,
             .timestamp = 0,
-            .chain_id_value = 99999,
-            .tx_origin = [_]u8{0} ** 20,
-            .gas_price = 0,
+            .chainId = 99999,
+            .txOrigin = [_]u8{0} ** 20,
+            .gasPrice = 0,
             .coinbase = [_]u8{0} ** 20,
-            .base_fee = 0,
-            .prevrandao = [_]u8{0} ** 32,
+            .baseFee = 0,
+            .prevRandao = [_]u8{0} ** 32,
             .logs = .{},
             .allocator = allocator,
             // DAG write-key enforcement (null = unrestricted for legacy path)
-            .allowed_write_keys = null,
-            .rejected_writes = 0,
+            .allowedWriteKeys = null,
+            .rejectedWrites = 0,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        for (self.logs.items) |*log_entry| {
-            self.allocator.free(log_entry.topics);
-            self.allocator.free(log_entry.data);
+        for (self.logs.items) |*logEntry| {
+            self.allocator.free(logEntry.topics);
+            self.allocator.free(logEntry.data);
         }
         self.logs.deinit(self.allocator);
     }
@@ -146,34 +146,34 @@ pub const StateBridge = struct {
     /// Called by the DAG executor before each TX execution.
     /// Keys are the storage_cell keys: keccak256(contract || slot).
     pub fn setWriteKeys(self: *Self, keys: []const [32]u8) void {
-        self.allowed_write_keys = keys;
-        self.rejected_writes = 0;
+        self.allowedWriteKeys = keys;
+        self.rejectedWrites = 0;
     }
 
     /// Clear write-key restriction (returns to unrestricted mode).
     pub fn clearWriteKeys(self: *Self) void {
-        self.allowed_write_keys = null;
+        self.allowedWriteKeys = null;
     }
 
     /// Copy block/TX context from a parent bridge (for sub-calls).
-    /// tx_origin remains constant; caller/self_address change per frame.
+    /// tx_origin remains constant; caller/selfAddress change per frame.
     pub fn inheritContext(self: *Self, parent: *const Self) void {
-        self.block_number = parent.block_number;
+        self.blockNumber = parent.blockNumber;
         self.timestamp = parent.timestamp;
-        self.chain_id_value = parent.chain_id_value;
-        self.tx_origin = parent.tx_origin;
-        self.gas_price = parent.gas_price;
+        self.chainId = parent.chainId;
+        self.txOrigin = parent.txOrigin;
+        self.gasPrice = parent.gasPrice;
         self.coinbase = parent.coinbase;
-        self.base_fee = parent.base_fee;
-        self.prevrandao = parent.prevrandao;
+        self.baseFee = parent.baseFee;
+        self.prevRandao = parent.prevRandao;
         // Inherit write-key restrictions to sub-calls
-        self.allowed_write_keys = parent.allowed_write_keys;
+        self.allowedWriteKeys = parent.allowedWriteKeys;
     }
 
     /// Creates a StorageBackend interface for the VM dispatch layer.
     /// The StorageBackend routes SLOAD/SSTORE through the Overlay,
     /// which uses storage_cell key derivation for zero-conflict parallelism.
-    pub fn createStorageBackend(self: *Self) vm.syscall_dispatch.StorageBackend {
+    pub fn createStorageBackend(self: *Self) vm.syscallDispatch.StorageBackend {
         return .{
             .ctx = @ptrCast(self),
             .loadFn = struct {
@@ -202,8 +202,8 @@ pub const StateBridge = struct {
     /// Load a value from contract storage
     pub fn storageLoad(self: *Self, slot: [32]u8) [32]u8 {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-        const addr = Address{ .bytes = self.self_address };
-        return state.get_storage(addr, slot);
+        const addr = Address{ .bytes = self.selfAddress };
+        return state.getStorage(addr, slot);
     }
 
     /// Derive the storage_cell key for DAG write-key validation.
@@ -219,10 +219,10 @@ pub const StateBridge = struct {
 
     /// Check if a storage key is in the allowed write set.
     fn isWriteAllowed(self: *Self, slot: [32]u8) bool {
-        const keys = self.allowed_write_keys orelse return true; // null = unrestricted
-        const storage_key = deriveStorageKey(self.self_address, slot);
+        const keys = self.allowedWriteKeys orelse return true; // null = unrestricted
+        const storageKey = deriveStorageKey(self.selfAddress, slot);
         for (keys) |allowed| {
-            if (std.mem.eql(u8, &allowed, &storage_key)) return true;
+            if (std.mem.eql(u8, &allowed, &storageKey)) return true;
         }
         return false;
     }
@@ -233,21 +233,21 @@ pub const StateBridge = struct {
     /// against the declared write set. Unauthorized writes are dropped.
     pub fn storageStore(self: *Self, slot: [32]u8, value: [32]u8) [32]u8 {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-        const addr = Address{ .bytes = self.self_address };
-        const original = state.get_storage(addr, slot);
+        const addr = Address{ .bytes = self.selfAddress };
+        const original = state.getStorage(addr, slot);
 
         // DAG write-key enforcement: validate before writing
         if (!self.isWriteAllowed(slot)) {
-            self.rejected_writes += 1;
+            self.rejectedWrites += 1;
             std.log.warn("DAG write-key violation: contract={x} slot={x} rejected (write #{d})", .{
-                self.self_address, slot, self.rejected_writes,
+                self.selfAddress, slot, self.rejectedWrites,
             });
             // Return original without writing — silently drop the mutation
             // to prevent cross-lane state corruption
             return original;
         }
 
-        state.set_storage(addr, slot, value) catch {};
+        state.setStorage(addr, slot, value) catch {};
         return original;
     }
 
@@ -256,10 +256,10 @@ pub const StateBridge = struct {
     // ================================================================
 
     /// Get balance of an address
-    pub fn getBalance(self: *Self, addr_bytes: [20]u8) [32]u8 {
+    pub fn getBalance(self: *Self, addrBytes: [20]u8) [32]u8 {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-        const addr = Address{ .bytes = addr_bytes };
-        const bal = state.get_balance(addr);
+        const addr = Address{ .bytes = addrBytes };
+        const bal = state.getBalance(addr);
         var bytes: [32]u8 = undefined;
         std.mem.writeInt(u256, &bytes, bal, .big);
         return bytes;
@@ -268,23 +268,23 @@ pub const StateBridge = struct {
     /// Transfer value from current contract to a target address
     pub fn transfer(self: *Self, to: [20]u8, amount: [32]u8) !void {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-        const from_addr = Address{ .bytes = self.self_address };
-        const to_addr = Address{ .bytes = to };
-        const value_u256 = bytesToU256(amount);
-        try state.add_balance(from_addr, -@as(i256, @intCast(value_u256)));
-        try state.add_balance(to_addr, @as(i256, @intCast(value_u256)));
+        const fromAddr = Address{ .bytes = self.selfAddress };
+        const toAddr = Address{ .bytes = to };
+        const valueU256 = bytesToU256(amount);
+        try state.addBalance(fromAddr, -@as(i256, @intCast(valueU256)));
+        try state.addBalance(toAddr, @as(i256, @intCast(valueU256)));
     }
 
     /// Get code at an address
-    pub fn getCode(self: *Self, addr_bytes: [20]u8) ![]const u8 {
+    pub fn getCode(self: *Self, addrBytes: [20]u8) ![]const u8 {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-        const addr = Address{ .bytes = addr_bytes };
-        return state.get_code(addr);
+        const addr = Address{ .bytes = addrBytes };
+        return state.getCode(addr);
     }
 
     /// Get the code size at an address
-    pub fn getCodeSize(self: *Self, addr_bytes: [20]u8) u64 {
-        const code = self.getCode(addr_bytes) catch return 0;
+    pub fn getCodeSize(self: *Self, addrBytes: [20]u8) u64 {
+        const code = self.getCode(addrBytes) catch return 0;
         defer if (code.len > 0) {
             const state: *Overlay = @ptrCast(@alignCast(self.overlay));
             state.allocator.free(code);
@@ -298,16 +298,16 @@ pub const StateBridge = struct {
 
     /// Emit a log with topics and data
     pub fn emitLog(self: *Self, topics: []const [32]u8, data: []const u8) !void {
-        const topics_copy = try self.allocator.alloc([32]u8, topics.len);
-        @memcpy(topics_copy, topics);
+        const topicsCopy = try self.allocator.alloc([32]u8, topics.len);
+        @memcpy(topicsCopy, topics);
 
-        const data_copy = try self.allocator.alloc(u8, data.len);
-        @memcpy(data_copy, data);
+        const dataCopy = try self.allocator.alloc(u8, data.len);
+        @memcpy(dataCopy, data);
 
         try self.logs.append(self.allocator, .{
-            .address = self.self_address,
-            .topics = topics_copy,
-            .data = data_copy,
+            .address = self.selfAddress,
+            .topics = topicsCopy,
+            .data = dataCopy,
         });
     }
 
@@ -324,66 +324,66 @@ pub const StateBridge = struct {
     pub fn call(
         self: *Self,
         target: [20]u8,
-        call_value: [32]u8,
+        callValue: [32]u8,
         _: []const u8,
         gas: u64,
     ) CallResult {
         // Check call depth (EIP limit: 1024)
-        if (self.depth >= self.max_depth) {
+        if (self.depth >= self.maxDepth) {
             return .{
                 .success = false,
-                .gas_used = 0,
-                .return_data = &[_]u8{},
-                .error_msg = "call depth exceeded",
+                .gasUsed = 0,
+                .returnData = &[_]u8{},
+                .errorMsg = "call depth exceeded",
             };
         }
 
         // EIP-150: Max gas forwarded is 63/64 of remaining
-        const max_gas = self.gas_remaining - (self.gas_remaining / 64);
-        const actual_gas = @min(gas, max_gas);
+        const maxGas = self.gasRemaining - (self.gasRemaining / 64);
+        const actualGas = @min(gas, maxGas);
 
         // Create sub-bridge for the call target.
         // Shares the same overlay (same TX isolation boundary).
-        var sub_bridge = StateBridge.init(
+        var subBridge = StateBridge.init(
             self.allocator,
             self.overlay,
             target,
-            self.self_address,
-            call_value,
-            actual_gas,
+            self.selfAddress,
+            callValue,
+            actualGas,
         );
-        sub_bridge.depth = self.depth + 1;
-        sub_bridge.inheritContext(self);
-        defer sub_bridge.deinit();
+        subBridge.depth = self.depth + 1;
+        subBridge.inheritContext(self);
+        defer subBridge.deinit();
 
         // Transfer value if non-zero
-        if (!isZero(call_value)) {
-            sub_bridge.transfer(target, call_value) catch {
+        if (!isZero(callValue)) {
+            subBridge.transfer(target, callValue) catch {
                 return .{
                     .success = false,
-                    .gas_used = 0,
-                    .return_data = &[_]u8{},
-                    .error_msg = "insufficient balance for call value",
+                    .gasUsed = 0,
+                    .returnData = &[_]u8{},
+                    .errorMsg = "insufficient balance for call value",
                 };
             };
         }
 
         // Get target code and execute
-        const code = sub_bridge.getCode(target) catch {
+        const code = subBridge.getCode(target) catch {
             return .{
                 .success = true, // Call to EOA succeeds
-                .gas_used = 0,
-                .return_data = &[_]u8{},
-                .error_msg = null,
+                .gasUsed = 0,
+                .returnData = &[_]u8{},
+                .errorMsg = null,
             };
         };
 
         if (code.len == 0) {
             return .{
                 .success = true, // Call to empty account succeeds
-                .gas_used = 0,
-                .return_data = &[_]u8{},
-                .error_msg = null,
+                .gasUsed = 0,
+                .returnData = &[_]u8{},
+                .errorMsg = null,
             };
         }
 
@@ -392,9 +392,9 @@ pub const StateBridge = struct {
         //  in riscv/mod.zig which has the full VM context)
         return .{
             .success = true,
-            .gas_used = actual_gas / 2,
-            .return_data = &[_]u8{},
-            .error_msg = null,
+            .gasUsed = actualGas / 2,
+            .returnData = &[_]u8{},
+            .errorMsg = null,
         };
     }
 
@@ -406,34 +406,34 @@ pub const StateBridge = struct {
     /// mark account for deletion at end of transaction.
     pub fn selfDestruct(self: *Self, beneficiary: [20]u8) !void {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-        const self_addr = Address{ .bytes = self.self_address };
-        const beneficiary_addr = Address{ .bytes = beneficiary };
+        const selfAddr = Address{ .bytes = self.selfAddress };
+        const beneficiaryAddr = Address{ .bytes = beneficiary };
 
         // Transfer entire balance to beneficiary
-        const balance = state.get_balance(self_addr);
+        const balance = state.getBalance(selfAddr);
         if (balance > 0) {
-            try state.add_balance(self_addr, -@as(i256, @intCast(balance)));
-            try state.add_balance(beneficiary_addr, @as(i256, @intCast(balance)));
+            try state.addBalance(selfAddr, -@as(i256, @intCast(balance)));
+            try state.addBalance(beneficiaryAddr, @as(i256, @intCast(balance)));
         }
 
         // Mark for destruction (code and storage cleared at TX commit)
-        try state.suicide(self_addr);
+        try state.suicide(selfAddr);
     }
 
     // ================================================================
     // Environment accessors
     // ================================================================
 
-    pub fn blockNumber(self: *Self) u64 {
-        return self.block_number;
+    pub fn getBlockNumber(self: *Self) u64 {
+        return self.blockNumber;
     }
 
     pub fn blockTimestamp(self: *Self) u64 {
         return self.timestamp;
     }
 
-    pub fn chainId(self: *Self) u64 {
-        return self.chain_id_value;
+    pub fn getChainId(self: *Self) u64 {
+        return self.chainId;
     }
 
     pub fn msgSender(self: *Self) [20]u8 {
@@ -445,15 +445,15 @@ pub const StateBridge = struct {
     }
 
     pub fn address(self: *Self) [20]u8 {
-        return self.self_address;
+        return self.selfAddress;
     }
 };
 
 pub const CallResult = struct {
     success: bool,
-    gas_used: u64,
-    return_data: []const u8,
-    error_msg: ?[]const u8,
+    gasUsed: u64,
+    returnData: []const u8,
+    errorMsg: ?[]const u8,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────

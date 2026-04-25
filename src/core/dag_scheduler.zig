@@ -35,9 +35,9 @@ const dag_mempool = @import("dag_mempool.zig");
 /// that can run in parallel with guaranteed zero conflicts.
 pub const ExecutionPlan = struct {
     lanes: []ExecutionLane,
-    total_txs: u32,
-    total_gas: u64,
-    thread_assignments: []ThreadAssignment,
+    totalTxs: u32,
+    totalGas: u64,
+    threadAssignments: []ThreadAssignment,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *ExecutionPlan) void {
@@ -45,10 +45,10 @@ pub const ExecutionPlan = struct {
             self.allocator.free(lane.txs);
         }
         self.allocator.free(self.lanes);
-        for (self.thread_assignments) |*ta| {
+        for (self.threadAssignments) |*ta| {
             ta.deinit();
         }
-        self.allocator.free(self.thread_assignments);
+        self.allocator.free(self.threadAssignments);
     }
 
     pub fn laneCount(self: *const ExecutionPlan) usize {
@@ -61,20 +61,20 @@ pub const ExecutionPlan = struct {
 pub const ExecutionLane = struct {
     sender: types.Address,
     txs: []types.Transaction,
-    base_nonce: u64,
-    total_gas: u64,
+    baseNonce: u64,
+    totalGas: u64,
     priority: u256, // Max gas price in this lane (for ordering)
 };
 
 /// Maps lanes to threads for parallel execution.
 pub const ThreadAssignment = struct {
-    thread_id: u32,
-    lane_indices: []u32,
-    total_gas: u64,
+    threadId: u32,
+    laneIndices: []u32,
+    totalGas: u64,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *ThreadAssignment) void {
-        self.allocator.free(self.lane_indices);
+        self.allocator.free(self.laneIndices);
     }
 };
 
@@ -82,17 +82,17 @@ pub const ThreadAssignment = struct {
 
 pub const SchedulerConfig = struct {
     /// Number of execution threads
-    num_threads: u32 = 8,
+    numThreads: u32 = 8,
     /// Minimum TXs per thread to avoid spawn overhead
-    min_txs_per_thread: u32 = 4,
+    minTxsPerThread: u32 = 4,
     /// Maximum lanes per thread (load balancing)
-    max_lanes_per_thread: u32 = 10_000,
+    maxLanesPerThread: u32 = 10_000,
     /// Block gas limit
-    block_gas_limit: u64 = 1_000_000_000, // 1B gas
+    blockGasLimit: u64 = 1_000_000_000, // 1B gas
     /// Coinbase address for fee collection
     coinbase: types.Address = types.Address.zero(),
     /// Base fee for EIP-1559 style pricing
-    base_fee: u256 = 0,
+    baseFee: u256 = 0,
 };
 
 // ── DAG Scheduler ───────────────────────────────────────────────────────
@@ -112,9 +112,9 @@ pub fn schedule(
     if (extraction.lanes.len == 0) {
         return ExecutionPlan{
             .lanes = try allocator.alloc(ExecutionLane, 0),
-            .total_txs = 0,
-            .total_gas = 0,
-            .thread_assignments = try allocator.alloc(ThreadAssignment, 0),
+            .totalTxs = 0,
+            .totalGas = 0,
+            .threadAssignments = try allocator.alloc(ThreadAssignment, 0),
             .allocator = allocator,
         };
     }
@@ -125,7 +125,7 @@ pub fn schedule(
 
     var total_txs: u32 = 0;
     var total_gas: u64 = 0;
-    var remaining_gas = config.block_gas_limit;
+    var remaining_gas = config.blockGasLimit;
 
     for (extraction.lanes) |*extracted| {
         if (extracted.txs.len == 0) continue;
@@ -136,10 +136,10 @@ pub fn schedule(
         var valid_count: usize = 0;
 
         for (extracted.txs) |*tx| {
-            if (tx.gas_limit > remaining_gas) break;
-            if (tx.gas_price > max_price) max_price = tx.gas_price;
-            lane_gas += tx.gas_limit;
-            remaining_gas -= tx.gas_limit;
+            if (tx.gasLimit > remaining_gas) break;
+            if (tx.gasPrice > max_price) max_price = tx.gasPrice;
+            lane_gas += tx.gasLimit;
+            remaining_gas -= tx.gasLimit;
             valid_count += 1;
         }
 
@@ -151,8 +151,8 @@ pub fn schedule(
         try exec_lanes.append(allocator, ExecutionLane{
             .sender = extracted.sender,
             .txs = txs,
-            .base_nonce = extracted.base_nonce,
-            .total_gas = lane_gas,
+            .baseNonce = extracted.baseNonce,
+            .totalGas = lane_gas,
             .priority = max_price,
         });
 
@@ -168,7 +168,7 @@ pub fn schedule(
     }.lessThan);
 
     // 3. Assign lanes to threads (gas-balanced round-robin)
-    const num_threads = @min(config.num_threads, @as(u32, @intCast(exec_lanes.items.len)));
+    const num_threads = @min(config.numThreads, @as(u32, @intCast(exec_lanes.items.len)));
     const assignments = try assignToThreads(allocator, exec_lanes.items, num_threads);
 
     // 4. Build final plan
@@ -177,9 +177,9 @@ pub fn schedule(
 
     return ExecutionPlan{
         .lanes = lanes,
-        .total_txs = total_txs,
-        .total_gas = total_gas,
-        .thread_assignments = assignments,
+        .totalTxs = total_txs,
+        .totalGas = total_gas,
+        .threadAssignments = assignments,
         .allocator = allocator,
     };
 }
@@ -194,9 +194,9 @@ pub fn scheduleFromTxs(
     if (transactions.len == 0) {
         return ExecutionPlan{
             .lanes = try allocator.alloc(ExecutionLane, 0),
-            .total_txs = 0,
-            .total_gas = 0,
-            .thread_assignments = try allocator.alloc(ThreadAssignment, 0),
+            .totalTxs = 0,
+            .totalGas = 0,
+            .threadAssignments = try allocator.alloc(ThreadAssignment, 0),
             .allocator = allocator,
         };
     }
@@ -244,8 +244,8 @@ pub fn scheduleFromTxs(
         var max_price: u256 = 0;
         var lane_gas: u64 = 0;
         for (txs_list) |*tx| {
-            if (tx.gas_price > max_price) max_price = tx.gas_price;
-            lane_gas += tx.gas_limit;
+            if (tx.gasPrice > max_price) max_price = tx.gasPrice;
+            lane_gas += tx.gasLimit;
         }
 
         const txs = try allocator.alloc(types.Transaction, txs_list.len);
@@ -254,8 +254,8 @@ pub fn scheduleFromTxs(
         try exec_lanes.append(allocator, ExecutionLane{
             .sender = entry.key_ptr.*,
             .txs = txs,
-            .base_nonce = txs_list[0].nonce,
-            .total_gas = lane_gas,
+            .baseNonce = txs_list[0].nonce,
+            .totalGas = lane_gas,
             .priority = max_price,
         });
 
@@ -270,7 +270,7 @@ pub fn scheduleFromTxs(
         }
     }.lessThan);
 
-    const num_threads = @min(config.num_threads, @as(u32, @intCast(exec_lanes.items.len)));
+    const num_threads = @min(config.numThreads, @as(u32, @intCast(exec_lanes.items.len)));
     const assignments = try assignToThreads(allocator, exec_lanes.items, num_threads);
 
     const lanes = try allocator.alloc(ExecutionLane, exec_lanes.items.len);
@@ -278,9 +278,9 @@ pub fn scheduleFromTxs(
 
     return ExecutionPlan{
         .lanes = lanes,
-        .total_txs = total_txs,
-        .total_gas = total_gas,
-        .thread_assignments = assignments,
+        .totalTxs = total_txs,
+        .totalGas = total_gas,
+        .threadAssignments = assignments,
         .allocator = allocator,
     };
 }
@@ -324,7 +324,7 @@ fn assignToThreads(
         }
 
         try thread_lanes[min_thread].append(allocator, @intCast(lane_idx));
-        thread_gas[min_thread] += lane.total_gas;
+        thread_gas[min_thread] += lane.totalGas;
     }
 
     // Build final assignments
@@ -334,9 +334,9 @@ fn assignToThreads(
         @memcpy(indices, thread_lanes[t].items);
 
         assignments[t] = ThreadAssignment{
-            .thread_id = @intCast(t),
-            .lane_indices = indices,
-            .total_gas = thread_gas[t],
+            .threadId = @intCast(t),
+            .laneIndices = indices,
+            .totalGas = thread_gas[t],
             .allocator = allocator,
         };
     }
@@ -360,7 +360,7 @@ pub fn validatePlan(plan: *const ExecutionPlan) !void {
 
     // 2. Check that nonces are contiguous within each lane
     for (plan.lanes) |*lane| {
-        var expected_nonce = lane.base_nonce;
+        var expected_nonce = lane.baseNonce;
         for (lane.txs) |*tx| {
             if (tx.nonce != expected_nonce) {
                 return error.NonContiguousNonce;
@@ -395,7 +395,7 @@ pub fn computeDAGRoot(plan: *const ExecutionPlan) types.Hash {
     for (plan.lanes) |*lane| {
         hasher.update(&lane.sender.bytes);
         var nonce_buf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &nonce_buf, lane.base_nonce, .big);
+        std.mem.writeInt(u64, &nonce_buf, lane.baseNonce, .big);
         hasher.update(&nonce_buf);
 
         for (lane.txs) |*tx| {

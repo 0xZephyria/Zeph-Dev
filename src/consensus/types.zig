@@ -85,19 +85,19 @@ pub const ValidatorInfo = struct {
     address: core.types.Address,
     stake: u256,
     status: ValidatorStatus,
-    bls_pub_key: [48]u8,
+    blsPubKey: [48]u8,
     commission: u16,
-    activation_block: u64,
-    slash_count: u64,
-    total_rewards: u256,
+    activationBlock: u64,
+    slashCount: u64,
+    totalRewards: u256,
     name: []const u8,
     website: []const u8,
 };
 
 pub const UnbondingRequest = struct {
     amount: u256,
-    unlock_block: u64,
-    request_block: u64,
+    unlockBlock: u64,
+    requestBlock: u64,
 };
 
 pub const SlashingType = enum(u8) {
@@ -108,17 +108,17 @@ pub const SlashingType = enum(u8) {
 };
 
 pub const SlashingRecord = struct {
-    validator_addr: core.types.Address,
-    slash_type: SlashingType,
+    validatorAddr: core.types.Address,
+    slashType: SlashingType,
     evidence: []const u8,
-    slash_amount: u256,
-    block_number: u64,
+    slashAmount: u256,
+    blockNumber: u64,
     reporter: core.types.Address,
 };
 
 pub const Vote = struct {
     sender: core.types.Address,
-    block_hash: core.types.Hash,
+    blockHash: core.types.Hash,
     view: u64,
     signature: [96]u8, // BLS G2 signature
 };
@@ -126,47 +126,47 @@ pub const Vote = struct {
 // ── VoteMsg (used by VotePool and P2P) ──────────────────────────────────
 
 pub const VoteMsg = struct {
-    block_hash: core.types.Hash,
-    block_number: u64,
+    blockHash: core.types.Hash,
+    blockNumber: u64,
     view: u64,
     signature: [96]u8,
-    validator_index: u32,
+    validatorIndex: u32,
 };
 
 // ── Adaptive Block Header ───────────────────────────────────────────────
 
 /// The woven block header — identical format across all tiers.
-/// At Tier 1 (1 thread), thread_roots[0] == woven_root.
-/// At Tier 3 (10+ threads), woven_root = Merkle(thread_roots[0..thread_count]).
+/// At Tier 1 (1 thread), threadRoots[0] == wovenRoot.
+/// At Tier 3 (10+ threads), wovenRoot = Merkle(threadRoots[0..threadCount]).
 pub const AdaptiveBlockHeader = struct {
     /// Slot number (monotonically increasing, one per 400ms)
     slot: u64,
     /// Epoch number
     epoch: u64,
-    /// Parent block's woven_root hash
-    parent_hash: core.types.Hash,
+    /// Parent block's wovenRoot hash
+    parentHash: core.types.Hash,
     /// Proposer's validator index in the active set
-    proposer_index: u32,
+    proposerIndex: u32,
     /// Proposer's VRF proof (proves legitimate selection)
-    proposer_vrf_proof: [48]u8,
+    proposerVrfProof: [48]u8,
 
     // ── Thread structure (the Loom) ─────────────────────────────────
     /// Number of active threads in this block (1 at Tier 1, up to MAX_THREADS)
-    thread_count: u8,
-    /// Merkle root of each thread's transactions (only [0..thread_count] valid)
-    thread_roots: [MAX_THREADS]core.types.Hash,
+    threadCount: u8,
+    /// Merkle root of each thread's transactions (only [0..threadCount] valid)
+    threadRoots: [MAX_THREADS]core.types.Hash,
     /// Transaction count per thread
-    thread_tx_counts: [MAX_THREADS]u32,
-    /// THE block hash: Merkle(thread_roots[0..thread_count])
-    woven_root: core.types.Hash,
+    threadTxCounts: [MAX_THREADS]u32,
+    /// THE block hash: Merkle(threadRoots[0..threadCount])
+    wovenRoot: core.types.Hash,
 
     // ── State ───────────────────────────────────────────────────────
     /// State root committed with deferred execution (2 slots behind)
-    state_root: core.types.Hash,
+    stateRoot: core.types.Hash,
     /// Total transaction count across all threads
-    total_tx_count: u32,
+    totalTxCount: u32,
     /// Randomness seed for next slot's VRF sortition
-    randomness_seed: [32]u8,
+    randomnessSeed: [32]u8,
 
     // ── Tier metadata ───────────────────────────────────────────────
     /// Which consensus tier produced this block
@@ -175,19 +175,19 @@ pub const AdaptiveBlockHeader = struct {
     /// Compute the woven root from thread roots.
     /// Uses iterative Keccak256 Merkle: H(H(r0 ‖ r1) ‖ H(r2 ‖ r3) ‖ ...)
     pub fn computeWovenRoot(self: *AdaptiveBlockHeader) void {
-        if (self.thread_count == 0) {
-            self.woven_root = core.types.Hash.zero();
+        if (self.threadCount == 0) {
+            self.wovenRoot = core.types.Hash.zero();
             return;
         }
-        if (self.thread_count == 1) {
-            self.woven_root = self.thread_roots[0];
+        if (self.threadCount == 1) {
+            self.wovenRoot = self.threadRoots[0];
             return;
         }
 
-        // Binary Merkle tree over thread_roots[0..thread_count]
+        // Binary Merkle tree over threadRoots[0..threadCount]
         var level: [MAX_THREADS]core.types.Hash = undefined;
-        var count: usize = self.thread_count;
-        @memcpy(level[0..count], self.thread_roots[0..count]);
+        var count: usize = self.threadCount;
+        @memcpy(level[0..count], self.threadRoots[0..count]);
 
         while (count > 1) {
             var next_count: usize = 0;
@@ -206,14 +206,14 @@ pub const AdaptiveBlockHeader = struct {
             }
             count = next_count;
         }
-        self.woven_root = level[0];
+        self.wovenRoot = level[0];
     }
 
-    /// Verify that the woven_root matches the thread_roots.
+    /// Verify that the wovenRoot matches the threadRoots.
     pub fn verifyWovenRoot(self: *const AdaptiveBlockHeader) bool {
         var copy = self.*;
         copy.computeWovenRoot();
-        return std.mem.eql(u8, &copy.woven_root.bytes, &self.woven_root.bytes);
+        return std.mem.eql(u8, &copy.wovenRoot.bytes, &self.wovenRoot.bytes);
     }
 
     /// Hash the entire header for signing/QC purposes.
@@ -225,21 +225,21 @@ pub const AdaptiveBlockHeader = struct {
         hasher.update(&buf8);
         std.mem.writeInt(u64, &buf8, self.epoch, .big);
         hasher.update(&buf8);
-        hasher.update(&self.parent_hash.bytes);
+        hasher.update(&self.parentHash.bytes);
         // Proposer
         var buf4: [4]u8 = undefined;
-        std.mem.writeInt(u32, &buf4, self.proposer_index, .big);
+        std.mem.writeInt(u32, &buf4, self.proposerIndex, .big);
         hasher.update(&buf4);
-        hasher.update(&self.proposer_vrf_proof);
+        hasher.update(&self.proposerVrfProof);
         // Woven root (THE block identity)
-        hasher.update(&self.woven_root.bytes);
+        hasher.update(&self.wovenRoot.bytes);
         // State
-        hasher.update(&self.state_root.bytes);
-        std.mem.writeInt(u32, &buf4, self.total_tx_count, .big);
+        hasher.update(&self.stateRoot.bytes);
+        std.mem.writeInt(u32, &buf4, self.totalTxCount, .big);
         hasher.update(&buf4);
-        hasher.update(&self.randomness_seed);
+        hasher.update(&self.randomnessSeed);
         // Tier + thread count
-        hasher.update(&[_]u8{ @intFromEnum(self.tier), self.thread_count });
+        hasher.update(&[_]u8{ @intFromEnum(self.tier), self.threadCount });
         var result: core.types.Hash = undefined;
         hasher.final(&result.bytes);
         return result;
@@ -254,26 +254,26 @@ pub const ThreadAttestation = struct {
     /// Slot being attested
     slot: u64,
     /// Which thread this attestation covers
-    thread_id: u8,
+    threadId: u8,
     /// Verified Merkle root for this thread's transactions
     thread_root: core.types.Hash,
     /// Validator index of the weaver
-    validator_index: u32,
+    validatorIndex: u32,
     /// Weaver's VRF proof (Tier 3) or committee membership proof (Tier 2)
-    role_proof: [48]u8,
-    /// BLS signature over (slot, thread_id, thread_root)
-    bls_signature: [96]u8,
+    roleProof: [48]u8,
+    /// BLS signature over (slot, threadId, thread_root)
+    blsSignature: [96]u8,
     /// Stake of the attesting validator
-    attesting_stake: u64,
+    attestingStake: u64,
 };
 
-/// Signing message for thread attestation: Keccak256(slot ‖ thread_id ‖ thread_root)
-pub fn threadAttestationMessage(slot: u64, thread_id: u8, thread_root: core.types.Hash) [32]u8 {
+/// Signing message for thread attestation: Keccak256(slot ‖ threadId ‖ thread_root)
+pub fn threadAttestationMessage(slot: u64, threadId: u8, thread_root: core.types.Hash) [32]u8 {
     var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
     var buf8: [8]u8 = undefined;
     std.mem.writeInt(u64, &buf8, slot, .big);
     hasher.update(&buf8);
-    hasher.update(&[_]u8{thread_id});
+    hasher.update(&[_]u8{threadId});
     hasher.update(&thread_root.bytes);
     var result: [32]u8 = undefined;
     hasher.final(&result);
@@ -288,65 +288,65 @@ pub const ThreadCertificate = struct {
     /// Slot this certificate covers
     slot: u64,
     /// Thread ID
-    thread_id: u8,
+    threadId: u8,
     /// Verified thread root (all weavers agreed on this)
     thread_root: core.types.Hash,
     /// BLS aggregate signature of all attesting weavers
-    aggregate_signature: [96]u8,
+    aggregateSignature: [96]u8,
     /// Bitmap of which weavers/committee members signed (up to 256)
-    weaver_bitmap: [32]u8,
+    weaverBitmap: [32]u8,
     /// Total stake of attesting weavers
-    attesting_stake: u64,
+    attestingStake: u64,
     /// Total stake of all eligible weavers for this thread
-    total_eligible_stake: u64,
+    totalEligibleStake: u64,
 
     /// Check if the certificate has sufficient quorum (≥67% of eligible stake).
     pub fn hasQuorum(self: *const ThreadCertificate) bool {
-        if (self.total_eligible_stake == 0) return false;
-        return self.attesting_stake * 3 > self.total_eligible_stake * 2;
+        if (self.totalEligibleStake == 0) return false;
+        return self.attestingStake * 3 > self.totalEligibleStake * 2;
     }
 };
 
 // ── Woven Quorum Certificate ────────────────────────────────────────────
 
 /// The final Quorum Certificate for a block — identical format across all tiers.
-/// At Tier 1: thread_cert_bitmap has 1-2 bits set, voter_bitmap covers all validators.
-/// At Tier 3: thread_cert_bitmap has 10+ bits set, voter_bitmap covers attestors.
+/// At Tier 1: threadCertBitmap has 1-2 bits set, voterBitmap covers all validators.
+/// At Tier 3: threadCertBitmap has 10+ bits set, voterBitmap covers attestors.
 pub const WovenQuorumCertificate = struct {
     /// Slot this QC certifies
     slot: u64,
-    /// THE block hash (woven_root from AdaptiveBlockHeader)
-    woven_root: core.types.Hash,
+    /// THE block hash (wovenRoot from AdaptiveBlockHeader)
+    wovenRoot: core.types.Hash,
     /// Which threads are certified (bitmask, up to MAX_THREADS)
-    thread_cert_bitmap: u128,
+    threadCertBitmap: u128,
     /// BLS aggregate signature of all voters (attestors at Tier 1-2, Snowball at Tier 3)
-    aggregate_signature: [96]u8,
+    aggregateSignature: [96]u8,
     /// Bitmap of which validators signed (up to 256 validators for Tier 1-2)
-    voter_bitmap: [32]u8,
+    voterBitmap: [32]u8,
     /// Total attesting stake
-    total_attesting_stake: u64,
+    totalAttestingStake: u64,
     /// Randomness seed for next slot
-    randomness_seed: [32]u8,
+    randomnessSeed: [32]u8,
     /// Which tier produced this QC
     tier: ConsensusTier,
 
     /// Check if all required threads are certified.
-    pub fn allThreadsCertified(self: *const WovenQuorumCertificate, thread_count: u8) bool {
-        const required_mask = (@as(u128, 1) << @intCast(thread_count)) - 1;
-        return (self.thread_cert_bitmap & required_mask) == required_mask;
+    pub fn allThreadsCertified(self: *const WovenQuorumCertificate, threadCount: u8) bool {
+        const required_mask = (@as(u128, 1) << @intCast(threadCount)) - 1;
+        return (self.threadCertBitmap & required_mask) == required_mask;
     }
 
     /// Check if voting quorum is met (≥67% of total voting stake).
     pub fn hasVotingQuorum(self: *const WovenQuorumCertificate, total_stake: u64) bool {
         if (total_stake == 0) return false;
-        return self.total_attesting_stake * 3 > total_stake * 2;
+        return self.totalAttestingStake * 3 > total_stake * 2;
     }
 
     /// Compute the randomness seed for the next slot.
     pub fn computeNextSeed(self: *const WovenQuorumCertificate) [32]u8 {
         var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        hasher.update(&self.randomness_seed);
-        hasher.update(&self.aggregate_signature);
+        hasher.update(&self.randomnessSeed);
+        hasher.update(&self.aggregateSignature);
         var buf8: [8]u8 = undefined;
         std.mem.writeInt(u64, &buf8, self.slot, .big);
         hasher.update(&buf8);
@@ -363,9 +363,9 @@ pub const ThreadCommitteeAssignment = struct {
     /// Epoch this assignment is valid for
     epoch: u64,
     /// Thread ID assigned to
-    thread_id: u8,
+    threadId: u8,
     /// Validator index in the active set
-    validator_index: u32,
+    validatorIndex: u32,
     /// Validator's stake weight
     stake: u64,
 };
@@ -377,11 +377,11 @@ pub const ProposerScheduleEntry = struct {
     /// Slot number
     slot: u64,
     /// Primary proposer's validator index
-    primary_proposer: u32,
+    primaryProposer: u32,
     /// Backup proposer (for view change)
-    backup_proposer: u32,
+    backupProposer: u32,
     /// VRF hash (for comparison / lowest-hash-wins)
-    vrf_hash: [32]u8,
+    vrfHash: [32]u8,
 };
 
 // ── Epoch State ─────────────────────────────────────────────────────────
@@ -393,11 +393,11 @@ pub const EpochState = struct {
     /// Active consensus tier
     tier: ConsensusTier,
     /// Number of active threads
-    thread_count: u8,
+    threadCount: u8,
     /// Number of active validators
-    validator_count: u32,
+    validatorCount: u32,
     /// Epoch randomness seed
     seed: [32]u8,
     /// Last finalized slot of previous epoch
-    last_finalized_slot: u64,
+    lastFinalizedSlot: u64,
 };

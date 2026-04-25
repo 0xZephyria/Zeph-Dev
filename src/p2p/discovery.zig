@@ -37,13 +37,13 @@ pub const Node = struct {
     id: NodeID,
     hash: NodeHash,
     address: net.Address,
-    last_seen: i64,
-    last_ping: i64,
-    ping_failures: u8,
-    peer_role: types.PeerRole,
-    validator_address: core.types.Address,
-    subscribed_subnets: [8]u8,
-    stake_amount: u64,
+    lastSeen: i64,
+    lastPing: i64,
+    pingFailures: u8,
+    peerRole: types.PeerRole,
+    validatorAddress: core.types.Address,
+    subscribedSubnets: [8]u8,
+    stakeAmount: u64,
 
     pub fn distance(self: *const Node, other_hash: NodeHash) NodeHash {
         var dist: NodeHash = undefined;
@@ -55,7 +55,7 @@ pub const Node = struct {
 
     /// Check if this node is in the given subnet.
     pub fn isInSubnet(self: *const Node, subnet: types.SubnetID) bool {
-        return types.isSubnetSubscribed(self.subscribed_subnets, subnet);
+        return types.isSubnetSubscribed(self.subscribedSubnets, subnet);
     }
 };
 
@@ -66,21 +66,21 @@ pub const EnrRecord = struct {
     id: [4]u8, // "v4\x00\x00"
     pubkey: [33]u8, // Compressed secp256k1 public key
     ip4: [4]u8,
-    udp_port: u16,
-    tcp_port: u16,
-    validator_addr: core.types.Address,
+    udpPort: u16,
+    tcpPort: u16,
+    validatorAddr: core.types.Address,
     subnets: [8]u8,
     stake: u64,
 
-    pub fn init(pubkey: [33]u8, ip4: [4]u8, udp_port: u16) EnrRecord {
+    pub fn init(pubkey: [33]u8, ip4: [4]u8, udpPort: u16) EnrRecord {
         return .{
             .seq = 1,
             .id = [_]u8{ 'v', '4', 0, 0 },
             .pubkey = pubkey,
             .ip4 = ip4,
-            .udp_port = udp_port,
-            .tcp_port = 0,
-            .validator_addr = core.types.Address.zero(),
+            .udpPort = udpPort,
+            .tcpPort = 0,
+            .validatorAddr = core.types.Address.zero(),
             .subnets = [_]u8{0} ** 8,
             .stake = 0,
         };
@@ -93,9 +93,9 @@ pub const EnrRecord = struct {
         std.mem.writeInt(u64, buf[4..12], self.seq, .big);
         @memcpy(buf[12..45], &self.pubkey);
         @memcpy(buf[45..49], &self.ip4);
-        std.mem.writeInt(u16, buf[49..51], self.udp_port, .big);
-        std.mem.writeInt(u16, buf[51..53], self.tcp_port, .big);
-        @memcpy(buf[53..73], &self.validator_addr.bytes);
+        std.mem.writeInt(u16, buf[49..51], self.udpPort, .big);
+        std.mem.writeInt(u16, buf[51..53], self.tcpPort, .big);
+        @memcpy(buf[53..73], &self.validatorAddr.bytes);
         @memcpy(buf[73..81], &self.subnets);
         std.mem.writeInt(u64, buf[81..89], self.stake, .big);
         return 89;
@@ -109,9 +109,9 @@ pub const EnrRecord = struct {
         enr.seq = std.mem.readInt(u64, data[4..12], .big);
         @memcpy(&enr.pubkey, data[12..45]);
         @memcpy(&enr.ip4, data[45..49]);
-        enr.udp_port = std.mem.readInt(u16, data[49..51], .big);
-        enr.tcp_port = std.mem.readInt(u16, data[51..53], .big);
-        @memcpy(&enr.validator_addr.bytes, data[53..73]);
+        enr.udpPort = std.mem.readInt(u16, data[49..51], .big);
+        enr.tcpPort = std.mem.readInt(u16, data[51..53], .big);
+        @memcpy(&enr.validatorAddr.bytes, data[53..73]);
         @memcpy(&enr.subnets, data[73..81]);
         enr.stake = std.mem.readInt(u64, data[81..89], .big);
         return enr;
@@ -123,13 +123,13 @@ pub const EnrRecord = struct {
 const Bucket = struct {
     nodes: [BUCKET_SIZE]?Node,
     count: u8,
-    last_refresh: i64,
+    lastRefresh: i64,
 
     fn init() Bucket {
         return .{
             .nodes = [_]?Node{null} ** BUCKET_SIZE,
             .count = 0,
-            .last_refresh = std.time.milliTimestamp(),
+            .lastRefresh = std.time.milliTimestamp(),
         };
     }
 
@@ -140,14 +140,14 @@ const Bucket = struct {
     /// Insert or update a node. Returns true if inserted/updated, false if bucket full and
     /// no stale node to evict.
     fn insertOrUpdate(self: *Bucket, node: Node) bool {
-        // Check if already exists — update last_seen
+        // Check if already exists — update lastSeen
         for (&self.nodes) |*slot| {
             if (slot.*) |*existing| {
                 if (std.mem.eql(u8, &existing.id, &node.id)) {
-                    existing.last_seen = node.last_seen;
-                    existing.ping_failures = 0;
-                    existing.stake_amount = node.stake_amount;
-                    existing.subscribed_subnets = node.subscribed_subnets;
+                    existing.lastSeen = node.lastSeen;
+                    existing.pingFailures = 0;
+                    existing.stakeAmount = node.stakeAmount;
+                    existing.subscribedSubnets = node.subscribedSubnets;
                     return true;
                 }
             }
@@ -170,9 +170,9 @@ const Bucket = struct {
         for (self.nodes, 0..) |maybe_node, i| {
             if (maybe_node) |n| {
                 // Evict nodes that haven't been seen and have failed pings
-                if (n.ping_failures >= 3 or (now - n.last_seen) > STALE_THRESHOLD_MS) {
-                    if (n.last_seen < stalest_time) {
-                        stalest_time = n.last_seen;
+                if (n.pingFailures >= 3 or (now - n.lastSeen) > STALE_THRESHOLD_MS) {
+                    if (n.lastSeen < stalest_time) {
+                        stalest_time = n.lastSeen;
                         stalest_idx = i;
                     }
                 }
@@ -220,7 +220,7 @@ const Bucket = struct {
         for (&self.nodes) |*slot| {
             if (slot.*) |*existing| {
                 if (std.mem.eql(u8, &existing.id, &id)) {
-                    existing.ping_failures += 1;
+                    existing.pingFailures += 1;
                     return;
                 }
             }
@@ -232,17 +232,17 @@ const Bucket = struct {
 
 pub const DiscoveryService = struct {
     allocator: Allocator,
-    local_node: Node,
-    local_enr: EnrRecord,
+    localNode: Node,
+    localEnr: EnrRecord,
     buckets: [MAX_BUCKETS]Bucket,
-    bootstrap_nodes: std.ArrayListUnmanaged(Node),
-    lock: std.Thread.Mutex,
+    bootstrapNodes: std.ArrayListUnmanaged(Node),
+    mutex: std.Thread.Mutex,
     running: bool,
-    refresh_thread: ?std.Thread,
+    refreshThread: ?std.Thread,
 
     // Stats
-    total_nodes_seen: u64,
-    total_lookups: u64,
+    totalNodesSeen: u64,
+    totalLookups: u64,
 
     const Self = @This();
 
@@ -273,26 +273,26 @@ pub const DiscoveryService = struct {
 
         self.* = Self{
             .allocator = allocator,
-            .local_node = .{
+            .localNode = .{
                 .id = id,
                 .hash = hash,
                 .address = local_addr,
-                .last_seen = std.time.milliTimestamp(),
-                .last_ping = 0,
-                .ping_failures = 0,
-                .peer_role = .Validator,
-                .validator_address = core.types.Address.zero(),
-                .subscribed_subnets = [_]u8{0} ** 8,
-                .stake_amount = 0,
+                .lastSeen = std.time.milliTimestamp(),
+                .lastPing = 0,
+                .pingFailures = 0,
+                .peerRole = .Validator,
+                .validatorAddress = core.types.Address.zero(),
+                .subscribedSubnets = [_]u8{0} ** 8,
+                .stakeAmount = 0,
             },
-            .local_enr = enr,
+            .localEnr = enr,
             .buckets = buckets,
-            .bootstrap_nodes = .{},
-            .lock = .{},
+            .bootstrapNodes = .{},
+            .mutex = .{},
             .running = false,
-            .refresh_thread = null,
-            .total_nodes_seen = 0,
-            .total_lookups = 0,
+            .refreshThread = null,
+            .totalNodesSeen = 0,
+            .totalLookups = 0,
         };
 
         return self;
@@ -300,7 +300,7 @@ pub const DiscoveryService = struct {
 
     pub fn deinit(self: *Self) void {
         self.stop();
-        self.bootstrap_nodes.deinit(self.allocator);
+        self.bootstrapNodes.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -308,35 +308,35 @@ pub const DiscoveryService = struct {
 
     /// Add a bootstrap node that will be contacted on startup.
     pub fn addBootstrapNode(self: *Self, node: Node) !void {
-        self.lock.lock();
-        defer self.lock.unlock();
-        try self.bootstrap_nodes.append(self.allocator, node);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.bootstrapNodes.append(self.allocator, node);
     }
 
     // ── Node Management ─────────────────────────────────────────────────
 
     pub fn addNode(self: *Self, node: Node) !void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.addNodeLocked(node);
     }
 
     fn addNodeLocked(self: *Self, node: Node) void {
         // Don't add self
-        if (std.mem.eql(u8, &node.id, &self.local_node.id)) return;
+        if (std.mem.eql(u8, &node.id, &self.localNode.id)) return;
 
-        const dist = self.local_node.distance(node.hash);
+        const dist = self.localNode.distance(node.hash);
         const idx = getBucketIndex(dist);
 
         if (self.buckets[idx].insertOrUpdate(node)) {
-            self.total_nodes_seen += 1;
+            self.totalNodesSeen += 1;
         }
     }
 
     /// Remove a node by ID.
     pub fn removeNode(self: *Self, id: NodeID) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         // Search all buckets (we could compute the bucket, but this is safer)
         for (&self.buckets) |*bucket| {
@@ -346,12 +346,12 @@ pub const DiscoveryService = struct {
 
     /// Mark a node as having failed a ping response.
     pub fn markPingFailure(self: *Self, id: NodeID) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         var hash: NodeHash = undefined;
         std.crypto.hash.sha3.Keccak256.hash(&id, &hash, .{});
-        const dist = self.local_node.distance(hash);
+        const dist = self.localNode.distance(hash);
         const idx = getBucketIndex(dist);
         self.buckets[idx].markPingFailure(id);
     }
@@ -361,10 +361,10 @@ pub const DiscoveryService = struct {
     /// Find the `count` closest nodes to the target hash.
     /// Caller owns the returned slice and must free it.
     pub fn findClosest(self: *Self, target: NodeHash, count: usize) ![]Node {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-        self.total_lookups += 1;
+        self.totalLookups += 1;
 
         // Collect all nodes into a temporary buffer
         var all_nodes_buf: [MAX_BUCKETS * BUCKET_SIZE]Node = undefined;
@@ -402,8 +402,8 @@ pub const DiscoveryService = struct {
 
     /// Find closest nodes in a specific subnet.
     pub fn findClosestInSubnet(self: *Self, target: NodeHash, subnet: types.SubnetID, count: usize) ![]Node {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         var all_nodes_buf: [MAX_BUCKETS * BUCKET_SIZE]Node = undefined;
         var total: usize = 0;
@@ -443,19 +443,19 @@ pub const DiscoveryService = struct {
         self.running = true;
 
         // Add bootstrap nodes to routing table
-        for (self.bootstrap_nodes.items) |node| {
+        for (self.bootstrapNodes.items) |node| {
             self.addNodeLocked(node);
         }
 
         // Start periodic refresh in background
-        self.refresh_thread = try std.Thread.spawn(.{}, refreshLoop, .{self});
+        self.refreshThread = try std.Thread.spawn(.{}, refreshLoop, .{self});
     }
 
     pub fn stop(self: *Self) void {
         self.running = false;
-        if (self.refresh_thread) |t| {
+        if (self.refreshThread) |t| {
             t.join();
-            self.refresh_thread = null;
+            self.refreshThread = null;
         }
     }
 
@@ -477,14 +477,14 @@ pub const DiscoveryService = struct {
 
     /// Evict nodes that have exceeded the stale threshold and have failing pings.
     fn evictStaleNodes(self: *Self) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const now = std.time.milliTimestamp();
         for (&self.buckets) |*bucket| {
             for (&bucket.nodes) |*slot| {
                 if (slot.*) |node| {
-                    if (node.ping_failures >= 3 and (now - node.last_seen) > STALE_THRESHOLD_MS) {
+                    if (node.pingFailures >= 3 and (now - node.lastSeen) > STALE_THRESHOLD_MS) {
                         slot.* = null;
                         bucket.count -= 1;
                     }
@@ -496,15 +496,15 @@ pub const DiscoveryService = struct {
     // ── Stats ───────────────────────────────────────────────────────────
 
     pub const DiscoveryStats = struct {
-        total_nodes: u32,
-        total_seen: u64,
-        total_lookups: u64,
-        bucket_utilization: f64,
+        totalNodes: u32,
+        totalSeen: u64,
+        totalLookups: u64,
+        bucketUtilization: f64,
     };
 
     pub fn getStats(self: *Self) DiscoveryStats {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         var total_nodes: u32 = 0;
         var non_empty_buckets: u32 = 0;
@@ -514,10 +514,10 @@ pub const DiscoveryService = struct {
         }
 
         return .{
-            .total_nodes = total_nodes,
-            .total_seen = self.total_nodes_seen,
-            .total_lookups = self.total_lookups,
-            .bucket_utilization = if (non_empty_buckets > 0)
+            .totalNodes = total_nodes,
+            .totalSeen = self.totalNodesSeen,
+            .totalLookups = self.totalLookups,
+            .bucketUtilization = if (non_empty_buckets > 0)
                 @as(f64, @floatFromInt(total_nodes)) / @as(f64, @floatFromInt(non_empty_buckets * BUCKET_SIZE))
             else
                 0.0,

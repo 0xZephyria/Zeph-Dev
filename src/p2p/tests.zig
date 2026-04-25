@@ -136,8 +136,8 @@ test "Compression - stats tracking" {
     defer testing.allocator.free(compressed);
 
     const stats = comp.getStats();
-    try testing.expect(stats.compression_calls > 0);
-    try testing.expect(stats.total_uncompressed > 0);
+    try testing.expect(stats.compressionCalls > 0);
+    try testing.expect(stats.totalUncompressed > 0);
 }
 
 test "Compression - corrupt data detection" {
@@ -314,11 +314,11 @@ test "PropagationTree - build with fanout" {
 
     // Root should exist
     try testing.expect(tree.nodes.items.len > 0);
-    try testing.expectEqual(@as(u32, 0), tree.nodes.items[0].peer_index);
+    try testing.expectEqual(@as(u32, 0), tree.nodes.items[0].peerIndex);
     try testing.expectEqual(@as(u8, 0), tree.nodes.items[0].layer);
 
     // Root should have children
-    try testing.expect(tree.nodes.items[0].children_count > 0);
+    try testing.expect(tree.nodes.items[0].childrenCount > 0);
 }
 
 test "PropagationTree - shred assignment" {
@@ -352,13 +352,13 @@ test "Discovery - add and find nodes" {
             .id = id,
             .hash = hash,
             .address = try std.net.Address.parseIp4("127.0.0.1", @intCast(30304 + i)),
-            .last_seen = std.time.milliTimestamp(),
-            .last_ping = 0,
-            .ping_failures = 0,
-            .peer_role = .Validator,
-            .validator_address = core.types.Address.zero(),
-            .subscribed_subnets = [_]u8{0} ** 8,
-            .stake_amount = 0,
+            .lastSeen = std.time.milliTimestamp(),
+            .lastPing = 0,
+            .pingFailures = 0,
+            .peerRole = .Validator,
+            .validatorAddress = core.types.Address.zero(),
+            .subscribedSubnets = [_]u8{0} ** 8,
+            .stakeAmount = 0,
         };
         try d.addNode(node);
     }
@@ -390,13 +390,13 @@ test "Discovery - subnet-aware search" {
         .id = id,
         .hash = hash,
         .address = try std.net.Address.parseIp4("10.0.0.1", 30303),
-        .last_seen = std.time.milliTimestamp(),
-        .last_ping = 0,
-        .ping_failures = 0,
-        .peer_role = .Validator,
-        .validator_address = core.types.Address.zero(),
-        .subscribed_subnets = subnets,
-        .stake_amount = 100000,
+        .lastSeen = std.time.milliTimestamp(),
+        .lastPing = 0,
+        .pingFailures = 0,
+        .peerRole = .Validator,
+        .validatorAddress = core.types.Address.zero(),
+        .subscribedSubnets = subnets,
+        .stakeAmount = 100000,
     };
     try d.addNode(node);
 
@@ -421,7 +421,7 @@ test "Discovery - ENR serialize/deserialize roundtrip" {
     try testing.expect(decoded != null);
     try testing.expectEqual(@as(u64, 42), decoded.?.seq);
     try testing.expectEqualSlices(u8, &pubkey, &decoded.?.pubkey);
-    try testing.expectEqual(@as(u16, 30303), decoded.?.udp_port);
+    try testing.expectEqual(@as(u16, 30303), decoded.?.udpPort);
     try testing.expectEqual(@as(u64, 1000000), decoded.?.stake);
 }
 
@@ -431,7 +431,7 @@ test "Discovery - stats" {
     defer d.deinit();
 
     const stats = d.getStats();
-    try testing.expectEqual(@as(u32, 0), stats.total_nodes);
+    try testing.expectEqual(@as(u32, 0), stats.totalNodes);
 }
 
 // ── Peer Tests ──────────────────────────────────────────────────────────
@@ -503,23 +503,23 @@ test "Peer - committee assignment" {
     const p = try peer_mod.Peer.init(testing.allocator, "127.0.0.1", 30303);
     defer p.deinit();
 
-    try testing.expect(!p.is_committee_member);
+    try testing.expect(!p.isCommitteeMember);
 
     p.setCommitteeAssignment(.{
         .epoch = 1,
-        .slot_start = 0,
-        .slot_end = 100,
-        .committee_index = 5,
+        .slotStart = 0,
+        .slotEnd = 100,
+        .committeeIndex = 5,
         .role = .Attestor,
-        .aggregation_subnet = 3,
+        .aggregationSubnet = 3,
     });
 
-    try testing.expect(p.is_committee_member);
-    try testing.expect(p.committee_assignment != null);
-    try testing.expectEqual(types.CommitteeRole.Attestor, p.committee_assignment.?.role);
+    try testing.expect(p.isCommitteeMember);
+    try testing.expect(p.committeeAssignment != null);
+    try testing.expectEqual(types.CommitteeRole.Attestor, p.committeeAssignment.?.role);
 
     p.clearCommitteeAssignment();
-    try testing.expect(!p.is_committee_member);
+    try testing.expect(!p.isCommitteeMember);
 }
 
 test "Peer - stats" {
@@ -530,8 +530,8 @@ test "Peer - stats" {
     p.recordReceived(512);
 
     const stats = p.getStats();
-    try testing.expectEqual(@as(u64, 1536), stats.bytes_received);
-    try testing.expectEqual(@as(u64, 2), stats.packets_received);
+    try testing.expectEqual(@as(u64, 1536), stats.bytesReceived);
+    try testing.expectEqual(@as(u64, 2), stats.packetsReceived);
 }
 
 // ── Gulf Stream Tests ───────────────────────────────────────────────────
@@ -590,5 +590,5 @@ test "GulfStream - stats" {
     defer gs.deinit();
 
     const stats = gs.getStats();
-    try testing.expectEqual(@as(u64, 0), stats.batches_forwarded);
+    try testing.expectEqual(@as(u64, 0), stats.batchesForwarded);
 }

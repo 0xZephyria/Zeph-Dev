@@ -161,34 +161,34 @@ const GF256 = struct {
 // ── Reed-Solomon Encoder ────────────────────────────────────────────────
 
 pub const ReedSolomon = struct {
-    data_shards: u32,
-    parity_shards: u32,
-    total_shards: u32,
+    dataShreds: u32,
+    parityShreds: u32,
+    totalShreds: u32,
 
     const Self = @This();
 
-    pub fn init(data_shards: u32, parity_shards: u32) Self {
+    pub fn init(dataShreds: u32, parityShreds: u32) Self {
         return .{
-            .data_shards = data_shards,
-            .parity_shards = parity_shards,
-            .total_shards = data_shards + parity_shards,
+            .dataShreds = dataShreds,
+            .parityShreds = parityShreds,
+            .totalShreds = dataShreds + parityShreds,
         };
     }
 
     /// Encode: generate parity shreds from data shreds.
-    /// `shards` must have length = total_shards, first data_shards are input,
-    /// remaining parity_shards are written as output.
+    /// `shards` must have length = totalShreds, first dataShreds are input,
+    /// remaining parityShreds are written as output.
     /// All shards must have the same length.
     /// Encode: generate parity shreds using SIMD-accelerated GF multiply.
     pub fn encode(self: *const Self, shards: [][]u8) void {
         GF256.ensureInit();
 
         // Generate parity shards using SIMD multiply-accumulate
-        for (0..self.parity_shards) |pi| {
-            const parity_shard = shards[self.data_shards + pi];
+        for (0..self.parityShreds) |pi| {
+            const parity_shard = shards[self.dataShreds + pi];
             @memset(parity_shard, 0);
 
-            for (0..self.data_shards) |di| {
+            for (0..self.dataShreds) |di| {
                 const coeff = vandermondeCoeff(@intCast(pi), @intCast(di));
                 // SIMD path: ~16x faster than scalar byte-by-byte
                 GF256.mulAccum(parity_shard, shards[di], coeff);
@@ -208,12 +208,12 @@ pub const ReedSolomon = struct {
             if (p) present_count += 1;
         }
 
-        // Need at least data_shards present
-        if (present_count < self.data_shards) return false;
+        // Need at least dataShreds present
+        if (present_count < self.dataShreds) return false;
 
         // If all data shards present, nothing to do
         var all_data_present = true;
-        for (0..self.data_shards) |i| {
+        for (0..self.dataShreds) |i| {
             if (!present[i]) {
                 all_data_present = false;
                 break;
@@ -224,32 +224,32 @@ pub const ReedSolomon = struct {
         const shard_len = shards[0].len;
 
         // Build sub-matrix from present shards and invert
-        // Select data_shards present shards
+        // Select dataShreds present shards
         var selected_indices: [256]u32 = undefined;
         var selected_count: u32 = 0;
-        for (0..self.total_shards) |i| {
-            if (present[i] and selected_count < self.data_shards) {
+        for (0..self.totalShreds) |i| {
+            if (present[i] and selected_count < self.dataShreds) {
                 selected_indices[selected_count] = @intCast(i);
                 selected_count += 1;
             }
         }
 
-        if (selected_count < self.data_shards) return false;
+        if (selected_count < self.dataShreds) return false;
 
         // Build the encoding matrix for selected rows
-        const n = self.data_shards;
+        const n = self.dataShreds;
         const matrix = try allocator.alloc(u8, n * n);
         defer allocator.free(matrix);
 
         for (0..n) |row| {
             const shard_idx = selected_indices[row];
             for (0..n) |col| {
-                if (shard_idx < self.data_shards) {
+                if (shard_idx < self.dataShreds) {
                     // Identity row
                     matrix[row * n + col] = if (shard_idx == col) 1 else 0;
                 } else {
                     // Parity row
-                    const pi = shard_idx - self.data_shards;
+                    const pi = shard_idx - self.dataShreds;
                     matrix[row * n + col] = vandermondeCoeff(@intCast(pi), @intCast(col));
                 }
             }
@@ -262,7 +262,7 @@ pub const ReedSolomon = struct {
         if (!gaussianInvert(matrix, inv_matrix, n)) return false;
 
         // Reconstruct missing data shards
-        for (0..self.data_shards) |di| {
+        for (0..self.dataShreds) |di| {
             if (present[di]) continue; // Already have this shard
 
             // Reconstruct shard[di] = sum of inv_matrix[di][j] * selected_shard[j]
@@ -351,16 +351,16 @@ pub const ReedSolomon = struct {
 // ── Shred ───────────────────────────────────────────────────────────────
 
 pub const Shred = struct {
-    block_number: u64,
-    shred_index: u32,
-    total_data_shreds: u32,
-    total_parity_shreds: u32,
-    shred_type: types.ShredType,
+    blockNumber: u64,
+    shredIndex: u32,
+    totalDataShreds: u32,
+    totalParityShreds: u32,
+    shredType: types.ShredType,
     payload: []const u8,
-    producer_signature: [64]u8,
+    producerSignature: [64]u8,
     /// Thread ID for targeted propagation (Loom Genesis)
-    thread_id: u8,
-    /// CRC32 over (block_number ++ shred_index ++ payload) for fast integrity check
+    threadId: u8,
+    /// CRC32 over (block_number ++ shredIndex ++ payload) for fast integrity check
     crc32: u32,
 
     pub fn payloadSize(self: *const Shred) usize {
@@ -370,8 +370,8 @@ pub const Shred = struct {
     /// Compute the CRC32 for this shred's header + payload.
     pub fn computeCrc(self: *const Shred) u32 {
         var hasher = Crc32.init();
-        hasher.update(std.mem.asBytes(&self.block_number));
-        hasher.update(std.mem.asBytes(&self.shred_index));
+        hasher.update(std.mem.asBytes(&self.blockNumber));
+        hasher.update(std.mem.asBytes(&self.shredIndex));
         hasher.update(self.payload);
         return hasher.final();
     }
@@ -391,35 +391,35 @@ pub const ShredBufferPool = struct {
     allocator: std.mem.Allocator,
     buffers: std.ArrayListUnmanaged([]u8),
     available: std.ArrayListUnmanaged(usize),
-    buf_size: usize,
-    lock: std.Thread.Mutex,
+    bufSize: usize,
+    mutex: std.Thread.Mutex,
 
     // Stats
-    total_allocated: u64,
-    pool_hits: u64,
-    pool_misses: u64,
+    totalAllocated: u64,
+    poolHits: u64,
+    poolMisses: u64,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, initial_count: usize, buf_size: usize) !Self {
+    pub fn init(allocator: std.mem.Allocator, initial_count: usize, bufSize: usize) !Self {
         var pool = Self{
             .allocator = allocator,
             .buffers = .{},
             .available = .{},
-            .buf_size = buf_size,
-            .lock = .{},
-            .total_allocated = 0,
-            .pool_hits = 0,
-            .pool_misses = 0,
+            .bufSize = bufSize,
+            .mutex = .{},
+            .totalAllocated = 0,
+            .poolHits = 0,
+            .poolMisses = 0,
         };
 
         // Pre-allocate buffers
         for (0..initial_count) |_| {
-            const buf = try allocator.alloc(u8, buf_size);
+            const buf = try allocator.alloc(u8, bufSize);
             try pool.buffers.append(allocator, buf);
             try pool.available.append(allocator, pool.buffers.items.len - 1);
         }
-        pool.total_allocated = initial_count;
+        pool.totalAllocated = initial_count;
 
         return pool;
     }
@@ -434,30 +434,30 @@ pub const ShredBufferPool = struct {
 
     /// Acquire a buffer from the pool, or allocate a new one if empty.
     pub fn acquire(self: *Self) ![]u8 {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         if (self.available.items.len > 0) {
             const idx = self.available.pop().?;
-            self.pool_hits += 1;
+            self.poolHits += 1;
             const buf = self.buffers.items[idx];
             @memset(buf, 0);
             return buf;
         }
 
         // Grow: allocate a new buffer
-        self.pool_misses += 1;
-        const buf = try self.allocator.alloc(u8, self.buf_size);
+        self.poolMisses += 1;
+        const buf = try self.allocator.alloc(u8, self.bufSize);
         @memset(buf, 0);
         try self.buffers.append(self.allocator, buf);
-        self.total_allocated += 1;
+        self.totalAllocated += 1;
         return buf;
     }
 
     /// Return a buffer to the pool for reuse.
     pub fn release(self: *Self, buf: []u8) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         // Find the index of this buffer
         for (self.buffers.items, 0..) |b, i| {
@@ -475,39 +475,39 @@ pub const ShredBufferPool = struct {
 
 pub const ShredCollector = struct {
     allocator: std.mem.Allocator,
-    block_number: u64,
-    data_shreds: u32,
-    parity_shreds: u32,
-    total_shreds: u32,
-    shred_size: usize,
+    blockNumber: u64,
+    dataShreds: u32,
+    parityShreds: u32,
+    totalShreds: u32,
+    shredSize: usize,
     shards: [][]u8,
     present: []bool,
-    received_count: u32,
+    receivedCount: u32,
     complete: bool,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, block_number: u64, data_shreds: u32, parity_shreds: u32, shred_size: usize) !Self {
-        const total = data_shreds + parity_shreds;
+    pub fn init(allocator: std.mem.Allocator, blockNumber: u64, dataShreds: u32, parityShreds: u32, shredSize: usize) !Self {
+        const total = dataShreds + parityShreds;
         const shards = try allocator.alloc([]u8, total);
         const present = try allocator.alloc(bool, total);
 
         for (0..total) |i| {
-            shards[i] = try allocator.alloc(u8, shred_size);
+            shards[i] = try allocator.alloc(u8, shredSize);
             @memset(shards[i], 0);
             present[i] = false;
         }
 
         return Self{
             .allocator = allocator,
-            .block_number = block_number,
-            .data_shreds = data_shreds,
-            .parity_shreds = parity_shreds,
-            .total_shreds = total,
-            .shred_size = shred_size,
+            .blockNumber = blockNumber,
+            .dataShreds = dataShreds,
+            .parityShreds = parityShreds,
+            .totalShreds = total,
+            .shredSize = shredSize,
             .shards = shards,
             .present = present,
-            .received_count = 0,
+            .receivedCount = 0,
             .complete = false,
         };
     }
@@ -523,19 +523,19 @@ pub const ShredCollector = struct {
     /// Insert a received shred. Returns true if we now have enough to reconstruct.
     pub fn insertShred(self: *Self, shred: *const Shred) bool {
         if (self.complete) return true;
-        if (shred.shred_index >= self.total_shreds) return false;
+        if (shred.shredIndex >= self.totalShreds) return false;
 
-        const idx = shred.shred_index;
+        const idx = shred.shredIndex;
         if (self.present[idx]) return false; // Duplicate
 
         // Copy payload into shard buffer
-        const copy_len = @min(shred.payload.len, self.shred_size);
+        const copy_len = @min(shred.payload.len, self.shredSize);
         @memcpy(self.shards[idx][0..copy_len], shred.payload[0..copy_len]);
         self.present[idx] = true;
-        self.received_count += 1;
+        self.receivedCount += 1;
 
         // Check if we have enough for reconstruction
-        if (self.received_count >= self.data_shreds) {
+        if (self.receivedCount >= self.dataShreds) {
             self.complete = true;
             return true;
         }
@@ -543,13 +543,13 @@ pub const ShredCollector = struct {
     }
 
     /// Reconstruct the original block from collected shreds.
-    /// Requires at least data_shreds shreds to have been received.
+    /// Requires at least dataShreds shreds to have been received.
     pub fn reconstruct(self: *Self) ![]u8 {
-        if (self.received_count < self.data_shreds) return error.InsufficientShreds;
+        if (self.receivedCount < self.dataShreds) return error.InsufficientShreds;
 
         // Run Reed-Solomon decode if any data shreds are missing
         var all_data_present = true;
-        for (0..self.data_shreds) |i| {
+        for (0..self.dataShreds) |i| {
             if (!self.present[i]) {
                 all_data_present = false;
                 break;
@@ -557,45 +557,45 @@ pub const ShredCollector = struct {
         }
 
         if (!all_data_present) {
-            const rs = ReedSolomon.init(self.data_shreds, self.parity_shreds);
+            const rs = ReedSolomon.init(self.dataShreds, self.parityShreds);
             const success = try rs.decode(self.allocator, self.shards, self.present);
             if (!success) return error.ReconstructionFailed;
         }
 
         // Concatenate data shreds to form the block
-        const total_size = @as(usize, self.data_shreds) * self.shred_size;
+        const total_size = @as(usize, self.dataShreds) * self.shredSize;
         const block_data = try self.allocator.alloc(u8, total_size);
 
-        for (0..self.data_shreds) |i| {
-            const offset = i * self.shred_size;
-            @memcpy(block_data[offset..][0..self.shred_size], self.shards[i]);
+        for (0..self.dataShreds) |i| {
+            const offset = i * self.shredSize;
+            @memcpy(block_data[offset..][0..self.shredSize], self.shards[i]);
         }
 
         return block_data;
     }
 
     pub fn progress(self: *const Self) f64 {
-        if (self.data_shreds == 0) return 1.0;
-        return @as(f64, @floatFromInt(self.received_count)) / @as(f64, @floatFromInt(self.data_shreds));
+        if (self.dataShreds == 0) return 1.0;
+        return @as(f64, @floatFromInt(self.receivedCount)) / @as(f64, @floatFromInt(self.dataShreds));
     }
 };
 
 // ── Propagation Tree ────────────────────────────────────────────────────
 
 pub const TreeNode = struct {
-    peer_index: u32,
+    peerIndex: u32,
     layer: u8,
-    children_start: u32,
-    children_count: u16,
-    shred_start: u32,
-    shred_count: u32,
+    childrenStart: u32,
+    childrenCount: u16,
+    shredStart: u32,
+    shredCount: u32,
 };
 
 pub const PropagationTree = struct {
     allocator: std.mem.Allocator,
     nodes: std.ArrayListUnmanaged(TreeNode),
     fanout: u32,
-    total_layers: u8,
+    totalLayers: u8,
 
     const Self = @This();
 
@@ -604,7 +604,7 @@ pub const PropagationTree = struct {
             .allocator = allocator,
             .nodes = .{},
             .fanout = types.TURBINE_FANOUT,
-            .total_layers = 0,
+            .totalLayers = 0,
         };
     }
 
@@ -627,7 +627,7 @@ pub const PropagationTree = struct {
             layers += 1;
             if (layers >= 10) break; // Safety cap
         }
-        self.total_layers = layers;
+        self.totalLayers = layers;
 
         // Build tree level by level
         var peer_idx: u32 = 0;
@@ -635,12 +635,12 @@ pub const PropagationTree = struct {
 
         // Root node (block producer)
         try self.nodes.append(self.allocator, .{
-            .peer_index = 0,
+            .peerIndex = 0,
             .layer = 0,
-            .children_start = 1,
-            .children_count = @intCast(@min(self.fanout, num_peers - 1)),
-            .shred_start = 0,
-            .shred_count = total_shreds,
+            .childrenStart = 1,
+            .childrenCount = @intCast(@min(self.fanout, num_peers - 1)),
+            .shredStart = 0,
+            .shredCount = total_shreds,
         });
         peer_idx = 1;
         current_layer_start = 0;
@@ -655,13 +655,13 @@ pub const PropagationTree = struct {
                 if (peer_idx >= num_peers) break;
 
                 // Read parent data BEFORE modifying the array (appending invalidates pointers)
-                const parent_shred_start = self.nodes.items[pi].shred_start;
-                const parent_shred_count = self.nodes.items[pi].shred_count;
+                const parent_shred_start = self.nodes.items[pi].shredStart;
+                const parent_shred_count = self.nodes.items[pi].shredCount;
                 const children = @min(self.fanout, num_peers - peer_idx);
 
                 // Set children metadata on parent
-                self.nodes.items[pi].children_start = @intCast(self.nodes.items.len);
-                self.nodes.items[pi].children_count = @intCast(children);
+                self.nodes.items[pi].childrenStart = @intCast(self.nodes.items.len);
+                self.nodes.items[pi].childrenCount = @intCast(children);
 
                 // Divide parent's shreds among children
                 const shreds_per_child = if (children > 0) parent_shred_count / children else 0;
@@ -674,12 +674,12 @@ pub const PropagationTree = struct {
                         shreds_per_child;
 
                     try self.nodes.append(self.allocator, .{
-                        .peer_index = peer_idx,
+                        .peerIndex = peer_idx,
                         .layer = @intCast(layer),
-                        .children_start = 0,
-                        .children_count = 0,
-                        .shred_start = shred_offset,
-                        .shred_count = this_shred_count,
+                        .childrenStart = 0,
+                        .childrenCount = 0,
+                        .shredStart = shred_offset,
+                        .shredCount = this_shred_count,
                     });
                     shred_offset += this_shred_count;
                     peer_idx += 1;
@@ -691,21 +691,21 @@ pub const PropagationTree = struct {
     }
 
     /// Get the shred range that a specific peer should forward.
-    pub fn getShredAssignment(self: *const Self, peer_index: u32) ?struct { start: u32, count: u32 } {
+    pub fn getShredAssignment(self: *const Self, peerIndex: u32) ?struct { start: u32, count: u32 } {
         for (self.nodes.items) |node| {
-            if (node.peer_index == peer_index) {
-                return .{ .start = node.shred_start, .count = node.shred_count };
+            if (node.peerIndex == peerIndex) {
+                return .{ .start = node.shredStart, .count = node.shredCount };
             }
         }
         return null;
     }
 
     /// Get children of a specific peer in the tree.
-    pub fn getChildren(self: *const Self, peer_index: u32) []const TreeNode {
+    pub fn getChildren(self: *const Self, peerIndex: u32) []const TreeNode {
         for (self.nodes.items) |node| {
-            if (node.peer_index == peer_index and node.children_count > 0) {
-                const start = node.children_start;
-                const end = start + node.children_count;
+            if (node.peerIndex == peerIndex and node.childrenCount > 0) {
+                const start = node.childrenStart;
+                const end = start + node.childrenCount;
                 if (end <= self.nodes.items.len) {
                     return self.nodes.items[start..end];
                 }
@@ -723,19 +723,19 @@ pub const TurbineEngine = struct {
 
     // Striped lock design: collectors are sharded by block_number % STRIPE_COUNT
     // so that shreds for different blocks never contend on the same lock.
-    collector_stripes: [STRIPE_COUNT]CollectorStripe,
+    collectorStripes: [STRIPE_COUNT]CollectorStripe,
 
     // Stats (atomics for thread-safe updates across stripes)
-    blocks_shredded: std.atomic.Value(u64),
-    blocks_reconstructed: std.atomic.Value(u64),
-    shreds_sent: std.atomic.Value(u64),
-    shreds_received: std.atomic.Value(u64),
-    reconstruction_failures: std.atomic.Value(u64),
-    corrupted_shreds: std.atomic.Value(u64),
+    blocksShredded: std.atomic.Value(u64),
+    blocksReconstructed: std.atomic.Value(u64),
+    shredsSent: std.atomic.Value(u64),
+    shredsReceived: std.atomic.Value(u64),
+    reconstructionFailures: std.atomic.Value(u64),
+    corruptedShreds: std.atomic.Value(u64),
 
     const CollectorStripe = struct {
         collectors: std.AutoHashMap(u64, *ShredCollector),
-        lock: std.Thread.Mutex,
+        mutex: std.Thread.Mutex,
     };
 
     const Self = @This();
@@ -745,25 +745,25 @@ pub const TurbineEngine = struct {
         for (&stripes) |*s| {
             s.* = .{
                 .collectors = std.AutoHashMap(u64, *ShredCollector).init(allocator),
-                .lock = .{},
+                .mutex = .{},
             };
         }
 
         return Self{
             .allocator = allocator,
             .tree = PropagationTree.init(allocator),
-            .collector_stripes = stripes,
-            .blocks_shredded = std.atomic.Value(u64).init(0),
-            .blocks_reconstructed = std.atomic.Value(u64).init(0),
-            .shreds_sent = std.atomic.Value(u64).init(0),
-            .shreds_received = std.atomic.Value(u64).init(0),
-            .reconstruction_failures = std.atomic.Value(u64).init(0),
-            .corrupted_shreds = std.atomic.Value(u64).init(0),
+            .collectorStripes = stripes,
+            .blocksShredded = std.atomic.Value(u64).init(0),
+            .blocksReconstructed = std.atomic.Value(u64).init(0),
+            .shredsSent = std.atomic.Value(u64).init(0),
+            .shredsReceived = std.atomic.Value(u64).init(0),
+            .reconstructionFailures = std.atomic.Value(u64).init(0),
+            .corruptedShreds = std.atomic.Value(u64).init(0),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        for (&self.collector_stripes) |*stripe| {
+        for (&self.collectorStripes) |*stripe| {
             var it = stripe.collectors.iterator();
             while (it.next()) |entry| {
                 entry.value_ptr.*.deinit();
@@ -774,61 +774,61 @@ pub const TurbineEngine = struct {
         self.tree.deinit();
     }
 
-    fn getStripe(self: *Self, block_number: u64) *CollectorStripe {
-        return &self.collector_stripes[@intCast(block_number % STRIPE_COUNT)];
+    fn getStripe(self: *Self, blockNumber: u64) *CollectorStripe {
+        return &self.collectorStripes[@intCast(blockNumber % STRIPE_COUNT)];
     }
 
     /// Shred a block into data + parity shreds with Reed-Solomon encoding.
     /// Each shred includes a CRC32 integrity tag for corruption detection.
-    pub fn shredBlock(self: *Self, block_data: []const u8, block_number: u64, signature: [64]u8) ![]Shred {
+    pub fn shredBlock(self: *Self, block_data: []const u8, blockNumber: u64, signature: [64]u8) ![]Shred {
         if (block_data.len > MAX_BLOCK_SIZE) return error.BlockTooLarge;
         if (block_data.len == 0) return error.EmptyBlock;
 
-        const data_shreds = @as(u32, @intCast(@divTrunc(block_data.len + MAX_SHRED_PAYLOAD - 1, MAX_SHRED_PAYLOAD)));
-        const parity_shreds = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(data_shreds)) * DEFAULT_PARITY_RATIO)));
-        const total_shreds = data_shreds + parity_shreds;
+        const dataShreds = @as(u32, @intCast(@divTrunc(block_data.len + MAX_SHRED_PAYLOAD - 1, MAX_SHRED_PAYLOAD)));
+        const parityShreds = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(dataShreds)) * DEFAULT_PARITY_RATIO)));
+        const totalShreds = dataShreds + parityShreds;
 
-        const shard_bufs = try self.allocator.alloc([]u8, total_shreds);
+        const shard_bufs = try self.allocator.alloc([]u8, totalShreds);
         defer {
             for (shard_bufs) |buf| self.allocator.free(buf);
             self.allocator.free(shard_bufs);
         }
 
-        for (0..total_shreds) |i| {
+        for (0..totalShreds) |i| {
             shard_bufs[i] = try self.allocator.alloc(u8, MAX_SHRED_PAYLOAD);
             @memset(shard_bufs[i], 0);
         }
 
-        for (0..data_shreds) |i| {
+        for (0..dataShreds) |i| {
             const offset = i * MAX_SHRED_PAYLOAD;
             const end = @min(offset + MAX_SHRED_PAYLOAD, block_data.len);
             const copy_len = end - offset;
             @memcpy(shard_bufs[i][0..copy_len], block_data[offset..end]);
         }
 
-        const rs = ReedSolomon.init(data_shreds, parity_shreds);
+        const rs = ReedSolomon.init(dataShreds, parityShreds);
         rs.encode(shard_bufs);
 
-        const shreds = try self.allocator.alloc(Shred, total_shreds);
-        for (0..total_shreds) |i| {
+        const shreds = try self.allocator.alloc(Shred, totalShreds);
+        for (0..totalShreds) |i| {
             const payload_copy = try self.allocator.dupe(u8, shard_bufs[i]);
             shreds[i] = .{
-                .block_number = block_number,
-                .shred_index = @intCast(i),
-                .total_data_shreds = data_shreds,
-                .total_parity_shreds = parity_shreds,
-                .shred_type = if (i < data_shreds) .Data else .Parity,
+                .blockNumber = blockNumber,
+                .shredIndex = @intCast(i),
+                .totalDataShreds = dataShreds,
+                .totalParityShreds = parityShreds,
+                .shredType = if (i < dataShreds) .Data else .Parity,
                 .payload = payload_copy,
-                .producer_signature = signature,
-                .thread_id = 0,
+                .producerSignature = signature,
+                .threadId = 0,
                 .crc32 = 0, // Populated below
             };
             // Compute CRC32 integrity tag
             shreds[i].crc32 = shreds[i].computeCrc();
         }
 
-        _ = self.blocks_shredded.fetchAdd(1, .monotonic);
-        _ = self.shreds_sent.fetchAdd(total_shreds, .monotonic);
+        _ = self.blocksShredded.fetchAdd(1, .monotonic);
+        _ = self.shredsSent.fetchAdd(totalShreds, .monotonic);
 
         return shreds;
     }
@@ -846,24 +846,24 @@ pub const TurbineEngine = struct {
     pub fn receiveShred(self: *Self, shred: *const Shred) !?[]u8 {
         // CRC integrity check BEFORE acquiring any lock
         if (!shred.verifyCrc()) {
-            _ = self.corrupted_shreds.fetchAdd(1, .monotonic);
+            _ = self.corruptedShreds.fetchAdd(1, .monotonic);
             return null;
         }
 
-        const stripe = self.getStripe(shred.block_number);
-        stripe.lock.lock();
-        defer stripe.lock.unlock();
+        const stripe = self.getStripe(shred.blockNumber);
+        stripe.mutex.lock();
+        defer stripe.mutex.unlock();
 
-        _ = self.shreds_received.fetchAdd(1, .monotonic);
+        _ = self.shredsReceived.fetchAdd(1, .monotonic);
 
-        const entry = try stripe.collectors.getOrPut(shred.block_number);
+        const entry = try stripe.collectors.getOrPut(shred.blockNumber);
         if (!entry.found_existing) {
             const collector = try self.allocator.create(ShredCollector);
             collector.* = try ShredCollector.init(
                 self.allocator,
-                shred.block_number,
-                shred.total_data_shreds,
-                shred.total_parity_shreds,
+                shred.blockNumber,
+                shred.totalDataShreds,
+                shred.totalParityShreds,
                 MAX_SHRED_PAYLOAD,
             );
             entry.value_ptr.* = collector;
@@ -872,16 +872,16 @@ pub const TurbineEngine = struct {
 
         if (collector.insertShred(shred)) {
             const block_data = collector.reconstruct() catch |err| {
-                _ = self.reconstruction_failures.fetchAdd(1, .monotonic);
-                log.debug("Turbine reconstruction failed for block {}: {}\n", .{ shred.block_number, err });
+                _ = self.reconstructionFailures.fetchAdd(1, .monotonic);
+                log.debug("Turbine reconstruction failed for block {}: {}\n", .{ shred.blockNumber, err });
                 return null;
             };
 
-            _ = self.blocks_reconstructed.fetchAdd(1, .monotonic);
+            _ = self.blocksReconstructed.fetchAdd(1, .monotonic);
 
             collector.deinit();
             self.allocator.destroy(collector);
-            _ = stripe.collectors.remove(shred.block_number);
+            _ = stripe.collectors.remove(shred.blockNumber);
 
             return block_data;
         }
@@ -896,9 +896,9 @@ pub const TurbineEngine = struct {
 
     /// Clean up collectors for blocks older than `before_block`.
     pub fn pruneCollectors(self: *Self, before_block: u64) void {
-        for (&self.collector_stripes) |*stripe| {
-            stripe.lock.lock();
-            defer stripe.lock.unlock();
+        for (&self.collectorStripes) |*stripe| {
+            stripe.mutex.lock();
+            defer stripe.mutex.unlock();
 
             var to_remove = std.ArrayListUnmanaged(u64){};
             defer to_remove.deinit(self.allocator);
@@ -921,28 +921,28 @@ pub const TurbineEngine = struct {
     }
 
     pub const TurbineStats = struct {
-        blocks_shredded: u64,
-        blocks_reconstructed: u64,
-        shreds_sent: u64,
-        shreds_received: u64,
-        reconstruction_failures: u64,
-        corrupted_shreds: u64,
-        active_collectors: u32,
+        blocksShredded: u64,
+        blocksReconstructed: u64,
+        shredsSent: u64,
+        shredsReceived: u64,
+        reconstructionFailures: u64,
+        corruptedShreds: u64,
+        activeCollectors: u32,
     };
 
     pub fn getStats(self: *const Self) TurbineStats {
         var active: u32 = 0;
-        for (&self.collector_stripes) |*stripe| {
+        for (&self.collectorStripes) |*stripe| {
             active += @intCast(stripe.collectors.count());
         }
         return .{
-            .blocks_shredded = self.blocks_shredded.load(.acquire),
-            .blocks_reconstructed = self.blocks_reconstructed.load(.acquire),
-            .shreds_sent = self.shreds_sent.load(.acquire),
-            .shreds_received = self.shreds_received.load(.acquire),
-            .reconstruction_failures = self.reconstruction_failures.load(.acquire),
-            .corrupted_shreds = self.corrupted_shreds.load(.acquire),
-            .active_collectors = active,
+            .blocksShredded = self.blocksShredded.load(.acquire),
+            .blocksReconstructed = self.blocksReconstructed.load(.acquire),
+            .shredsSent = self.shredsSent.load(.acquire),
+            .shredsReceived = self.shredsReceived.load(.acquire),
+            .reconstructionFailures = self.reconstructionFailures.load(.acquire),
+            .corruptedShreds = self.corruptedShreds.load(.acquire),
+            .activeCollectors = active,
         };
     }
 };
@@ -1078,14 +1078,14 @@ test "Reed-Solomon decode with data shard loss" {
 test "Shred CRC integrity" {
     const payload = [_]u8{ 1, 2, 3, 4, 5 };
     var shred = Shred{
-        .block_number = 42,
-        .shred_index = 7,
-        .total_data_shreds = 10,
-        .total_parity_shreds = 3,
-        .shred_type = .Data,
+        .blockNumber = 42,
+        .shredIndex = 7,
+        .totalDataShreds = 10,
+        .totalParityShreds = 3,
+        .shredType = .Data,
         .payload = &payload,
-        .producer_signature = [_]u8{0} ** 64,
-        .thread_id = 0,
+        .producerSignature = [_]u8{0} ** 64,
+        .threadId = 0,
         .crc32 = 0,
     };
     shred.crc32 = shred.computeCrc();
@@ -1094,7 +1094,7 @@ test "Shred CRC integrity" {
     try std.testing.expect(shred.verifyCrc());
 
     // Tamper with block_number — CRC should fail
-    shred.block_number = 99;
+    shred.blockNumber = 99;
     try std.testing.expect(!shred.verifyCrc());
 }
 
@@ -1107,12 +1107,12 @@ test "ShredBufferPool acquire and release" {
     var bufs: [4][]u8 = undefined;
     for (0..4) |i| bufs[i] = try pool.acquire();
 
-    try std.testing.expectEqual(@as(u64, 4), pool.pool_hits);
-    try std.testing.expectEqual(@as(u64, 0), pool.pool_misses);
+    try std.testing.expectEqual(@as(u64, 4), pool.poolHits);
+    try std.testing.expectEqual(@as(u64, 0), pool.poolMisses);
 
     // Next acquire should grow the pool
     const extra = try pool.acquire();
-    try std.testing.expectEqual(@as(u64, 1), pool.pool_misses);
+    try std.testing.expectEqual(@as(u64, 1), pool.poolMisses);
 
     // Release all
     for (&bufs) |b| pool.release(b);
@@ -1162,6 +1162,6 @@ test "PropagationTree fanout" {
     try std.testing.expect(tree.nodes.items.len > 0);
     try std.testing.expectEqual(@as(u8, 0), tree.nodes.items[0].layer);
 
-    // Root should have shred_count == total
-    try std.testing.expectEqual(@as(u32, 100), tree.nodes.items[0].shred_count);
+    // Root should have shredCount == total
+    try std.testing.expectEqual(@as(u32, 100), tree.nodes.items[0].shredCount);
 }

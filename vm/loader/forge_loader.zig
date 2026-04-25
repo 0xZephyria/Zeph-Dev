@@ -57,7 +57,7 @@ pub const Elf32Header = extern struct {
 
 pub const Elf32ProgramHeader = extern struct {
     p_type:   u32,
-    p_offset: u32,
+    pOffset: u32,
     p_vaddr:  u32,
     p_paddr:  u32,
     p_filesz: u32,
@@ -81,7 +81,7 @@ pub const Elf32SectionHeader = extern struct {
 
 // ---------------------------------------------------------------------------
 // ELF64 structures
-// NOTE: In ELF64 program headers p_flags is at offset 4 (before p_offset),
+// NOTE: In ELF64 program headers p_flags is at offset 4 (before pOffset),
 // which differs from ELF32 where p_flags is at offset 24 (after p_memsz).
 // ---------------------------------------------------------------------------
 
@@ -104,8 +104,8 @@ pub const Elf64Header = extern struct {
 
 pub const Elf64ProgramHeader = extern struct {
     p_type:   u32,
-    p_flags:  u32, // NOTE: before p_offset in ELF64
-    p_offset: u64,
+    p_flags:  u32, // NOTE: before pOffset in ELF64
+    pOffset: u64,
     p_vaddr:  u64,
     p_paddr:  u64,
     p_filesz: u64,
@@ -151,13 +151,13 @@ pub const LoadSegment = struct {
 };
 
 pub const ElfBinary = struct {
-    entry_point:   u32,
+    entryPoint:   u32,
     code:          []const u8,
-    init_data:     []const u8,
-    code_vaddr:    u32,
-    data_vaddr:    u32,
+    initData:     []const u8,
+    codeVaddr:    u32,
+    dataVaddr:    u32,
     segments:      [8]LoadSegment,
-    segment_count: u8,
+    segmentCount: u8,
 };
 
 // ---------------------------------------------------------------------------
@@ -189,41 +189,41 @@ fn parse32(data: []const u8) ParseError!ElfBinary {
     if (hdr.e_machine != EM_RISCV) return ParseError.NotRiscV;
 
     var result = ElfBinary{
-        .entry_point   = hdr.e_entry,
+        .entryPoint   = hdr.e_entry,
         .code          = &[_]u8{},
-        .init_data     = &[_]u8{},
-        .code_vaddr    = 0,
-        .data_vaddr    = 0,
+        .initData     = &[_]u8{},
+        .codeVaddr    = 0,
+        .dataVaddr    = 0,
         .segments      = undefined,
-        .segment_count = 0,
+        .segmentCount = 0,
     };
 
     if (hdr.e_phnum > 0 and hdr.e_phoff > 0) {
         var i: u16 = 0;
-        while (i < hdr.e_phnum and result.segment_count < 8) : (i += 1) {
+        while (i < hdr.e_phnum and result.segmentCount < 8) : (i += 1) {
             const ph_off = hdr.e_phoff + @as(u32, i) * @as(u32, hdr.e_phentsize);
             if (ph_off + @sizeOf(Elf32ProgramHeader) > data.len) break;
             const ph: *align(1) const Elf32ProgramHeader =
                 @ptrCast(data[ph_off..][0..@sizeOf(Elf32ProgramHeader)].ptr);
             if (ph.p_type != PT_LOAD or ph.p_filesz == 0) continue;
-            const seg_end = ph.p_offset + ph.p_filesz;
+            const seg_end = ph.pOffset + ph.p_filesz;
             if (seg_end > data.len) return ParseError.InvalidFormat;
             const exec = (ph.p_flags & PF_X) != 0;
             const writ = (ph.p_flags & PF_W) != 0;
-            result.segments[result.segment_count] = .{
+            result.segments[result.segmentCount] = .{
                 .vaddr      = ph.p_vaddr,
-                .data       = data[ph.p_offset..seg_end],
+                .data       = data[ph.pOffset..seg_end],
                 .memsz      = ph.p_memsz,
                 .writable   = writ,
                 .executable = exec,
             };
-            result.segment_count += 1;
+            result.segmentCount += 1;
             if (exec and result.code.len == 0) {
-                result.code       = data[ph.p_offset..seg_end];
-                result.code_vaddr = ph.p_vaddr;
-            } else if (!exec and result.init_data.len == 0) {
-                result.init_data  = data[ph.p_offset..seg_end];
-                result.data_vaddr = ph.p_vaddr;
+                result.code       = data[ph.pOffset..seg_end];
+                result.codeVaddr = ph.p_vaddr;
+            } else if (!exec and result.initData.len == 0) {
+                result.initData  = data[ph.pOffset..seg_end];
+                result.dataVaddr = ph.p_vaddr;
             }
         }
     }
@@ -243,11 +243,11 @@ fn parse32(data: []const u8) ParseError!ElfBinary {
             if (sec_end > data.len) return ParseError.InvalidFormat;
             if (std.mem.eql(u8, name, ".text")) {
                 result.code       = data[sh.sh_offset..sec_end];
-                result.code_vaddr = sh.sh_addr;
+                result.codeVaddr = sh.sh_addr;
             } else if (std.mem.eql(u8, name, ".data") or std.mem.eql(u8, name, ".rodata")) {
-                if (result.init_data.len == 0) {
-                    result.init_data  = data[sh.sh_offset..sec_end];
-                    result.data_vaddr = sh.sh_addr;
+                if (result.initData.len == 0) {
+                    result.initData  = data[sh.sh_offset..sec_end];
+                    result.dataVaddr = sh.sh_addr;
                 }
             }
         }
@@ -269,50 +269,50 @@ fn parse64(data: []const u8) ParseError!ElfBinary {
     if (hdr.e_entry > std.math.maxInt(u32)) return ParseError.TooLarge;
 
     var result = ElfBinary{
-        .entry_point   = @truncate(hdr.e_entry),
+        .entryPoint   = @truncate(hdr.e_entry),
         .code          = &[_]u8{},
-        .init_data     = &[_]u8{},
-        .code_vaddr    = 0,
-        .data_vaddr    = 0,
+        .initData     = &[_]u8{},
+        .codeVaddr    = 0,
+        .dataVaddr    = 0,
         .segments      = undefined,
-        .segment_count = 0,
+        .segmentCount = 0,
     };
 
     if (hdr.e_phnum > 0 and hdr.e_phoff > 0) {
         var i: u16 = 0;
-        while (i < hdr.e_phnum and result.segment_count < 8) : (i += 1) {
+        while (i < hdr.e_phnum and result.segmentCount < 8) : (i += 1) {
             const ph_off64 = hdr.e_phoff + @as(u64, i) * @as(u64, hdr.e_phentsize);
             if (ph_off64 + @sizeOf(Elf64ProgramHeader) > data.len) break;
             const ph_off: usize = @intCast(ph_off64);
             const ph: *align(1) const Elf64ProgramHeader =
                 @ptrCast(data[ph_off..][0..@sizeOf(Elf64ProgramHeader)].ptr);
             if (ph.p_type != PT_LOAD or ph.p_filesz == 0) continue;
-            if (ph.p_vaddr  > sandbox.MEMORY_SIZE) return ParseError.TooLarge;
-            if (ph.p_filesz > sandbox.MEMORY_SIZE) return ParseError.TooLarge;
-            if (ph.p_memsz  > sandbox.MEMORY_SIZE) return ParseError.TooLarge;
-            if (ph.p_offset > data.len)             return ParseError.InvalidFormat;
-            const p_off: usize  = @intCast(ph.p_offset);
-            const p_fsz: usize  = @intCast(ph.p_filesz);
-            const seg_end = p_off + p_fsz;
+            if (ph.p_vaddr  > sandbox.memorySize) return ParseError.TooLarge;
+            if (ph.p_filesz > sandbox.memorySize) return ParseError.TooLarge;
+            if (ph.p_memsz  > sandbox.memorySize) return ParseError.TooLarge;
+            if (ph.pOffset > data.len)             return ParseError.InvalidFormat;
+            const pOff: usize  = @intCast(ph.pOffset);
+            const pFsz: usize  = @intCast(ph.p_filesz);
+            const seg_end = pOff + pFsz;
             if (seg_end > data.len) return ParseError.InvalidFormat;
             const exec: bool = (ph.p_flags & PF_X) != 0;
             const writ: bool = (ph.p_flags & PF_W) != 0;
             const vaddr32: u32 = @truncate(ph.p_vaddr);
             const memsz32: u32 = @truncate(ph.p_memsz);
-            result.segments[result.segment_count] = .{
+            result.segments[result.segmentCount] = .{
                 .vaddr      = vaddr32,
-                .data       = data[p_off..seg_end],
+                .data       = data[pOff..seg_end],
                 .memsz      = memsz32,
                 .writable   = writ,
                 .executable = exec,
             };
-            result.segment_count += 1;
+            result.segmentCount += 1;
             if (exec and result.code.len == 0) {
-                result.code       = data[p_off..seg_end];
-                result.code_vaddr = vaddr32;
-            } else if (!exec and result.init_data.len == 0) {
-                result.init_data  = data[p_off..seg_end];
-                result.data_vaddr = vaddr32;
+                result.code       = data[pOff..seg_end];
+                result.codeVaddr = vaddr32;
+            } else if (!exec and result.initData.len == 0) {
+                result.initData  = data[pOff..seg_end];
+                result.dataVaddr = vaddr32;
             }
         }
     }
@@ -328,7 +328,7 @@ fn parse64(data: []const u8) ParseError!ElfBinary {
             const sh: *align(1) const Elf64SectionHeader =
                 @ptrCast(data[sh_off..][0..@sizeOf(Elf64SectionHeader)].ptr);
             if (sh.sh_type != SHT_PROGBITS or sh.sh_size == 0) continue;
-            if (sh.sh_size   > sandbox.MEMORY_SIZE) return ParseError.TooLarge;
+            if (sh.sh_size   > sandbox.memorySize) return ParseError.TooLarge;
             if (sh.sh_offset > data.len)             return ParseError.InvalidFormat;
             const name = getSectionName(data, strtab, sh.sh_name) orelse continue;
             const sec_off: usize  = @intCast(sh.sh_offset);
@@ -337,11 +337,11 @@ fn parse64(data: []const u8) ParseError!ElfBinary {
             if (sec_end > data.len) return ParseError.InvalidFormat;
             if (std.mem.eql(u8, name, ".text")) {
                 result.code       = data[sec_off..sec_end];
-                result.code_vaddr = @truncate(sh.sh_addr);
+                result.codeVaddr = @truncate(sh.sh_addr);
             } else if (std.mem.eql(u8, name, ".data") or std.mem.eql(u8, name, ".rodata")) {
-                if (result.init_data.len == 0) {
-                    result.init_data  = data[sec_off..sec_end];
-                    result.data_vaddr = @truncate(sh.sh_addr);
+                if (result.initData.len == 0) {
+                    result.initData  = data[sec_off..sec_end];
+                    result.dataVaddr = @truncate(sh.sh_addr);
                 }
             }
         }
@@ -454,7 +454,7 @@ test "ELF struct layout: Elf32ProgramHeader is 32 bytes" {
 test "ELF64 p_flags at offset 4 in program header (ELF spec)" {
     // Critical: p_flags is at byte 4 in ELF64 phdrs (differs from ELF32).
     try testing.expectEqual(@as(usize, 4), @offsetOf(Elf64ProgramHeader, "p_flags"));
-    try testing.expectEqual(@as(usize, 8), @offsetOf(Elf64ProgramHeader, "p_offset"));
+    try testing.expectEqual(@as(usize, 8), @offsetOf(Elf64ProgramHeader, "pOffset"));
 }
 
 test "ELF32 p_flags at offset 24 in program header" {

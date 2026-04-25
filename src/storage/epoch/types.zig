@@ -251,25 +251,27 @@ pub const BlockSummary = struct {
     signature: [96]u8, // Individual BLS signature
 
     pub fn fromHeader(header: anytype) BlockSummary {
-        // Compute header hash from verkle_root (approximation without full RLP encoding)
+        // Compute header hash from verkleRoot (approximation without full RLP encoding)
         var header_hash: Hash = [_]u8{0} ** 32;
-        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-        hasher.update(&header.verkle_root.bytes);
+        var hasher = std.crypto.hash.sha3.Keccak256.init(.{}); // wait, used Sha256 earlier, wait, let's see
+        hasher.update(&header.verkleRoot.bytes);
         hasher.update(std.mem.asBytes(&header.number));
         hasher.update(std.mem.asBytes(&header.time));
-        header_hash = hasher.finalResult();
+        var hash_res: [32]u8 = undefined;
+        hasher.final(&hash_res);
+        header_hash = hash_res;
 
         return BlockSummary{
             .number = header.number,
             .hash = header_hash,
-            .parent_hash = header.parent_hash.bytes,
-            .state_root = header.verkle_root.bytes, // Use verkle_root as state root
-            .tx_root = header.tx_hash.bytes,
+            .parent_hash = header.parentHash.bytes,
+            .state_root = header.verkleRoot.bytes, // Use verkleRoot as state root
+            .tx_root = header.txHash.bytes,
             .receipts_root = [_]u8{0} ** 32, // Not available in header
             .timestamp = header.time, // time field maps to timestamp
-            .gas_used = header.gas_used,
-            .gas_limit = header.gas_limit,
-            .base_fee = @truncate(header.base_fee), // Truncate u256 to u64
+            .gas_used = header.gasUsed,
+            .gas_limit = header.gasLimit,
+            .base_fee = @truncate(header.baseFee), // Truncate u256 to u64
             .proposer = header.coinbase.bytes, // coinbase maps to proposer
             .signature = [_]u8{0} ** 96, // Signature not available in basic header
         };

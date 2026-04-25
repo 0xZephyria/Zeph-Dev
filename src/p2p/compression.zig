@@ -29,16 +29,16 @@ const HASH_SIZE: usize = 1 << HASH_BITS;
 // ── Statistics ──────────────────────────────────────────────────────────
 
 pub const CompressionStats = struct {
-    total_uncompressed: u64,
-    total_compressed: u64,
-    compression_calls: u64,
-    decompression_calls: u64,
-    raw_fallbacks: u64,
+    totalUncompressed: u64,
+    totalCompressed: u64,
+    compressionCalls: u64,
+    decompressionCalls: u64,
+    rawFallbacks: u64,
 
     pub fn ratio(self: *const CompressionStats) f64 {
-        if (self.total_uncompressed == 0) return 1.0;
-        return @as(f64, @floatFromInt(self.total_compressed)) /
-            @as(f64, @floatFromInt(self.total_uncompressed));
+        if (self.totalUncompressed == 0) return 1.0;
+        return @as(f64, @floatFromInt(self.totalCompressed)) /
+            @as(f64, @floatFromInt(self.totalUncompressed));
     }
 };
 
@@ -54,11 +54,11 @@ pub const Compressor = struct {
         return Self{
             .allocator = allocator,
             .stats = .{
-                .total_uncompressed = 0,
-                .total_compressed = 0,
-                .compression_calls = 0,
-                .decompression_calls = 0,
-                .raw_fallbacks = 0,
+                .totalUncompressed = 0,
+                .totalCompressed = 0,
+                .compressionCalls = 0,
+                .decompressionCalls = 0,
+                .rawFallbacks = 0,
             },
         };
     }
@@ -99,9 +99,9 @@ pub const Compressor = struct {
 
         const total_len = HEADER_SIZE + compressed_len;
 
-        self.stats.total_uncompressed += data.len;
-        self.stats.total_compressed += total_len;
-        self.stats.compression_calls += 1;
+        self.stats.totalUncompressed += data.len;
+        self.stats.totalCompressed += total_len;
+        self.stats.compressionCalls += 1;
 
         // Shrink allocation to actual size
         if (self.allocator.resize(out_buf, total_len)) {
@@ -121,7 +121,7 @@ pub const Compressor = struct {
 
         if (data.len < 4) return error.CorruptData;
 
-        self.stats.decompression_calls += 1;
+        self.stats.decompressionCalls += 1;
 
         // Check for raw-framed data
         if (std.mem.eql(u8, data[0..4], &RAW_MAGIC)) {
@@ -164,10 +164,10 @@ pub const Compressor = struct {
         std.mem.writeInt(u32, result[4..8], @intCast(data.len), .little);
         @memcpy(result[8..], data);
 
-        self.stats.total_uncompressed += data.len;
-        self.stats.total_compressed += result.len;
-        self.stats.compression_calls += 1;
-        self.stats.raw_fallbacks += 1;
+        self.stats.totalUncompressed += data.len;
+        self.stats.totalCompressed += result.len;
+        self.stats.compressionCalls += 1;
+        self.stats.rawFallbacks += 1;
 
         return result;
     }

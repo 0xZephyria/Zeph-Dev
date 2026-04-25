@@ -1,9 +1,22 @@
+# environment
 node_data/
 zig-out/
 .zig-cache/
+
+# object files
 *.o
+
+# logs
 node.log
 node.pid
+
+# dependencies
 node_modules/
 .DS_Store
+
+# artifacts
 tests/artifacts/
+
+# fozbin and resolved files
+*.fozbin
+*.resolved

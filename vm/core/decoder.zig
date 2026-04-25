@@ -7,23 +7,23 @@
 
 /// Decoded instruction — one of 7 format variants.
 pub const Instruction = union(Tag) {
-    r_type: RType,
-    i_type: IType,
-    s_type: SType,
-    b_type: BType,
-    u_type: UType,
-    j_type: JType,
+    rType: RType,
+    iType: IType,
+    sType: SType,
+    bType: BType,
+    uType: UType,
+    jType: JType,
     system: SystemOp,
     /// Forge ZEPH custom instruction (CUSTOM_0..3 opcode space)
     custom: CustomType,
 
     pub const Tag = enum {
-        r_type,
-        i_type,
-        s_type,
-        b_type,
-        u_type,
-        j_type,
+        rType,
+        iType,
+        sType,
+        bType,
+        uType,
+        jType,
         system,
         custom,
     };
@@ -40,7 +40,7 @@ pub const RType = struct {
     rs2: u5,
     funct3: u3,
     funct7: u7,
-    word_op: bool,
+    wordOp: bool,
 };
 
 /// I-type: immediate operations (ADDI, SLTI, ANDI, loads, JALR, shifts)
@@ -49,7 +49,7 @@ pub const IType = struct {
     rs1: u5,
     funct3: u3,
     imm: i64, // sign-extended 12-bit immediate
-    word_op: bool,
+    wordOp: bool,
 };
 
 /// S-type: stores (SB, SH, SW)
@@ -88,7 +88,7 @@ pub const JType = struct {
 ///   op_val = @intFromEnum(ZephCustomOp) from compiler riscv.zig
 pub const CustomType = struct {
     /// The full ZephCustomOp value (0x00-0x37), as emitted by the compiler.
-    op_val: u8,
+    opVal: u8,
     // Arguments come from registers a0-a5 (x10-x15) per ZEPH ABI.
     // The instruction itself does not carry rs1/rs2 that the executor uses.
 };
@@ -229,15 +229,15 @@ fn decodeR(word: u32) DecodeError!Instruction {
     const funct3: u3 = @truncate((word >> 12) & 0x7);
     const funct7: u7 = @truncate((word >> 25) & 0x7F);
     const opcode: u7 = @truncate(word & 0x7F);
-    const word_op = (opcode == Opcode.OP_32);
+    const wordOp = (opcode == Opcode.OP_32);
 
-    return .{ .r_type = .{
+    return .{ .rType = .{
         .rd = rd,
         .rs1 = rs1,
         .rs2 = rs2,
         .funct3 = funct3,
         .funct7 = funct7,
-        .word_op = word_op,
+        .wordOp = wordOp,
     } };
 }
 
@@ -245,16 +245,16 @@ fn decodeI(word: u32, opcode: u7) DecodeError!Instruction {
     const rd = extractReg(word, 7).?; // RV64IM: all 32 regs valid
     const rs1 = extractReg(word, 15).?; // RV64IM: all 32 regs valid
     const funct3: u3 = @truncate((word >> 12) & 0x7);
-    const imm_raw: u32 = word >> 20; // bits [31:20]
-    const imm = signExtend(imm_raw, 12);
-    const word_op = (opcode == Opcode.OP_IMM_32);
+    const immRaw: u32 = word >> 20; // bits [31:20]
+    const imm = signExtend(immRaw, 12);
+    const wordOp = (opcode == Opcode.OP_IMM_32);
 
-    return .{ .i_type = .{
+    return .{ .iType = .{
         .rd = rd,
         .rs1 = rs1,
         .funct3 = funct3,
         .imm = imm,
-        .word_op = word_op,
+        .wordOp = wordOp,
     } };
 }
 
@@ -262,12 +262,12 @@ fn decodeS(word: u32) DecodeError!Instruction {
     const rs1 = extractReg(word, 15).?; // RV64IM: all 32 regs valid
     const rs2 = extractReg(word, 20).?; // RV64IM: all 32 regs valid
     const funct3: u3 = @truncate((word >> 12) & 0x7);
-    const imm_lo: u32 = (word >> 7) & 0x1F; // bits [11:7] → imm[4:0]
-    const imm_hi: u32 = (word >> 25) & 0x7F; // bits [31:25] → imm[11:5]
-    const imm_raw = (imm_hi << 5) | imm_lo;
-    const imm = signExtend(imm_raw, 12);
+    const immLo: u32 = (word >> 7) & 0x1F; // bits [11:7] → imm[4:0]
+    const immHi: u32 = (word >> 25) & 0x7F; // bits [31:25] → imm[11:5]
+    const immRaw = (immHi << 5) | immLo;
+    const imm = signExtend(immRaw, 12);
 
-    return .{ .s_type = .{
+    return .{ .sType = .{
         .rs1 = rs1,
         .rs2 = rs2,
         .funct3 = funct3,
@@ -282,15 +282,15 @@ fn decodeB(word: u32) DecodeError!Instruction {
 
     // B-type immediate encoding (13-bit, bit 0 is always 0):
     // imm[12|10:5|4:1|11]
-    const bit_11: u32 = (word >> 7) & 0x1; // bit 7 → imm[11]
-    const bit_4_1: u32 = (word >> 8) & 0xF; // bits [11:8] → imm[4:1]
-    const bit_10_5: u32 = (word >> 25) & 0x3F; // bits [30:25] → imm[10:5]
-    const bit_12: u32 = (word >> 31) & 0x1; // bit 31 → imm[12] (sign)
+    const bit11: u32 = (word >> 7) & 0x1; // bit 7 → imm[11]
+    const bit41: u32 = (word >> 8) & 0xF; // bits [11:8] → imm[4:1]
+    const bit105: u32 = (word >> 25) & 0x3F; // bits [30:25] → imm[10:5]
+    const bit12: u32 = (word >> 31) & 0x1; // bit 31 → imm[12] (sign)
 
-    const imm_raw = (bit_12 << 12) | (bit_11 << 11) | (bit_10_5 << 5) | (bit_4_1 << 1);
-    const imm = signExtend(imm_raw, 13);
+    const immRaw = (bit12 << 12) | (bit11 << 11) | (bit105 << 5) | (bit41 << 1);
+    const imm = signExtend(immRaw, 13);
 
-    return .{ .b_type = .{
+    return .{ .bType = .{
         .rs1 = rs1,
         .rs2 = rs2,
         .funct3 = funct3,
@@ -303,7 +303,7 @@ fn decodeU(word: u32) DecodeError!Instruction {
     // U-type: imm[31:12] already in upper 20 bits, we keep it shifted
     const imm: i64 = @as(i64, @as(i32, @bitCast(word & 0xFFFFF000)));
 
-    return .{ .u_type = .{
+    return .{ .uType = .{
         .rd = rd,
         .imm = imm,
     } };
@@ -314,23 +314,23 @@ fn decodeJ(word: u32) DecodeError!Instruction {
 
     // J-type immediate encoding (21-bit, bit 0 is always 0):
     // imm[20|10:1|11|19:12]
-    const bit_19_12: u32 = (word >> 12) & 0xFF; // bits [19:12] → imm[19:12]
-    const bit_11: u32 = (word >> 20) & 0x1; // bit 20 → imm[11]
-    const bit_10_1: u32 = (word >> 21) & 0x3FF; // bits [30:21] → imm[10:1]
-    const bit_20: u32 = (word >> 31) & 0x1; // bit 31 → imm[20] (sign)
+    const bit1912: u32 = (word >> 12) & 0xFF; // bits [19:12] → imm[19:12]
+    const bit11: u32 = (word >> 20) & 0x1; // bit 20 → imm[11]
+    const bit101: u32 = (word >> 21) & 0x3FF; // bits [30:21] → imm[10:1]
+    const bit20: u32 = (word >> 31) & 0x1; // bit 31 → imm[20] (sign)
 
-    const imm_raw = (bit_20 << 20) | (bit_19_12 << 12) | (bit_11 << 11) | (bit_10_1 << 1);
-    const imm = signExtend(imm_raw, 21);
+    const immRaw = (bit20 << 20) | (bit1912 << 12) | (bit11 << 11) | (bit101 << 1);
+    const imm = signExtend(immRaw, 21);
 
-    return .{ .j_type = .{
+    return .{ .jType = .{
         .rd = rd,
         .imm = imm,
     } };
 }
 
 fn decodeSystem(word: u32) DecodeError!Instruction {
-    const imm_raw: u32 = (word >> 20) & 0xFFF;
-    return switch (imm_raw) {
+    const immRaw: u32 = (word >> 20) & 0xFFF;
+    return switch (immRaw) {
         0x000 => .{ .system = .ecall },
         0x001 => .{ .system = .ebreak },
         else => DecodeError.IllegalInstruction,
@@ -345,9 +345,9 @@ fn decodeSystem(word: u32) DecodeError!Instruction {
 /// The op_val is reconstructed from funct3 (upper nibble) and imm[3:0] (lower nibble).
 fn decodeCustom(word: u32) DecodeError!Instruction {
     const funct3: u8 = @truncate((word >> 12) & 0x7);
-    const imm_lo: u8 = @truncate((word >> 20) & 0xF); // lower 4 bits of imm12
-    const op_val: u8 = (funct3 << 4) | imm_lo;
-    return .{ .custom = .{ .op_val = op_val } };
+    const immLo: u8 = @truncate((word >> 20) & 0xF); // lower 4 bits of imm12
+    const opVal: u8 = (funct3 << 4) | immLo;
+    return .{ .custom = .{ .opVal = opVal } };
 }
 
 // ---------------------------------------------------------------------------
@@ -380,8 +380,8 @@ test "decode ADD x1, x2, x3" {
     // ADD x1, x2, x3:  funct7=0000000 rs2=00011 rs1=00010 funct3=000 rd=00001 opcode=0110011
     const word: u32 = 0b0000000_00011_00010_000_00001_0110011;
     const insn = try decode(word);
-    try testing.expect(insn == .r_type);
-    const r = insn.r_type;
+    try testing.expect(insn == .rType);
+    const r = insn.rType;
     try testing.expectEqual(@as(u5, 1), r.rd);
     try testing.expectEqual(@as(u5, 2), r.rs1);
     try testing.expectEqual(@as(u5, 3), r.rs2);
@@ -393,8 +393,8 @@ test "decode SUB x5, x6, x7" {
     // SUB x5, x6, x7: funct7=0100000 rs2=00111 rs1=00110 funct3=000 rd=00101 opcode=0110011
     const word: u32 = 0b0100000_00111_00110_000_00101_0110011;
     const insn = try decode(word);
-    try testing.expect(insn == .r_type);
-    const r = insn.r_type;
+    try testing.expect(insn == .rType);
+    const r = insn.rType;
     try testing.expectEqual(@as(u5, 5), r.rd);
     try testing.expectEqual(@as(u5, 6), r.rs1);
     try testing.expectEqual(@as(u5, 7), r.rs2);
@@ -405,8 +405,8 @@ test "decode ADDI x1, x2, -1" {
     // ADDI x1, x2, -1: imm=111111111111 rs1=00010 funct3=000 rd=00001 opcode=0010011
     const word: u32 = 0b111111111111_00010_000_00001_0010011;
     const insn = try decode(word);
-    try testing.expect(insn == .i_type);
-    const i = insn.i_type;
+    try testing.expect(insn == .iType);
+    const i = insn.iType;
     try testing.expectEqual(@as(u5, 1), i.rd);
     try testing.expectEqual(@as(u5, 2), i.rs1);
     try testing.expectEqual(@as(i64, -1), i.imm);
@@ -416,8 +416,8 @@ test "decode LW x10, 8(x2)" {
     // LW x10, 8(x2): imm=000000001000 rs1=00010 funct3=010 rd=01010 opcode=0000011
     const word: u32 = 0b000000001000_00010_010_01010_0000011;
     const insn = try decode(word);
-    try testing.expect(insn == .i_type);
-    const i = insn.i_type;
+    try testing.expect(insn == .iType);
+    const i = insn.iType;
     try testing.expectEqual(@as(u5, 10), i.rd);
     try testing.expectEqual(@as(u5, 2), i.rs1);
     try testing.expectEqual(@as(u3, Funct3.LW), i.funct3);
@@ -428,8 +428,8 @@ test "decode SW x5, 12(x2)" {
     // SW x5, 12(x2): imm[11:5]=0000000 rs2=00101 rs1=00010 funct3=010 imm[4:0]=01100 opcode=0100011
     const word: u32 = 0b0000000_00101_00010_010_01100_0100011;
     const insn = try decode(word);
-    try testing.expect(insn == .s_type);
-    const s = insn.s_type;
+    try testing.expect(insn == .sType);
+    const s = insn.sType;
     try testing.expectEqual(@as(u5, 2), s.rs1);
     try testing.expectEqual(@as(u5, 5), s.rs2);
     try testing.expectEqual(@as(i64, 12), s.imm);
@@ -440,8 +440,8 @@ test "decode BEQ x1, x2, +8" {
     // imm[12|10:5] = 0_000000, rs2=00010, rs1=00001, funct3=000, imm[4:1|11] = 0100_0, opcode=1100011
     const word: u32 = 0b0_000000_00010_00001_000_0100_0_1100011;
     const insn = try decode(word);
-    try testing.expect(insn == .b_type);
-    const b = insn.b_type;
+    try testing.expect(insn == .bType);
+    const b = insn.bType;
     try testing.expectEqual(@as(u5, 1), b.rs1);
     try testing.expectEqual(@as(u5, 2), b.rs2);
     try testing.expectEqual(@as(i64, 8), b.imm);
@@ -450,10 +450,10 @@ test "decode BEQ x1, x2, +8" {
 test "decode LUI x1, 0x12345" {
     // LUI x1, 0x12345: imm=0001_0010_0011_0100_0101 rd=00001 opcode=0110111
     const word: u32 = 0x12345_0B7; // 0x12345000 | (1 << 7) | 0x37
-    const imm_expected: i64 = 0x12345 << 12;
+    const immExpected: i64 = 0x12345 << 12;
     const insn = try decode(word);
-    try testing.expect(insn == .u_type);
-    try testing.expectEqual(imm_expected, insn.u_type.imm);
+    try testing.expect(insn == .uType);
+    try testing.expectEqual(immExpected, insn.uType.imm);
 }
 
 test "decode ECALL" {

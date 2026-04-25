@@ -26,15 +26,15 @@ const BLS_DST = "FORGEYRIA_BLS_DST_V01";
 
 pub const AdaptiveConfig = struct {
     /// Slots per epoch
-    slots_per_epoch: u64 = types.SLOTS_PER_EPOCH,
+    slotsPerEpoch: u64 = types.SLOTS_PER_EPOCH,
     /// Slot duration in milliseconds
-    slot_duration_ms: u64 = types.SLOT_DURATION_MS,
+    slotDurationMs: u64 = types.SLOT_DURATION_MS,
     /// View change timeout (ms)
-    view_change_timeout_ms: u64 = types.VIEW_CHANGE_TIMEOUT_MS,
+    viewChangeTimeoutMs: u64 = types.VIEW_CHANGE_TIMEOUT_MS,
     /// Max consecutive missed slots before view change
-    max_consecutive_misses: u32 = types.MAX_CONSECUTIVE_MISSES,
+    maxConsecutiveMisses: u32 = types.MAX_CONSECUTIVE_MISSES,
     /// Deferred execution depth (blocks behind consensus)
-    execution_depth: u32 = 2,
+    executionDepth: u32 = 2,
 };
 
 // ── Adaptive Consensus Engine ───────────────────────────────────────────
@@ -44,44 +44,44 @@ pub const AdaptiveConsensus = struct {
     config: AdaptiveConfig,
 
     // ── Epoch State ─────────────────────────────────────────────────
-    current_epoch: u64,
-    current_tier: types.ConsensusTier,
-    current_thread_count: u8,
-    epoch_seed: [32]u8,
-    validator_count: u32,
+    currentEpoch: u64,
+    currentTier: types.ConsensusTier,
+    currentThreadCount: u8,
+    epochSeed: [32]u8,
+    validatorCount: u32,
 
     // ── Slot State ──────────────────────────────────────────────────
-    current_slot: u64,
-    last_finalized_slot: u64,
-    consecutive_misses: u32,
+    currentSlot: u64,
+    lastFinalizedSlot: u64,
+    consecutiveMisses: u32,
 
     // ── Proposer Schedule ───────────────────────────────────────────
     /// Pre-computed proposer schedule for the current epoch (slot → proposer index)
-    proposer_schedule: std.AutoHashMap(u64, types.ProposerScheduleEntry),
+    proposerSchedule: std.AutoHashMap(u64, types.ProposerScheduleEntry),
 
     // ── Committee Manager (Tier 2) ──────────────────────────────────
-    committee_manager: committees_mod.CommitteeManager,
+    committeeManager: committees_mod.CommitteeManager,
 
     // ── QC Formation ────────────────────────────────────────────────
     /// Pending votes for the current slot: validator_index → BLS signature
-    pending_votes: std.AutoHashMap(u32, [96]u8),
-    pending_vote_stake: u64,
-    total_voting_stake: u64,
+    pendingVotes: std.AutoHashMap(u32, [96]u8),
+    pendingVoteStake: u64,
+    totalVotingStake: u64,
 
     // ── Thread Certificates ─────────────────────────────────────────
     /// Thread certificates for the current slot
-    thread_certs: [types.MAX_THREADS]?types.ThreadCertificate,
-    thread_certs_received: u8,
+    threadCerts: [types.MAX_THREADS]?types.ThreadCertificate,
+    threadCertsReceived: u8,
 
     // ── Last QC ─────────────────────────────────────────────────────
-    last_qc: ?types.WovenQuorumCertificate,
+    lastQC: ?types.WovenQuorumCertificate,
 
     // ── Stats ───────────────────────────────────────────────────────
-    epochs_completed: u64,
-    tier_transitions: u64,
-    slots_finalized: u64,
-    slots_missed: u64,
-    qcs_formed: u64,
+    epochsCompleted: u64,
+    tierTransitions: u64,
+    slotsFinalized: u64,
+    slotsMissed: u64,
+    qcsFormed: u64,
 
     lock: std.Thread.Mutex,
 
@@ -91,56 +91,56 @@ pub const AdaptiveConsensus = struct {
         return Self{
             .allocator = allocator,
             .config = config,
-            .current_epoch = 0,
-            .current_tier = .FullBFT,
-            .current_thread_count = 1,
-            .epoch_seed = [_]u8{0} ** 32,
-            .validator_count = 0,
-            .current_slot = 0,
-            .last_finalized_slot = 0,
-            .consecutive_misses = 0,
-            .proposer_schedule = std.AutoHashMap(u64, types.ProposerScheduleEntry).init(allocator),
-            .committee_manager = committees_mod.CommitteeManager.init(allocator),
-            .pending_votes = std.AutoHashMap(u32, [96]u8).init(allocator),
-            .pending_vote_stake = 0,
-            .total_voting_stake = 0,
-            .thread_certs = [_]?types.ThreadCertificate{null} ** types.MAX_THREADS,
-            .thread_certs_received = 0,
-            .last_qc = null,
-            .epochs_completed = 0,
-            .tier_transitions = 0,
-            .slots_finalized = 0,
-            .slots_missed = 0,
-            .qcs_formed = 0,
+            .currentEpoch = 0,
+            .currentTier = .FullBFT,
+            .currentThreadCount = 1,
+            .epochSeed = [_]u8{0} ** 32,
+            .validatorCount = 0,
+            .currentSlot = 0,
+            .lastFinalizedSlot = 0,
+            .consecutiveMisses = 0,
+            .proposerSchedule = std.AutoHashMap(u64, types.ProposerScheduleEntry).init(allocator),
+            .committeeManager = committees_mod.CommitteeManager.init(allocator),
+            .pendingVotes = std.AutoHashMap(u32, [96]u8).init(allocator),
+            .pendingVoteStake = 0,
+            .totalVotingStake = 0,
+            .threadCerts = [_]?types.ThreadCertificate{null} ** types.MAX_THREADS,
+            .threadCertsReceived = 0,
+            .lastQC = null,
+            .epochsCompleted = 0,
+            .tierTransitions = 0,
+            .slotsFinalized = 0,
+            .slotsMissed = 0,
+            .qcsFormed = 0,
             .lock = .{},
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.proposer_schedule.deinit();
-        self.pending_votes.deinit();
-        self.committee_manager.deinit();
+        self.proposerSchedule.deinit();
+        self.pendingVotes.deinit();
+        self.committeeManager.deinit();
     }
 
     // ── Tier Detection ──────────────────────────────────────────────
 
     /// Compute the consensus tier for a given validator count.
-    pub fn computeTier(validator_count: u32) types.ConsensusTier {
-        if (validator_count <= types.TIER2_THRESHOLD) return .FullBFT;
-        if (validator_count <= types.TIER3_THRESHOLD) return .CommitteeLoom;
+    pub fn computeTier(validatorCount: u32) types.ConsensusTier {
+        if (validatorCount <= types.TIER2_THRESHOLD) return .FullBFT;
+        if (validatorCount <= types.TIER3_THRESHOLD) return .CommitteeLoom;
         return .FullLoom;
     }
 
     /// Compute the adaptive thread count for a given validator count.
-    pub fn computeThreadCount(validator_count: u32) u8 {
-        if (validator_count <= 30) return 1;
-        if (validator_count <= 100) return 2;
-        if (validator_count <= 200) return 3;
-        if (validator_count <= 500) return 5;
-        if (validator_count <= 1000) return 8;
-        if (validator_count <= 2000) return 10;
+    pub fn computeThreadCount(validatorCount: u32) u8 {
+        if (validatorCount <= 30) return 1;
+        if (validatorCount <= 100) return 2;
+        if (validatorCount <= 200) return 3;
+        if (validatorCount <= 500) return 5;
+        if (validatorCount <= 1000) return 8;
+        if (validatorCount <= 2000) return 10;
         // Beyond 2000: 1 thread per 200 validators, capped at MAX_THREADS
-        const computed = validator_count / 200;
+        const computed = validatorCount / 200;
         return @intCast(@min(computed, types.MAX_THREADS));
     }
 
@@ -151,43 +151,43 @@ pub const AdaptiveConsensus = struct {
     pub fn transitionEpoch(
         self: *Self,
         new_epoch: u64,
-        validator_count: u32,
+        validatorCount: u32,
         new_seed: [32]u8,
         validator_stakes: []const u64,
     ) !void {
         self.lock.lock();
         defer self.lock.unlock();
 
-        const old_tier = self.current_tier;
-        const new_tier = computeTier(validator_count);
-        const new_thread_count = computeThreadCount(validator_count);
+        const old_tier = self.currentTier;
+        const new_tier = computeTier(validatorCount);
+        const new_thread_count = computeThreadCount(validatorCount);
 
-        self.current_epoch = new_epoch;
-        self.current_tier = new_tier;
-        self.current_thread_count = new_thread_count;
-        self.epoch_seed = new_seed;
-        self.validator_count = validator_count;
+        self.currentEpoch = new_epoch;
+        self.currentTier = new_tier;
+        self.currentThreadCount = new_thread_count;
+        self.epochSeed = new_seed;
+        self.validatorCount = validatorCount;
 
         // Track tier transitions
         if (old_tier != new_tier) {
-            self.tier_transitions += 1;
+            self.tierTransitions += 1;
         }
 
         // Recompute committees for Tier 2
         if (new_tier == .CommitteeLoom) {
             const committee_seed = vrf_mod.VRF.committee_seed(new_seed, new_epoch);
-            self.committee_manager.recompute(
+            self.committeeManager.recompute(
                 committee_seed,
-                validator_count,
+                validatorCount,
                 new_thread_count,
                 validator_stakes,
             );
         }
 
         // Clear previous proposer schedule
-        self.proposer_schedule.clearRetainingCapacity();
+        self.proposerSchedule.clearRetainingCapacity();
 
-        self.epochs_completed += 1;
+        self.epochsCompleted += 1;
     }
 
     // ── Proposer Selection ──────────────────────────────────────────
@@ -204,7 +204,7 @@ pub const AdaptiveConsensus = struct {
     ) !?struct { proposer_index: u32, proof: [48]u8, vrf_hash: [32]u8 } {
         const result = try vrf_mod.VRF.sortition_proposer(
             sk_bytes,
-            self.epoch_seed,
+            self.epochSeed,
             slot,
             my_stake,
             total_stake,
@@ -222,19 +222,19 @@ pub const AdaptiveConsensus = struct {
     }
 
     /// Determine the deterministic proposer for a slot at Tier 1 (small N).
-    /// Uses epoch_seed + slot to deterministically select from validator set.
+    /// Uses epochSeed + slot to deterministically select from validator set.
     pub fn deterministicProposer(self: *const Self, slot: u64) u32 {
-        if (self.validator_count == 0) return 0;
-        // Hash(epoch_seed ‖ slot) → deterministic index
+        if (self.validatorCount == 0) return 0;
+        // Hash(epochSeed ‖ slot) → deterministic index
         var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        hasher.update(&self.epoch_seed);
+        hasher.update(&self.epochSeed);
         var buf8: [8]u8 = undefined;
         std.mem.writeInt(u64, &buf8, slot, .big);
         hasher.update(&buf8);
         var hash: [32]u8 = undefined;
         hasher.final(&hash);
         const val = std.mem.readInt(u32, hash[0..4], .big);
-        return val % self.validator_count;
+        return val % self.validatorCount;
     }
 
     // ── Slot Advancement ────────────────────────────────────────────
@@ -244,21 +244,21 @@ pub const AdaptiveConsensus = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        self.current_slot = slot;
-        self.pending_votes.clearRetainingCapacity();
-        self.pending_vote_stake = 0;
-        self.thread_certs = [_]?types.ThreadCertificate{null} ** types.MAX_THREADS;
-        self.thread_certs_received = 0;
+        self.currentSlot = slot;
+        self.pendingVotes.clearRetainingCapacity();
+        self.pendingVoteStake = 0;
+        self.threadCerts = [_]?types.ThreadCertificate{null} ** types.MAX_THREADS;
+        self.threadCertsReceived = 0;
     }
 
     /// Check if the current slot is at an epoch boundary.
     pub fn isEpochBoundary(self: *const Self, slot: u64) bool {
-        return (slot % self.config.slots_per_epoch) == 0;
+        return (slot % self.config.slotsPerEpoch) == 0;
     }
 
     /// Get the epoch number for a slot.
     pub fn epochForSlot(self: *const Self, slot: u64) u64 {
-        return slot / self.config.slots_per_epoch;
+        return slot / self.config.slotsPerEpoch;
     }
 
     // ── Vote Collection (Tier 1 & 2: BLS Aggregate) ────────────────
@@ -275,23 +275,23 @@ pub const AdaptiveConsensus = struct {
         defer self.lock.unlock();
 
         // Deduplicate
-        if (self.pending_votes.contains(validator_index)) return false;
+        if (self.pendingVotes.contains(validator_index)) return false;
 
-        try self.pending_votes.put(validator_index, signature);
-        self.pending_vote_stake += stake;
+        try self.pendingVotes.put(validator_index, signature);
+        self.pendingVoteStake += stake;
 
         return self.hasVotingQuorum();
     }
 
     /// Check if voting quorum (≥67% stake) is met.
     pub fn hasVotingQuorum(self: *const Self) bool {
-        if (self.total_voting_stake == 0) return false;
-        return self.pending_vote_stake * 3 > self.total_voting_stake * 2;
+        if (self.totalVotingStake == 0) return false;
+        return self.pendingVoteStake * 3 > self.totalVotingStake * 2;
     }
 
     /// Set the total voting stake for quorum calculations.
     pub fn setTotalVotingStake(self: *Self, total: u64) void {
-        self.total_voting_stake = total;
+        self.totalVotingStake = total;
     }
 
     // ── Thread Certificate Collection ───────────────────────────────
@@ -301,17 +301,17 @@ pub const AdaptiveConsensus = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (cert.thread_id >= types.MAX_THREADS) return;
-        if (self.thread_certs[cert.thread_id] != null) return; // Already have it
+        if (cert.threadId >= types.MAX_THREADS) return;
+        if (self.threadCerts[cert.threadId] != null) return; // Already have it
         if (!cert.hasQuorum()) return; // Reject insufficient quorum
 
-        self.thread_certs[cert.thread_id] = cert;
-        self.thread_certs_received += 1;
+        self.threadCerts[cert.threadId] = cert;
+        self.threadCertsReceived += 1;
     }
 
     /// Check if all thread certificates are received.
     pub fn hasAllThreadCerts(self: *const Self) bool {
-        return self.thread_certs_received >= self.current_thread_count;
+        return self.threadCertsReceived >= self.currentThreadCount;
     }
 
     // ── QC Formation ────────────────────────────────────────────────
@@ -330,19 +330,19 @@ pub const AdaptiveConsensus = struct {
         // Build thread cert bitmap
         var thread_cert_bitmap: u128 = 0;
         var i: u8 = 0;
-        while (i < self.current_thread_count) : (i += 1) {
-            if (self.thread_certs[i] != null) {
+        while (i < self.currentThreadCount) : (i += 1) {
+            if (self.threadCerts[i] != null) {
                 thread_cert_bitmap |= @as(u128, 1) << @intCast(i);
             }
         }
 
         // At Tier 1, we don't require thread certs (all nodes verify everything)
-        if (self.current_tier != .FullBFT) {
-            const required_mask = (@as(u128, 1) << @intCast(self.current_thread_count)) - 1;
+        if (self.currentTier != .FullBFT) {
+            const required_mask = (@as(u128, 1) << @intCast(self.currentThreadCount)) - 1;
             if ((thread_cert_bitmap & required_mask) != required_mask) return null;
         } else {
             // At Tier 1, set all thread cert bits (trivially certified)
-            thread_cert_bitmap = (@as(u128, 1) << @intCast(self.current_thread_count)) - 1;
+            thread_cert_bitmap = (@as(u128, 1) << @intCast(self.currentThreadCount)) - 1;
         }
 
         // Aggregate BLS signatures
@@ -350,7 +350,7 @@ pub const AdaptiveConsensus = struct {
         var first = true;
         var voter_bitmap: [32]u8 = [_]u8{0} ** 32;
 
-        var vote_it = self.pending_votes.iterator();
+        var vote_it = self.pendingVotes.iterator();
         while (vote_it.next()) |entry| {
             const idx = entry.key_ptr.*;
 
@@ -384,30 +384,30 @@ pub const AdaptiveConsensus = struct {
         var next_seed: [32]u8 = undefined;
         {
             var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-            hasher.update(&self.epoch_seed);
+            hasher.update(&self.epochSeed);
             hasher.update(&agg_sig_bytes);
             var buf8: [8]u8 = undefined;
-            std.mem.writeInt(u64, &buf8, self.current_slot, .big);
+            std.mem.writeInt(u64, &buf8, self.currentSlot, .big);
             hasher.update(&buf8);
             hasher.final(&next_seed);
         }
 
         const qc = types.WovenQuorumCertificate{
-            .slot = self.current_slot,
-            .woven_root = woven_root,
-            .thread_cert_bitmap = thread_cert_bitmap,
-            .aggregate_signature = agg_sig_bytes,
-            .voter_bitmap = voter_bitmap,
-            .total_attesting_stake = self.pending_vote_stake,
-            .randomness_seed = next_seed,
-            .tier = self.current_tier,
+            .slot = self.currentSlot,
+            .wovenRoot = woven_root,
+            .threadCertBitmap = thread_cert_bitmap,
+            .aggregateSignature = agg_sig_bytes,
+            .voterBitmap = voter_bitmap,
+            .totalAttestingStake = self.pendingVoteStake,
+            .randomnessSeed = next_seed,
+            .tier = self.currentTier,
         };
 
-        self.last_qc = qc;
-        self.qcs_formed += 1;
-        self.slots_finalized += 1;
-        self.last_finalized_slot = self.current_slot;
-        self.consecutive_misses = 0;
+        self.lastQC = qc;
+        self.qcsFormed += 1;
+        self.slotsFinalized += 1;
+        self.lastFinalizedSlot = self.currentSlot;
+        self.consecutiveMisses = 0;
 
         return qc;
     }
@@ -419,12 +419,12 @@ pub const AdaptiveConsensus = struct {
         self.lock.lock();
         defer self.lock.unlock();
         self.consecutive_misses += 1;
-        self.slots_missed += 1;
+        self.slotsMissed += 1;
     }
 
     /// Check if a view change should be triggered.
     pub fn shouldTriggerViewChange(self: *const Self) bool {
-        return self.consecutive_misses >= self.config.max_consecutive_misses;
+        return self.consecutive_misses >= self.config.maxConsecutiveMisses;
     }
 
     // ── Block Header Construction ───────────────────────────────────
@@ -441,23 +441,23 @@ pub const AdaptiveConsensus = struct {
         total_tx_count: u32,
     ) types.AdaptiveBlockHeader {
         var header = types.AdaptiveBlockHeader{
-            .slot = self.current_slot,
-            .epoch = self.current_epoch,
-            .parent_hash = parent_hash,
-            .proposer_index = proposer_index,
-            .proposer_vrf_proof = proposer_vrf_proof,
-            .thread_count = self.current_thread_count,
-            .thread_roots = [_]core.types.Hash{core.types.Hash.zero()} ** types.MAX_THREADS,
-            .thread_tx_counts = [_]u32{0} ** types.MAX_THREADS,
-            .woven_root = core.types.Hash.zero(),
-            .state_root = state_root,
-            .total_tx_count = total_tx_count,
-            .randomness_seed = self.epoch_seed,
-            .tier = self.current_tier,
+            .slot = self.currentSlot,
+            .epoch = self.currentEpoch,
+            .parentHash = parent_hash,
+            .proposerIndex = proposer_index,
+            .proposerVrfProof = proposer_vrf_proof,
+            .threadCount = self.currentThreadCount,
+            .threadRoots = [_]core.types.Hash{core.types.Hash.zero()} ** types.MAX_THREADS,
+            .threadTxCounts = [_]u32{0} ** types.MAX_THREADS,
+            .wovenRoot = core.types.Hash.zero(),
+            .stateRoot = state_root,
+            .totalTxCount = total_tx_count,
+            .randomnessSeed = self.epochSeed,
+            .tier = self.currentTier,
         };
 
         // Copy thread data
-        const count = @min(thread_roots.len, @as(usize, self.current_thread_count));
+        const count = @min(thread_roots.len, @as(usize, self.currentThreadCount));
         for (0..count) |idx| {
             header.thread_roots[idx] = thread_roots[idx];
             if (idx < thread_tx_counts.len) {
@@ -480,19 +480,19 @@ pub const AdaptiveConsensus = struct {
         parent_hash: core.types.Hash,
     ) bool {
         // 1. Slot must be greater than last finalized
-        if (header.slot <= self.last_finalized_slot) return false;
+        if (header.slot <= self.lastFinalizedSlot) return false;
 
         // 2. Epoch must match current
-        if (header.epoch != self.current_epoch) return false;
+        if (header.epoch != self.currentEpoch) return false;
 
         // 3. Parent hash must match
         if (!std.mem.eql(u8, &header.parent_hash.bytes, &parent_hash.bytes)) return false;
 
         // 4. Thread count must match current configuration
-        if (header.thread_count != self.current_thread_count) return false;
+        if (header.thread_count != self.currentThreadCount) return false;
 
         // 5. Tier must match current
-        if (header.tier != self.current_tier) return false;
+        if (header.tier != self.currentTier) return false;
 
         // 6. Woven root must be correctly computed
         if (!header.verifyWovenRoot()) return false;
@@ -524,28 +524,28 @@ pub const AdaptiveConsensus = struct {
     pub const Stats = struct {
         epoch: u64,
         tier: types.ConsensusTier,
-        thread_count: u8,
-        validator_count: u32,
-        slots_finalized: u64,
-        slots_missed: u64,
-        qcs_formed: u64,
-        epochs_completed: u64,
-        tier_transitions: u64,
-        last_finalized_slot: u64,
+        threadCount: u8,
+        validatorCount: u32,
+        slotsFinalized: u64,
+        slotsMissed: u64,
+        qcsFormed: u64,
+        epochsCompleted: u64,
+        tierTransitions: u64,
+        lastFinalizedSlot: u64,
     };
 
     pub fn getStats(self: *const Self) Stats {
         return .{
-            .epoch = self.current_epoch,
-            .tier = self.current_tier,
-            .thread_count = self.current_thread_count,
-            .validator_count = self.validator_count,
-            .slots_finalized = self.slots_finalized,
-            .slots_missed = self.slots_missed,
-            .qcs_formed = self.qcs_formed,
-            .epochs_completed = self.epochs_completed,
-            .tier_transitions = self.tier_transitions,
-            .last_finalized_slot = self.last_finalized_slot,
+            .epoch = self.currentEpoch,
+            .tier = self.currentTier,
+            .threadCount = self.currentThreadCount,
+            .validatorCount = self.validatorCount,
+            .slotsFinalized = self.slotsFinalized,
+            .slotsMissed = self.slotsMissed,
+            .qcsFormed = self.qcsFormed,
+            .epochsCompleted = self.epochsCompleted,
+            .tierTransitions = self.tierTransitions,
+            .lastFinalizedSlot = self.lastFinalizedSlot,
         };
     }
 };
