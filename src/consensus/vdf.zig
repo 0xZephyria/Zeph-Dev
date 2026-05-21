@@ -82,25 +82,71 @@ pub const VDF = struct {
         return verify(allocator, start, end, iterations);
     }
 
-    // Parallel verification in Zig would typically use std.Thread
-    // For simplicity in this initial port, we will implement it sequentially
-    // but structure it such that threads can be added easily.
-    pub fn verify_parallel(allocator: std.mem.Allocator, input: []const u8, checkpoints: []const []const u8, interval: u64) !bool {
+    const VdfWorkerCtx = struct {
+        allocator: std.mem.Allocator,
+        start: []const u8,
+        end: []const u8,
+        interval: u64,
+        success: bool = false,
+        err: ?anyerror = null,
+    };
+
+    fn verifyWorkerFn(ctx: *VdfWorkerCtx) void {
+        ctx.success = verify_step(ctx.allocator, ctx.start, ctx.end, ctx.interval) catch |e| {
+            ctx.err = e;
+            return;
+        };
+    }
+
+    /// Parallel verification using std.Thread. Spawns threads capped at 8.
+    pub fn verify_parallel(
+        allocator: std.mem.Allocator,
+        input: []const u8,
+        checkpoints: []const []const u8,
+        interval: u64,
+    ) !bool {
         if (checkpoints.len == 0) return false;
 
-        // Verify first segment: input -> checkpoints[0]
-        if (!try verify_step(allocator, input, checkpoints[0], interval)) {
-            return false;
+        const num_segments = checkpoints.len;
+        var contexts = try allocator.alloc(VdfWorkerCtx, num_segments);
+        defer allocator.free(contexts);
+
+        var threads = try allocator.alloc(?std.Thread, num_segments);
+        defer allocator.free(threads);
+
+        // Initialize contexts
+        for (0..num_segments) |i| {
+            contexts[i] = .{
+                .allocator = allocator,
+                .start = if (i == 0) input else checkpoints[i - 1],
+                .end = checkpoints[i],
+                .interval = interval,
+            };
+            threads[i] = null;
         }
 
-        // Verify remaining segments
-        var i: usize = 1;
-        while (i < checkpoints.len) : (i += 1) {
-            const start = checkpoints[i - 1];
-            const end = checkpoints[i];
-            if (!try verify_step(allocator, start, end, interval)) {
-                return false;
+        // Spawn threads (capped at 8)
+        const max_workers = 8;
+        for (0..num_segments) |i| {
+            if (i < max_workers) {
+                threads[i] = std.Thread.spawn(.{}, verifyWorkerFn, .{&contexts[i]}) catch null;
+                if (threads[i] == null) {
+                    verifyWorkerFn(&contexts[i]);
+                }
+            } else {
+                verifyWorkerFn(&contexts[i]);
             }
+        }
+
+        // Join threads
+        for (0..num_segments) |i| {
+            if (threads[i]) |t| t.join();
+        }
+
+        // Check for any execution errors
+        for (contexts) |ctx| {
+            if (ctx.err) |err| return err;
+            if (!ctx.success) return false;
         }
 
         return true;

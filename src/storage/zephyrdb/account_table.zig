@@ -105,9 +105,6 @@ pub const AccountTable = struct {
     /// Stats
     total_probes: Atomic(u64),
     total_lookups: Atomic(u64),
-
-    const Self = @This();
-
     // ── Progressive Resize State ──────────────────────────────────────
     /// New table being migrated into (null when not resizing).
     resize_entries: ?[]AccountEntry = null,
@@ -119,6 +116,8 @@ pub const AccountTable = struct {
     resize_progress: u32 = 0,
     /// True while incremental migration is in progress.
     is_resizing: bool = false,
+
+    const Self = @This();
 
     /// Initialize the account table with memory from the arena.
     pub fn init(arena: *Arena, capacity: u32) !Self {
@@ -551,3 +550,59 @@ test "AccountTable iterator" {
     }
     try std.testing.expectEqual(@as(u32, 50), count);
 }
+
+test "AccountTable progressive resize" {
+    var arena = try Arena.initForTesting(std.testing.allocator, 64 * 1024 * 1024);
+    defer arena.deinit();
+
+    // Init with capacity 16. Load threshold is 16 * 7 / 10 = 11.
+    var table = try AccountTable.init(&arena, 16);
+    try std.testing.expectEqual(@as(u32, 16), table.capacity);
+    try std.testing.expect(!table.is_resizing);
+
+    // Insert 11 entries
+    var addresses: [20][20]u8 = undefined;
+    for (0..11) |i| {
+        addresses[i] = [_]u8{0} ** 20;
+        addresses[i][0] = @truncate(i);
+        addresses[i][1] = 0xFF; // Avoid simple collision with index
+        _ = try table.getOrCreate(addresses[i]);
+    }
+
+    try std.testing.expect(!table.is_resizing);
+    try std.testing.expectEqual(@as(u32, 11), table.count.load(.acquire));
+
+    // Insert 12th entry
+    addresses[11] = [_]u8{0} ** 20;
+    addresses[11][0] = 11;
+    addresses[11][1] = 0xFF;
+    _ = try table.getOrCreate(addresses[11]);
+
+    // Insert 13th entry (should trigger resize, since count is 12 and 12 * 10 >= 16 * 7)
+    addresses[12] = [_]u8{0} ** 20;
+    addresses[12][0] = 12;
+    addresses[12][1] = 0xFF;
+    _ = try table.getOrCreate(addresses[12]);
+
+    try std.testing.expect(table.is_resizing);
+    try std.testing.expectEqual(@as(u32, 32), table.resize_capacity);
+
+    // Verify all 13 entries can still be retrieved (dual-table check)
+    for (0..13) |i| {
+        const entry = table.get(addresses[i]);
+        try std.testing.expect(entry != null);
+    }
+
+    // Call finishResize to complete migration
+    table.finishResize();
+
+    try std.testing.expect(!table.is_resizing);
+    try std.testing.expectEqual(@as(u32, 32), table.capacity);
+
+    // Verify lookup still works after completion
+    for (0..13) |i| {
+        const entry = table.get(addresses[i]);
+        try std.testing.expect(entry != null);
+    }
+}
+
