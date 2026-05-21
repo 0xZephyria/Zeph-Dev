@@ -108,6 +108,18 @@ pub const AccountTable = struct {
 
     const Self = @This();
 
+    // ── Progressive Resize State ──────────────────────────────────────
+    /// New table being migrated into (null when not resizing).
+    resize_entries: ?[]AccountEntry = null,
+    /// Capacity of the new (resize) table.
+    resize_capacity: u32 = 0,
+    /// Mask for the new table: resize_capacity - 1.
+    resize_mask: u32 = 0,
+    /// Next old-table index to migrate (0..capacity).
+    resize_progress: u32 = 0,
+    /// True while incremental migration is in progress.
+    is_resizing: bool = false,
+
     /// Initialize the account table with memory from the arena.
     pub fn init(arena: *Arena, capacity: u32) !Self {
         const actual_cap = nextPowerOfTwo(capacity);
@@ -139,9 +151,29 @@ pub const AccountTable = struct {
     }
 
     /// Look up an account by address. Lock-free read.
+    /// During progressive resize, checks both old and new tables.
     pub fn get(self: *Self, address: Address) ?*AccountEntry {
         _ = self.total_lookups.fetchAdd(1, .monotonic);
 
+        // Check new table first during resize (entries may have been migrated)
+        if (self.is_resizing) {
+            if (self.resize_entries) |new_entries| {
+                var idx = hashAddress(address) & self.resize_mask;
+                var probes: u32 = 0;
+                while (probes < self.resize_capacity) : (probes += 1) {
+                    const entry = &new_entries[idx];
+                    if (entry.isEmpty()) break;
+                    if (std.mem.eql(u8, &entry.address, &address)) {
+                        _ = self.total_probes.fetchAdd(probes + 1, .monotonic);
+                        return entry;
+                    }
+                    if (entry.probeDistance() < probes) break;
+                    idx = (idx + 1) & self.resize_mask;
+                }
+            }
+        }
+
+        // Check old table
         var idx = hashAddress(address) & self.mask;
         var probes: u32 = 0;
 
@@ -150,15 +182,14 @@ pub const AccountTable = struct {
 
             if (entry.isEmpty()) {
                 _ = self.total_probes.fetchAdd(probes + 1, .monotonic);
-                return null; // Not found
+                return null;
             }
 
             if (std.mem.eql(u8, &entry.address, &address)) {
                 _ = self.total_probes.fetchAdd(probes + 1, .monotonic);
-                return entry; // Found
+                return entry;
             }
 
-            // Robin Hood: if current entry's probe distance < our probe distance, key doesn't exist
             if (entry.probeDistance() < probes) {
                 _ = self.total_probes.fetchAdd(probes + 1, .monotonic);
                 return null;
@@ -167,10 +198,11 @@ pub const AccountTable = struct {
             idx = (idx + 1) & self.mask;
         }
 
-        return null; // Table is full (shouldn't happen with proper load factor)
+        return null;
     }
 
     /// Get or create an account entry. Returns the entry (existing or new).
+    /// Triggers progressive rehashing when load factor exceeds 70%.
     pub fn getOrCreate(self: *Self, address: Address) !*AccountEntry {
         // Try lock-free read first
         if (self.get(address)) |entry| {
@@ -182,18 +214,31 @@ pub const AccountTable = struct {
         self.stripe_locks[stripe].lock();
         defer self.stripe_locks[stripe].unlock();
 
-        // Double-check after acquiring lock (might have been inserted by another thread)
+        // Double-check after acquiring lock
         if (self.get(address)) |entry| {
             return entry;
         }
 
-        // Check load factor
-        const count = self.count.load(.acquire);
-        if (count * MAX_LOAD_FACTOR_DEN >= self.capacity * MAX_LOAD_FACTOR_NUM) {
-            return error.TableFull; // In production, would resize
+        // Progress incremental migration if active
+        if (self.is_resizing) {
+            self.migrateChunk(64);
         }
 
-        // Insert with Robin Hood probing
+        // Check load factor — begin resize instead of returning TableFull
+        const active_cap = if (self.is_resizing) self.resize_capacity else self.capacity;
+        const count = self.count.load(.acquire);
+        if (count * MAX_LOAD_FACTOR_DEN >= active_cap * MAX_LOAD_FACTOR_NUM) {
+            if (!self.is_resizing) {
+                self.beginResize() catch return error.TableFull;
+            }
+        }
+
+        // Determine which table to insert into
+        const target_entries = if (self.is_resizing) (self.resize_entries orelse self.entries) else self.entries;
+        const target_mask = if (self.is_resizing) self.resize_mask else self.mask;
+        const target_cap = if (self.is_resizing) self.resize_capacity else self.capacity;
+
+        // Insert with Robin Hood probing into the target table
         var new_entry = AccountEntry{
             .address = address,
             .flags = FLAG_EXISTS,
@@ -203,22 +248,20 @@ pub const AccountTable = struct {
             .storage_root = [_]u8{0} ** 32,
         };
 
-        var idx = hashAddress(address) & self.mask;
+        var idx = hashAddress(address) & target_mask;
         var probe_dist: u32 = 0;
         new_entry.setProbeDistance(0);
 
-        while (probe_dist < self.capacity) : (probe_dist += 1) {
-            const slot = &self.entries[idx];
+        while (probe_dist < target_cap) : (probe_dist += 1) {
+            const slot = &target_entries[idx];
 
             if (slot.isEmpty()) {
-                // Empty slot found — insert here
                 new_entry.setProbeDistance(probe_dist);
                 slot.* = new_entry;
                 _ = self.count.fetchAdd(1, .monotonic);
                 return slot;
             }
 
-            // Robin Hood: if existing entry has shorter probe distance, swap
             if (slot.probeDistance() < probe_dist) {
                 new_entry.setProbeDistance(probe_dist);
                 const displaced = slot.*;
@@ -227,10 +270,97 @@ pub const AccountTable = struct {
                 probe_dist = displaced.probeDistance();
             }
 
-            idx = (idx + 1) & self.mask;
+            idx = (idx + 1) & target_mask;
         }
 
         return error.TableFull;
+    }
+
+    // ── Progressive Resize Methods ────────────────────────────────────
+
+    /// Begin progressive resize to 2× capacity.
+    fn beginResize(self: *Self) !void {
+        if (self.is_resizing) return;
+
+        const new_cap = self.capacity * 2;
+        const byte_size = @as(usize, new_cap) * @sizeOf(AccountEntry);
+        const mem = self.arena.allocRaw(byte_size) orelse return error.ArenaOutOfMemory;
+        @memset(mem, 0);
+
+        const entry_ptr: [*]AccountEntry = @ptrCast(@alignCast(mem.ptr));
+        self.resize_entries = entry_ptr[0..new_cap];
+        self.resize_capacity = new_cap;
+        self.resize_mask = new_cap - 1;
+        self.resize_progress = 0;
+        self.is_resizing = true;
+    }
+
+    /// Migrate a chunk of entries from old table to new table.
+    /// Called incrementally during getOrCreate() — 64 buckets per call.
+    fn migrateChunk(self: *Self, batch_size: u32) void {
+        if (!self.is_resizing) return;
+        const new_entries = self.resize_entries orelse return;
+
+        var migrated: u32 = 0;
+        while (migrated < batch_size and self.resize_progress < self.capacity) {
+            const old_entry = &self.entries[self.resize_progress];
+            self.resize_progress += 1;
+
+            if (old_entry.isEmpty()) {
+                migrated += 1;
+                continue;
+            }
+
+            // Re-insert into new table with Robin Hood probing
+            var entry_copy = old_entry.*;
+            var idx = hashAddress(entry_copy.address) & self.resize_mask;
+            var probe_dist: u32 = 0;
+            entry_copy.setProbeDistance(0);
+
+            while (probe_dist < self.resize_capacity) : (probe_dist += 1) {
+                const slot = &new_entries[idx];
+                if (slot.isEmpty()) {
+                    entry_copy.setProbeDistance(probe_dist);
+                    slot.* = entry_copy;
+                    break;
+                }
+                if (slot.probeDistance() < probe_dist) {
+                    entry_copy.setProbeDistance(probe_dist);
+                    const displaced = slot.*;
+                    slot.* = entry_copy;
+                    entry_copy = displaced;
+                    probe_dist = displaced.probeDistance();
+                }
+                idx = (idx + 1) & self.resize_mask;
+            }
+
+            // Mark old entry as empty (migrated)
+            old_entry.flags = 0;
+            migrated += 1;
+        }
+
+        // Check if migration is complete
+        if (self.resize_progress >= self.capacity) {
+            self.completeResize();
+        }
+    }
+
+    /// Complete the resize — swap tables.
+    fn completeResize(self: *Self) void {
+        self.entries = self.resize_entries.?;
+        self.capacity = self.resize_capacity;
+        self.mask = self.resize_mask;
+        self.resize_entries = null;
+        self.resize_capacity = 0;
+        self.resize_mask = 0;
+        self.resize_progress = 0;
+        self.is_resizing = false;
+    }
+
+    /// Force-complete any pending resize (useful at epoch boundaries).
+    pub fn finishResize(self: *Self) void {
+        if (!self.is_resizing) return;
+        self.migrateChunk(self.capacity); // Migrate everything remaining
     }
 
     /// Update balance for an account (creates if not exists)

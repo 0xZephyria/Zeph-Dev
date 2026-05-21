@@ -5,6 +5,96 @@
 
 const std = @import("std");
 
+// ── Dirty Range Tracking ───────────────────────────────────────────────
+// Tracks which memory regions were written during a TX execution.
+// On reset, only dirty ranges are zeroed instead of the full 384KB.
+// Falls back to full memset when the tracker overflows.
+
+/// A single contiguous dirty memory range.
+pub const DirtyRange = struct {
+    start: u32,
+    len: u32,
+};
+
+/// Maximum dirty ranges tracked before falling back to full memset.
+/// 256 entries covers most realistic TX patterns (stack frames, heap allocs).
+pub const MAX_DIRTY_RANGES: usize = 256;
+
+/// Tracks dirty (written) memory ranges for efficient reset.
+/// Zero-allocation — uses a fixed-size inline array.
+pub const DirtyTracker = struct {
+    ranges: [MAX_DIRTY_RANGES]DirtyRange = undefined,
+    count: usize = 0,
+    /// When true, tracker overflowed — must do full memset on reset.
+    fully_dirty: bool = false,
+
+    const Self = @This();
+
+    /// Mark a memory range as dirty. If the tracker is full, sets fully_dirty.
+    pub fn markDirty(self: *Self, addr: u32, size: u32) void {
+        if (self.fully_dirty) return;
+        if (size == 0) return;
+
+        // Try to merge with the last recorded range (common for sequential writes)
+        if (self.count > 0) {
+            const last = &self.ranges[self.count - 1];
+            const last_end = last.start + last.len;
+            // Merge if overlapping or adjacent (within 64-byte cache line)
+            if (addr >= last.start and addr <= last_end + 64) {
+                const new_end = @max(last_end, addr + size);
+                last.len = new_end - last.start;
+                return;
+            }
+        }
+
+        if (self.count >= MAX_DIRTY_RANGES) {
+            self.fully_dirty = true;
+            return;
+        }
+
+        self.ranges[self.count] = .{ .start = addr, .len = size };
+        self.count += 1;
+    }
+
+    /// Reset only the dirty ranges in the given backing memory, then clear the tracker.
+    /// Returns true if tracked reset was used, false if full memset was needed.
+    pub fn resetDirtyRegions(self: *Self, backing: []u8) bool {
+        if (self.fully_dirty or self.count == 0) {
+            self.count = 0;
+            self.fully_dirty = false;
+            return false; // Caller should do full memset
+        }
+
+        for (self.ranges[0..self.count]) |range| {
+            const start = range.start;
+            const end = @min(start + range.len, @as(u32, @intCast(backing.len)));
+            if (start < end) {
+                @memset(backing[start..end], 0);
+            }
+        }
+
+        self.count = 0;
+        self.fully_dirty = false;
+        return true;
+    }
+
+    /// Clear tracker state without zeroing memory.
+    pub fn clear(self: *Self) void {
+        self.count = 0;
+        self.fully_dirty = false;
+    }
+
+    /// Total bytes tracked as dirty.
+    pub fn dirtyBytes(self: *const Self) u64 {
+        if (self.fully_dirty) return 0; // Unknown — full reset needed
+        var total: u64 = 0;
+        for (self.ranges[0..self.count]) |range| {
+            total += range.len;
+        }
+        return total;
+    }
+};
+
 /// Memory access permissions
 pub const Permission = enum {
     readExecute, // Code region: read + execute, no write
@@ -75,6 +165,8 @@ pub const SandboxMemory = struct {
     backing: []u8,
     allocator: std.mem.Allocator,
     owned: bool, // whether we own the backing allocation
+    /// Tracks dirty memory ranges for optimized reset (only zeroes written regions).
+    dirty_tracker: DirtyTracker = .{},
 
     /// Create a new sandbox memory instance.
     pub fn init(allocator: std.mem.Allocator) !SandboxMemory {
@@ -84,6 +176,7 @@ pub const SandboxMemory = struct {
             .backing = backing,
             .allocator = allocator,
             .owned = true,
+            .dirty_tracker = .{},
         };
     }
 
@@ -93,6 +186,7 @@ pub const SandboxMemory = struct {
             .backing = buf,
             .allocator = undefined,
             .owned = false,
+            .dirty_tracker = .{},
         };
     }
 
@@ -116,6 +210,18 @@ pub const SandboxMemory = struct {
         @memset(self.backing[returnStart .. returnEnd + 1], 0);
         // Clear scratch (32 KB)
         @memset(self.backing[scratchStart .. scratchEnd + 1], 0);
+        // Always reset the dirty tracker too
+        self.dirty_tracker.clear();
+    }
+
+    /// Optimized reset: zeros only the memory ranges that were actually written.
+    /// For typical TXs touching a few KB, this is ~100x faster than full reset.
+    /// Falls back to full reset if the dirty tracker overflowed.
+    pub fn resetTracked(self: *SandboxMemory) void {
+        if (!self.dirty_tracker.resetDirtyRegions(self.backing)) {
+            // Tracker overflowed or was empty — do full reset
+            self.reset();
+        }
     }
 
     // -------------------------------------------------------------------
@@ -169,6 +275,7 @@ pub const SandboxMemory = struct {
         const addr32: u32 = @truncate(addr);
         const slice = self.backing[addr32..][0..4];
         std.mem.writeInt(u32, slice, value, .little);
+        self.dirty_tracker.markDirty(addr32, 4);
     }
 
     pub fn storeDoubleword(self: *SandboxMemory, addr: u64, value: u64) MemoryError!void {
@@ -177,6 +284,7 @@ pub const SandboxMemory = struct {
         const addr32: u32 = @truncate(addr);
         const slice = self.backing[addr32..][0..8];
         std.mem.writeInt(u64, slice, value, .little);
+        self.dirty_tracker.markDirty(addr32, 8);
     }
 
     /// Store a 16-bit halfword at the given address.
@@ -187,6 +295,7 @@ pub const SandboxMemory = struct {
         const addr32: u32 = @truncate(addr);
         const slice = self.backing[addr32..][0..2];
         std.mem.writeInt(u16, slice, value, .little);
+        self.dirty_tracker.markDirty(addr32, 2);
     }
 
     /// Store a single byte at the given address.
@@ -194,6 +303,7 @@ pub const SandboxMemory = struct {
         try self.checkAccess(addr, 1, .write);
         const addr32: u32 = @truncate(addr);
         self.backing[addr32] = value;
+        self.dirty_tracker.markDirty(addr32, 1);
     }
 
     // -------------------------------------------------------------------
@@ -239,6 +349,7 @@ pub const SandboxMemory = struct {
         try self.checkAccess(addr, len, .write);
         const addr32: u32 = @truncate(addr);
         const len32: u32 = @truncate(len);
+        self.dirty_tracker.markDirty(addr32, len32);
         return self.backing[addr32..][0..len32];
     }
 
@@ -256,6 +367,7 @@ pub const SandboxMemory = struct {
     pub fn getAligned32Mut(self: *SandboxMemory, addr: u64) MemoryError!*[32]u8 {
         try self.checkAccess(addr, 32, .write);
         const addr32: u32 = @truncate(addr);
+        self.dirty_tracker.markDirty(addr32, 32);
         return self.backing[addr32..][0..32];
     }
 
@@ -407,4 +519,91 @@ test "return region is writable" {
     try mem.storeWord(returnStart, 0x12345678);
     const val = try mem.loadWord(returnStart);
     try testing.expectEqual(@as(u32, 0x12345678), val);
+}
+
+// ── Dirty Tracking Tests ───────────────────────────────────────────────
+
+test "DirtyTracker: markDirty and dirtyBytes" {
+    var tracker = DirtyTracker{};
+    tracker.markDirty(100, 50);
+    tracker.markDirty(1000, 32);
+    try testing.expectEqual(@as(usize, 2), tracker.count);
+    try testing.expectEqual(@as(u64, 82), tracker.dirtyBytes());
+}
+
+test "DirtyTracker: adjacent ranges merge" {
+    var tracker = DirtyTracker{};
+    // Sequential writes within 64-byte merge window
+    tracker.markDirty(100, 4);
+    tracker.markDirty(104, 4);
+    tracker.markDirty(108, 4);
+    // All should merge into one range
+    try testing.expectEqual(@as(usize, 1), tracker.count);
+    try testing.expectEqual(@as(u32, 100), tracker.ranges[0].start);
+    try testing.expectEqual(@as(u32, 12), tracker.ranges[0].len);
+}
+
+test "DirtyTracker: distant ranges stay separate" {
+    var tracker = DirtyTracker{};
+    tracker.markDirty(100, 4);
+    tracker.markDirty(1000, 4); // Far away, no merge
+    try testing.expectEqual(@as(usize, 2), tracker.count);
+}
+
+test "DirtyTracker: overflow sets fully_dirty" {
+    var tracker = DirtyTracker{};
+    // Fill all slots with distant ranges
+    for (0..MAX_DIRTY_RANGES) |i| {
+        tracker.markDirty(@intCast(i * 1000), 4);
+    }
+    try testing.expect(!tracker.fully_dirty);
+    try testing.expectEqual(@as(usize, MAX_DIRTY_RANGES), tracker.count);
+    // One more triggers overflow
+    tracker.markDirty(@intCast(MAX_DIRTY_RANGES * 1000), 4);
+    try testing.expect(tracker.fully_dirty);
+}
+
+test "resetTracked: zeros only written regions" {
+    var mem = try SandboxMemory.init(testing.allocator);
+    defer mem.deinit();
+
+    // Write some data
+    try mem.storeWord(heapStart, 0xDEADBEEF);
+    try mem.storeWord(heapStart + 100, 0xCAFEBABE);
+
+    // Verify data written
+    try testing.expectEqual(@as(u32, 0xDEADBEEF), try mem.loadWord(heapStart));
+    try testing.expectEqual(@as(u32, 0xCAFEBABE), try mem.loadWord(heapStart + 100));
+
+    // resetTracked should clear only the dirty ranges
+    mem.resetTracked();
+
+    // Verify zeroed
+    try testing.expectEqual(@as(u32, 0), try mem.loadWord(heapStart));
+    try testing.expectEqual(@as(u32, 0), try mem.loadWord(heapStart + 100));
+    // Tracker should be clear
+    try testing.expectEqual(@as(usize, 0), mem.dirty_tracker.count);
+}
+
+test "resetTracked: matches reset() behavior" {
+    var mem1 = try SandboxMemory.init(testing.allocator);
+    defer mem1.deinit();
+    var mem2 = try SandboxMemory.init(testing.allocator);
+    defer mem2.deinit();
+
+    // Write identical data to both
+    try mem1.storeWord(heapStart, 0x11111111);
+    try mem1.storeByte(stackStart + 50, 0xFF);
+    try mem2.storeWord(heapStart, 0x11111111);
+    try mem2.storeByte(stackStart + 50, 0xFF);
+
+    // Reset with different methods
+    mem1.reset();
+    mem2.resetTracked();
+
+    // Both should now read as zero
+    try testing.expectEqual(@as(u32, 0), try mem1.loadWord(heapStart));
+    try testing.expectEqual(@as(u32, 0), try mem2.loadWord(heapStart));
+    try testing.expectEqual(@as(u8, 0), try mem1.loadByte(stackStart + 50));
+    try testing.expectEqual(@as(u8, 0), try mem2.loadByte(stackStart + 50));
 }

@@ -644,28 +644,45 @@ pub const ZeliusEngine = struct {
         }
 
         // 3. Verify cross-sender write-set independence
+        // O(S log S) via sorting — replaces O(S²) nested loop.
+        // Collect all nonce and balance keys into one flat array,
+        // sort it, and scan for adjacent duplicates.
         const state = @import("core").state.State;
-        var senders = std.ArrayListUnmanaged(core.types.Address){};
-        defer senders.deinit(allocator);
+
+        const num_senders = sender_map.count();
+        if (num_senders <= 1) return; // Single sender — no conflicts possible
+
+        // Each sender produces 2 keys (nonce + balance) tagged with their type
+        const KeyTag = struct {
+            key: [32]u8,
+            is_balance: bool, // true = balance key, false = nonce key
+        };
+
+        var all_keys = try std.ArrayListUnmanaged(KeyTag).initCapacity(allocator, num_senders * 2);
+        defer all_keys.deinit(allocator);
 
         var it2 = sender_map.iterator();
         while (it2.next()) |entry| {
-            try senders.append(allocator, entry.key_ptr.*);
+            const addr = entry.key_ptr.*;
+            all_keys.appendAssumeCapacity(.{ .key = state.nonceKey(addr), .is_balance = false });
+            all_keys.appendAssumeCapacity(.{ .key = state.balanceKey(addr), .is_balance = true });
         }
 
-        for (senders.items, 0..) |sender_a, i| {
-            const key_a_nonce = state.nonceKey(sender_a);
-            const key_a_balance = state.balanceKey(sender_a);
+        // Sort by key bytes (lexicographic)
+        std.mem.sortUnstable(KeyTag, all_keys.items, {}, struct {
+            pub fn lessThan(_: void, a: KeyTag, b: KeyTag) bool {
+                return std.mem.order(u8, &a.key, &b.key) == .lt;
+            }
+        }.lessThan);
 
-            for (senders.items[i + 1 ..]) |sender_b| {
-                const key_b_nonce = state.nonceKey(sender_b);
-                const key_b_balance = state.balanceKey(sender_b);
-
-                if (std.mem.eql(u8, &key_a_nonce, &key_b_nonce)) {
-                    return error.NonceKeyCollision;
-                }
-                if (std.mem.eql(u8, &key_a_balance, &key_b_balance)) {
+        // Linear scan for adjacent duplicates
+        for (1..all_keys.items.len) |idx| {
+            if (std.mem.eql(u8, &all_keys.items[idx].key, &all_keys.items[idx - 1].key)) {
+                // Determine which type of collision
+                if (all_keys.items[idx].is_balance) {
                     return error.BalanceKeyCollision;
+                } else {
+                    return error.NonceKeyCollision;
                 }
             }
         }

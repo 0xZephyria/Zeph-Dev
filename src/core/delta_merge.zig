@@ -290,6 +290,196 @@ pub const DeltaMerger = struct {
     }
 };
 
+// ── Fork-Join Parallel Delta Merger ────────────────────────────────────
+
+/// Merge two delta slices into a single map (used by worker threads).
+fn mergeTwoIntoMap(
+    allocator: std.mem.Allocator,
+    a: []const StateDelta,
+    b: []const StateDelta,
+) !std.AutoHashMap([32]u8, MergedDelta) {
+    var map = std.AutoHashMap([32]u8, MergedDelta).init(allocator);
+    errdefer map.deinit();
+
+    const slices = [_][]const StateDelta{ a, b };
+    for (&slices) |deltas| {
+        for (deltas) |delta| {
+            const entry = try map.getOrPut(delta.key);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = MergedDelta{
+                    .value = delta.value,
+                    .delta_type = delta.delta_type,
+                    .last_tx_index = delta.tx_index,
+                };
+            } else {
+                switch (delta.delta_type) {
+                    .Additive => entry.value_ptr.*.value += delta.value,
+                    .Absolute => {
+                        if (delta.tx_index > entry.value_ptr.*.last_tx_index) {
+                            entry.value_ptr.*.value = delta.value;
+                            entry.value_ptr.*.last_tx_index = delta.tx_index;
+                        }
+                    },
+                }
+            }
+        }
+    }
+    return map;
+}
+
+/// Thread worker context for parallel merge.
+const MergeWorkerCtx = struct {
+    allocator: std.mem.Allocator,
+    buf_a: []const StateDelta,
+    buf_b: []const StateDelta,
+    result: ?std.AutoHashMap([32]u8, MergedDelta) = null,
+    err: ?anyerror = null,
+};
+
+fn mergeWorkerFn(ctx: *MergeWorkerCtx) void {
+    ctx.result = mergeTwoIntoMap(ctx.allocator, ctx.buf_a, ctx.buf_b) catch |e| {
+        ctx.err = e;
+        return;
+    };
+}
+
+/// Parallel delta merger using fork-join pattern.
+/// For ≤2 buffers, delegates to DeltaMerger.mergeBuffers().
+/// For >2 buffers, pairs them and merges each pair on a separate thread,
+/// then sequentially merges the intermediate results.
+pub const ParallelDeltaMerger = struct {
+    inner: DeltaMerger,
+    max_workers: u32,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, max_workers: u32) Self {
+        return Self{
+            .inner = DeltaMerger.init(allocator),
+            .max_workers = if (max_workers == 0) 4 else max_workers,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.inner.deinit();
+    }
+
+    pub fn mergeParallel(
+        self: *Self,
+        buffers: []const DeltaBuffer,
+    ) !std.AutoHashMap([32]u8, MergedDelta) {
+        // Small input — sequential is faster (no thread overhead)
+        if (buffers.len <= 2) {
+            return self.inner.mergeBuffers(buffers);
+        }
+
+        const start = std.time.nanoTimestamp();
+        const allocator = self.inner.allocator;
+
+        // Phase 1: Pair up buffers and merge each pair in parallel
+        const num_pairs = buffers.len / 2;
+        const has_remainder = (buffers.len % 2) != 0;
+        const num_workers = @min(num_pairs, self.max_workers);
+
+        var contexts = try allocator.alloc(MergeWorkerCtx, num_pairs);
+        defer allocator.free(contexts);
+
+        var threads = try allocator.alloc(?std.Thread, num_pairs);
+        defer allocator.free(threads);
+
+        // Set up worker contexts
+        for (0..num_pairs) |i| {
+            contexts[i] = .{
+                .allocator = allocator,
+                .buf_a = buffers[i * 2].deltas.items,
+                .buf_b = buffers[i * 2 + 1].deltas.items,
+            };
+            threads[i] = null;
+        }
+
+        // Spawn threads (up to max_workers)
+        for (0..num_workers) |i| {
+            threads[i] = std.Thread.spawn(.{}, mergeWorkerFn, .{&contexts[i]}) catch null;
+            if (threads[i] == null) {
+                mergeWorkerFn(&contexts[i]); // Fallback: run inline
+            }
+        }
+        // Run remaining pairs inline if we hit max_workers
+        for (num_workers..num_pairs) |i| {
+            mergeWorkerFn(&contexts[i]);
+        }
+
+        // Join all threads
+        for (0..num_pairs) |i| {
+            if (threads[i]) |t| t.join();
+        }
+
+        // Check for errors
+        for (contexts) |ctx| {
+            if (ctx.err) |e| return e;
+        }
+
+        // Phase 2: Merge intermediate results sequentially
+        var final = contexts[0].result.?;
+        for (1..num_pairs) |i| {
+            var intermediate = contexts[i].result.?;
+            defer intermediate.deinit();
+            var it = intermediate.iterator();
+            while (it.next()) |entry| {
+                const gop = try final.getOrPut(entry.key_ptr.*);
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = entry.value_ptr.*;
+                } else {
+                    switch (entry.value_ptr.delta_type) {
+                        .Additive => gop.value_ptr.*.value += entry.value_ptr.value,
+                        .Absolute => {
+                            if (entry.value_ptr.last_tx_index > gop.value_ptr.*.last_tx_index) {
+                                gop.value_ptr.* = entry.value_ptr.*;
+                            }
+                        },
+                    }
+                }
+            }
+        }
+
+        // Phase 3: Handle remainder buffer (odd count)
+        if (has_remainder) {
+            const last_buf = buffers[buffers.len - 1];
+            for (last_buf.deltas.items) |delta| {
+                const gop = try final.getOrPut(delta.key);
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = MergedDelta{
+                        .value = delta.value,
+                        .delta_type = delta.delta_type,
+                        .last_tx_index = delta.tx_index,
+                    };
+                } else {
+                    switch (delta.delta_type) {
+                        .Additive => gop.value_ptr.*.value += delta.value,
+                        .Absolute => {
+                            if (delta.tx_index > gop.value_ptr.*.last_tx_index) {
+                                gop.value_ptr.*.value = delta.value;
+                                gop.value_ptr.*.last_tx_index = delta.tx_index;
+                            }
+                        },
+                    }
+                }
+            }
+        }
+
+        const end = std.time.nanoTimestamp();
+        self.inner.total_merge_time_ns += end - start;
+        self.inner.blocks_merged += 1;
+        self.inner.total_unique_keys += final.count();
+
+        return final;
+    }
+
+    pub fn getStats(self: *const Self) DeltaMerger.MergeStats {
+        return self.inner.getStats();
+    }
+};
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 test "DeltaBuffer balance delta" {
@@ -362,4 +552,54 @@ test "DeltaMerger absolute last-writer-wins" {
     const result = merged.get(key).?;
     try std.testing.expectEqual(@as(i128, 99), result.value);
     try std.testing.expectEqual(@as(u32, 10), result.last_tx_index);
+}
+
+test "ParallelDeltaMerger matches sequential merge" {
+    const allocator = std.testing.allocator;
+
+    // Create 4 lane buffers with overlapping keys
+    var bufs: [4]DeltaBuffer = undefined;
+    for (0..4) |i| {
+        bufs[i] = DeltaBuffer.init(allocator, @intCast(i));
+    }
+    defer for (&bufs) |*b| b.deinit();
+
+    const addr = types.Address{ .bytes = [_]u8{0x05} ** 20 };
+
+    // Each lane adds balance to the same address
+    try bufs[0].addBalanceDelta(addr, 100, 0);
+    try bufs[1].addBalanceDelta(addr, 200, 1);
+    try bufs[2].addBalanceDelta(addr, 300, 2);
+    try bufs[3].addBalanceDelta(addr, 400, 3);
+
+    // Also add a storage write from lane 0 and 3
+    const skey = [_]u8{0xBB} ** 32;
+    try bufs[0].addStorageWrite(skey, 10, 0);
+    try bufs[3].addStorageWrite(skey, 99, 3); // Higher tx_index wins
+
+    // Sequential merge
+    var seq_merger = DeltaMerger.init(allocator);
+    defer seq_merger.deinit();
+    const seq_bufs = [_]DeltaBuffer{ bufs[0], bufs[1], bufs[2], bufs[3] };
+    var seq_result = try seq_merger.mergeBuffers(&seq_bufs);
+    defer seq_result.deinit();
+
+    // Parallel merge
+    var par_merger = ParallelDeltaMerger.init(allocator, 2);
+    defer par_merger.deinit();
+    const par_bufs = [_]DeltaBuffer{ bufs[0], bufs[1], bufs[2], bufs[3] };
+    var par_result = try par_merger.mergeParallel(&par_bufs);
+    defer par_result.deinit();
+
+    // Verify both produce same results
+    const bal_key = state_mod.State.balance_key(addr);
+    const seq_bal = seq_result.get(bal_key).?;
+    const par_bal = par_result.get(bal_key).?;
+    try std.testing.expectEqual(seq_bal.value, par_bal.value);
+    try std.testing.expectEqual(@as(i128, 1000), par_bal.value); // 100+200+300+400
+
+    const seq_stor = seq_result.get(skey).?;
+    const par_stor = par_result.get(skey).?;
+    try std.testing.expectEqual(seq_stor.value, par_stor.value);
+    try std.testing.expectEqual(@as(i128, 99), par_stor.value); // Last writer wins
 }
