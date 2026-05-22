@@ -197,12 +197,10 @@ fn handleAccountCommand(allocator: std.mem.Allocator, args: []const []const u8) 
         std.crypto.random.bytes(&priv_key);
 
         // Derive address from private key
-        var addr: [20]u8 = undefined;
-        var hashBuf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&priv_key, &hashBuf, .{});
-        @memcpy(&addr, hashBuf[12..]);
+        const addr_val = try core.accounts.eoa.addressFromPrivKey(priv_key);
+        const addr = addr_val.bytes;
 
-        var addr_buf: [42]u8 = undefined;
+        var addr_buf: [66]u8 = undefined;
         const addr_hex = try @import("utils").hex.encodeBuffer(&addr_buf, &addr);
 
         // Save to keystore
@@ -354,18 +352,42 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.posix.sigaction(std.posix.SIG.INT, &act, null);
     std.posix.sigaction(std.posix.SIG.TERM, &act, null);
 
-    // 1. Storage
+    // 1. Storage (Arena-backed FlatTable — Flat KV, no per-block state root)
     try std.fs.cwd().makePath(dataDir);
-    var db = try storage.lsm.db.DB.init(allocator, dataDir);
-    defer db.deinit();
-    printComponentLine("├─", "Storage       ", "ZephyrDB + LSM engine");
-
-    var trie = try storage.verkle.trie.VerkleTrie.init(allocator, db.asAbstractDB());
-    defer trie.deinit();
-    printComponentLine("├─", "Verkle Trie   ", "IPA commitments");
-
-    var worldState = core.state.State.init(allocator, trie);
-    defer worldState.deinit();
+    var arena = try storage.zephyrdb.Arena.initForTesting(allocator, 512 * 1024 * 1024);
+    errdefer arena.deinit();
+    var flat_kv = try storage.zephyrdb.FlatTable.init(&arena, null);
+    errdefer {
+        flat_kv.deinit();
+        arena.deinit();
+    }
+    const db_adapter = storage.DB{
+        .ptr = &flat_kv,
+        .writeFn = struct {
+            fn write(ptr: *anyopaque, key: []const u8, value: []const u8) !void {
+                const ft: *storage.zephyrdb.FlatTable = @ptrCast(@alignCast(ptr));
+                var key32: [32]u8 = [_]u8{0} ** 32;
+                @memcpy(key32[0..@min(key.len, @as(usize, 32))], key);
+                try ft.put(key32, value);
+            }
+        }.write,
+        .readFn = struct {
+            fn read(ptr: *anyopaque, key: []const u8) ?[]const u8 {
+                const ft: *storage.zephyrdb.FlatTable = @ptrCast(@alignCast(ptr));
+                var key32: [32]u8 = [_]u8{0} ** 32;
+                @memcpy(key32[0..@min(key.len, @as(usize, 32))], key);
+                return ft.get(key32);
+            }
+        }.read,
+        .deleteFn = null,
+    };
+    var worldState = core.state.State.init(allocator, db_adapter);
+    defer {
+        worldState.deinit();
+        flat_kv.deinit();
+        arena.deinit();
+    }
+    printComponentLine("├─", "Storage       ", "Arena + FlatTable (FlatKV)");
 
     // 2. Network config + Genesis
     const network = core.genesis.getNetworkConfig(networkName);
@@ -383,9 +405,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             log.err("Invalid --miner.key: {}", .{err});
             return error.InvalidMinerKey;
         };
-        var hashBuf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&minerPrivKey, &hashBuf, .{});
-        @memcpy(&validatorAddr.bytes, hashBuf[12..]);
+        validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
     } else if (minerKeystorePath) |ks_path| {
         const ks_data = try std.fs.cwd().readFileAlloc(allocator, ks_path, 4096);
         defer allocator.free(ks_data);
@@ -394,21 +414,17 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         // NOTE: Keystore decryption not yet implemented — generating random key
         log.warn("Keystore decryption not implemented, using random key", .{});
         std.crypto.random.bytes(&minerPrivKey);
-        var hashBuf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&minerPrivKey, &hashBuf, .{});
-        @memcpy(&validatorAddr.bytes, hashBuf[12..]);
+        validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
     } else if (shouldMine) {
         std.crypto.random.bytes(&minerPrivKey);
-        var hashBuf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&minerPrivKey, &hashBuf, .{});
-        @memcpy(&validatorAddr.bytes, hashBuf[12..]);
+        validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
     } else {
         log.err("Mining requested but no key provided. Use --miner.key <hex> or --keystore <path>", .{});
         return error.MinerKeyRequired;
     }
 
     // 3. Blockchain
-    var chain = try core.blockchain.Blockchain.init(allocator, db.asAbstractDB(), @as(u64, @intCast(network.chainId)));
+    var chain = try core.blockchain.Blockchain.init(allocator, db_adapter, @as(u64, @intCast(network.chainId)));
     defer chain.deinit();
 
     var genesisHash: Hash = Hash.zero();
@@ -423,7 +439,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             .alloc = &alloc,
             .systemContracts = &sysContracts,
         };
-        const genesisBlock = core.genesis.applyGenesis(allocator, trie, genesis) catch {
+        const genesisBlock = core.genesis.applyGenesis(allocator, db_adapter, genesis) catch {
             log.err("Failed to create genesis block", .{});
             return;
         };
@@ -549,7 +565,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     printComponentLine("├─", "Adaptive      ", "ThreadPool + Snowball ready");
 
     // 6. VM Bridge (thread-safe, wired to both executors)
-    var riscvBridge = vm_bridge.VMBridge.init(allocator, .{
+    var riscvBridge = try vm_bridge.VMBridge.init(allocator, .{
         .enableJit = true,
         .optimizationLevel = .Fast,
         .traceExecution = false,
@@ -590,7 +606,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // 8. Epoch Integration
     const epochIntegration = try node.EpochIntegration.init(
         allocator,
-        db.asAbstractDB(),
+        db_adapter,
         100,
     );
     defer epochIntegration.deinit();
@@ -599,7 +615,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // 9. Historical State
     const historicalState = try core.historical_state.HistoricalState.init(
         allocator,
-        db.asAbstractDB(),
+        db_adapter,
         &worldState,
     );
     defer historicalState.deinit();

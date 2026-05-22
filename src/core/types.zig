@@ -14,16 +14,16 @@ const rlp = @import("encoding").rlp;
 
 // ── Primitives ──────────────────────────────────────────────────────────
 
-/// Represents a 20-byte account address.
+/// Represents a 32-byte account address.
 pub const Address = extern struct {
-    bytes: [20]u8,
+    bytes: [32]u8,
 
     pub fn zero() Address {
-        return .{ .bytes = [_]u8{0} ** 20 };
+        return .{ .bytes = [_]u8{0} ** 32 };
     }
 
     pub fn format(self: Address, writer: anytype) !void {
-        var buf: [42]u8 = undefined;
+        var buf: [66]u8 = undefined;
         _ = @import("utils").hex.encodeBuffer(&buf, &self.bytes) catch unreachable;
         try writer.writeAll(&buf);
     }
@@ -33,11 +33,11 @@ pub const Address = extern struct {
     }
 
     pub fn decodeFromRLP(self: *Address, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        return try rlp.deserialize([20]u8, allocator, serialized, &self.bytes);
+        return try rlp.deserialize([32]u8, allocator, serialized, &self.bytes);
     }
 
     pub fn encodeToRLP(self: Address, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        try rlp.serialize([20]u8, allocator, self.bytes, listData);
+        try rlp.serialize([32]u8, allocator, self.bytes, listData);
     }
 };
 
@@ -165,70 +165,158 @@ pub const Header = struct {
 /// Note: This format does not include EVM-style access lists; dependencies
 /// are determined by the DAG mempool.
 pub const Transaction = struct {
-    nonce: u64,
-    gasPrice: u256,
-    gasLimit: u64,
-    from: Address,
-    to: ?Address,
-    value: u256,
-    data: []const u8,
-    v: u256,
-    r: u256,
-    s: u256,
+    pub_key: [32]u8 = [_]u8{0} ** 32,  // Sender's Ed25519 public key
+    from: Address = Address.zero(),    // Cached derived address: blake3(pub_key)
+    to: ?Address = null,
+    value: u256 = 0,
+    gasLimit: u64 = 0,
+    gasPrice: u64 = 0,
+    nonce: u64 = 0,
+    signature: [64]u8 = [_]u8{0} ** 64,
+    data: []const u8 = &[_]u8{},
 
-    /// Serialization format excludes `from` (derived from signature)
-    const WireFormat = struct {
-        nonce: u64,
-        gasPrice: u256,
+    pub const BinaryFormat = extern struct {
+        pub_key: [32]u8,
+        target: [32]u8,
+        value: [32]u8,
         gasLimit: u64,
-        to: ?Address,
-        value: u256,
-        data: []const u8,
-        v: u256,
-        r: u256,
-        s: u256,
+        gasPrice: u64,
+        nonce: u64,
+        signature: [64]u8,
+        calldata_len: u32,
     };
 
+    pub fn encodeBinary(self: Transaction, writer: anytype) !void {
+        var bf: BinaryFormat = undefined;
+        @memcpy(&bf.pub_key, &self.pub_key);
+        if (self.to) |t| {
+            @memcpy(&bf.target, &t.bytes);
+        } else {
+            @memset(&bf.target, 0);
+        }
+        std.mem.writeInt(u256, &bf.value, self.value, .big);
+        bf.gasLimit = self.gasLimit;
+        bf.gasPrice = self.gasPrice;
+        bf.nonce = self.nonce;
+        @memcpy(&bf.signature, &self.signature);
+        bf.calldata_len = @intCast(self.data.len);
+
+        try writer.writeAll(std.mem.asBytes(&bf));
+        try writer.writeAll(self.data);
+    }
+
+    pub fn decodeBinary(self: *Transaction, allocator: std.mem.Allocator, bytes: []const u8) !void {
+        if (bytes.len < @sizeOf(BinaryFormat)) return error.InvalidLength;
+        const bf = std.mem.bytesAsValue(BinaryFormat, bytes[0..@sizeOf(BinaryFormat)]);
+        const calldata = bytes[@sizeOf(BinaryFormat)..];
+        if (calldata.len != bf.calldata_len) return error.InvalidLength;
+
+        self.pub_key = bf.pub_key;
+        std.crypto.hash.Blake3.hash(&bf.pub_key, &self.from.bytes, .{});
+
+        var all_zeros = true;
+        for (bf.target) |b| {
+            if (b != 0) {
+                all_zeros = false;
+                break;
+            }
+        }
+        if (all_zeros) {
+            self.to = null;
+        } else {
+            self.to = Address{ .bytes = bf.target };
+        }
+        self.value = std.mem.readInt(u256, &bf.value, .big);
+        self.gasLimit = bf.gasLimit;
+        self.gasPrice = bf.gasPrice;
+        self.nonce = bf.nonce;
+        self.signature = bf.signature;
+        self.data = try allocator.dupe(u8, calldata);
+    }
+
+    pub fn decodeBinaryZeroCopy(self: *Transaction, bytes: []const u8) !void {
+        if (bytes.len < @sizeOf(BinaryFormat)) return error.InvalidLength;
+        const bf = std.mem.bytesAsValue(BinaryFormat, bytes[0..@sizeOf(BinaryFormat)]);
+        const calldata = bytes[@sizeOf(BinaryFormat)..];
+        if (calldata.len != bf.calldata_len) return error.InvalidLength;
+
+        self.pub_key = bf.pub_key;
+        std.crypto.hash.Blake3.hash(&bf.pub_key, &self.from.bytes, .{});
+
+        var all_zeros = true;
+        for (bf.target) |b| {
+            if (b != 0) {
+                all_zeros = false;
+                break;
+            }
+        }
+        if (all_zeros) {
+            self.to = null;
+        } else {
+            self.to = Address{ .bytes = bf.target };
+        }
+        self.value = std.mem.readInt(u256, &bf.value, .big);
+        self.gasLimit = bf.gasLimit;
+        self.gasPrice = bf.gasPrice;
+        self.nonce = bf.nonce;
+        self.signature = bf.signature;
+        self.data = calldata;
+    }
+
     pub fn encodeToRLP(self: Transaction, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        const wire = WireFormat{
-            .nonce = self.nonce,
-            .gasPrice = self.gasPrice,
-            .gasLimit = self.gasLimit,
-            .to = self.to,
-            .value = self.value,
-            .data = self.data,
-            .v = self.v,
-            .r = self.r,
-            .s = self.s,
-        };
-        try rlp.serialize(WireFormat, allocator, wire, listData);
+        var arr = std.ArrayListUnmanaged(u8).empty;
+        defer arr.deinit(allocator);
+        try self.encodeBinary(arr.writer(allocator));
+        try rlp.serialize([]const u8, allocator, arr.items, listData);
     }
 
     pub fn decodeFromRLP(self: *Transaction, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        var wire: WireFormat = undefined;
-        const consumed = try rlp.deserialize(WireFormat, allocator, serialized, &wire);
-        self.* = Transaction{
-            .nonce = wire.nonce,
-            .gasPrice = wire.gasPrice,
-            .gasLimit = wire.gasLimit,
-            .from = Address.zero(), // Recovered from signature by caller
-            .to = wire.to,
-            .value = wire.value,
-            .data = wire.data,
-            .v = wire.v,
-            .r = wire.r,
-            .s = wire.s,
-        };
+        var bytes: []const u8 = undefined;
+        const consumed = try rlp.deserialize([]const u8, allocator, serialized, &bytes);
+        try self.decodeBinary(allocator, bytes);
         return consumed;
+    }
+
+    pub fn getSigningMessage(self: *const Transaction, allocator: std.mem.Allocator) ![]u8 {
+        var bf: BinaryFormat = undefined;
+        @memcpy(&bf.pub_key, &self.pub_key);
+        if (self.to) |t| {
+            @memcpy(&bf.target, &t.bytes);
+        } else {
+            @memset(&bf.target, 0);
+        }
+        std.mem.writeInt(u256, &bf.value, self.value, .big);
+        bf.gasLimit = self.gasLimit;
+        bf.gasPrice = self.gasPrice;
+        bf.nonce = self.nonce;
+        @memset(&bf.signature, 0);
+        bf.calldata_len = @intCast(self.data.len);
+
+        const msg = try allocator.alloc(u8, @sizeOf(BinaryFormat) + self.data.len);
+        @memcpy(msg[0..@sizeOf(BinaryFormat)], std.mem.asBytes(&bf));
+        @memcpy(msg[@sizeOf(BinaryFormat)..], self.data);
+        return msg;
     }
 
     pub fn hash(self: *const Transaction) Hash {
         var h_res = Hash.zero();
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        const ally = std.heap.page_allocator;
-        const encoded = rlp.encode(ally, self.*) catch return h_res;
-        defer ally.free(encoded);
-        hasher.update(encoded);
+        var hasher = std.crypto.hash.Blake3.init(.{});
+        var bf: BinaryFormat = undefined;
+        @memcpy(&bf.pub_key, &self.pub_key);
+        if (self.to) |t| {
+            @memcpy(&bf.target, &t.bytes);
+        } else {
+            @memset(&bf.target, 0);
+        }
+        std.mem.writeInt(u256, &bf.value, self.value, .big);
+        bf.gasLimit = self.gasLimit;
+        bf.gasPrice = self.gasPrice;
+        bf.nonce = self.nonce;
+        @memcpy(&bf.signature, &self.signature);
+        bf.calldata_len = @intCast(self.data.len);
+
+        hasher.update(std.mem.asBytes(&bf));
+        hasher.update(self.data);
         hasher.final(&h_res.bytes);
         return h_res;
     }
@@ -238,15 +326,13 @@ pub const Transaction = struct {
     }
 
     pub fn deriveContractAddress(self: *const Transaction) Address {
-        const ally = std.heap.page_allocator;
-        const Derivation = struct { from: Address, nonce: u64 };
-        const d = Derivation{ .from = self.from, .nonce = self.nonce };
-        const encoded = rlp.encode(ally, d) catch return Address.zero();
-        defer ally.free(encoded);
-        var h: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(encoded, &h, .{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
+        hasher.update(&self.from.bytes);
+        var nonceBuf: [8]u8 = undefined;
+        std.mem.writeInt(u64, &nonceBuf, self.nonce, .big);
+        hasher.update(&nonceBuf);
         var addr: Address = undefined;
-        @memcpy(&addr.bytes, h[12..32]);
+        hasher.final(&addr.bytes);
         return addr;
     }
 };

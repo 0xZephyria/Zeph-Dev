@@ -47,9 +47,9 @@ pub const StateBridge = struct {
     /// The current state overlay (transaction-scoped isolation)
     overlay: *anyopaque,
     /// Current executing contract address
-    selfAddress: [20]u8,
+    selfAddress: [32]u8,
     /// Message sender (msg.sender — changes per call frame)
-    caller: [20]u8,
+    caller: [32]u8,
     /// Call value in wei
     value: [32]u8,
     /// Call depth (for reentrancy protection)
@@ -67,15 +67,24 @@ pub const StateBridge = struct {
     /// Chain ID
     chainId: u64,
     /// Transaction originator (tx.origin — constant across all call frames)
-    txOrigin: [20]u8,
+    txOrigin: [32]u8,
     /// Transaction gas price
     gasPrice: u64,
     /// Block coinbase (validator/miner address)
-    coinbase: [20]u8,
+    coinbase: [32]u8,
     /// Block base fee (EIP-1559)
     baseFee: u64,
     /// Block prevRandao (VRF randomness from consensus)
     prevRandao: [32]u8,
+
+    // ── Lane Queues & TX Index for global storage/receipts ────
+    deltaQueue: ?*core.accounts.DeltaQueue,
+    receiptQueue: ?*core.accounts.ReceiptQueue,
+    txIndex: u32,
+
+    /// VM execution pool (reusable sandbox memory, code cache)
+    /// null = legacy per-TX allocation
+    vm_pool: ?*vm.vmPool.VMPool,
 
     /// Accumulated logs for this call frame
     logs: std.ArrayList(Log),
@@ -94,7 +103,7 @@ pub const StateBridge = struct {
     rejectedWrites: u32,
 
     pub const Log = struct {
-        address: [20]u8,
+        address: [32]u8,
         topics: [][32]u8,
         data: []u8,
     };
@@ -104,8 +113,8 @@ pub const StateBridge = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         overlay: *anyopaque,
-        selfAddress: [20]u8,
-        caller: [20]u8,
+        selfAddress: [32]u8,
+        caller: [32]u8,
         value: [32]u8,
         gas: u64,
     ) Self {
@@ -121,11 +130,15 @@ pub const StateBridge = struct {
             .blockNumber = 0,
             .timestamp = 0,
             .chainId = 99999,
-            .txOrigin = [_]u8{0} ** 20,
+            .txOrigin = [_]u8{0} ** 32,
             .gasPrice = 0,
-            .coinbase = [_]u8{0} ** 20,
+            .coinbase = [_]u8{0} ** 32,
             .baseFee = 0,
             .prevRandao = [_]u8{0} ** 32,
+            .deltaQueue = null,
+            .receiptQueue = null,
+            .txIndex = 0,
+            .vm_pool = null,
             .logs = .{},
             .allocator = allocator,
             // DAG write-key enforcement (null = unrestricted for legacy path)
@@ -168,6 +181,12 @@ pub const StateBridge = struct {
         self.prevRandao = parent.prevRandao;
         // Inherit write-key restrictions to sub-calls
         self.allowedWriteKeys = parent.allowedWriteKeys;
+        // Inherit VM execution pool
+        self.vm_pool = parent.vm_pool;
+        // Inherit lane queues & TX index
+        self.deltaQueue = parent.deltaQueue;
+        self.receiptQueue = parent.receiptQueue;
+        self.txIndex = parent.txIndex;
     }
 
     /// Creates a StorageBackend interface for the VM dispatch layer.
@@ -207,13 +226,13 @@ pub const StateBridge = struct {
     }
 
     /// Derive the storage_cell key for DAG write-key validation.
-    /// StorageKey = keccak256(contract_address || slot)
-    fn deriveStorageKey(contract: [20]u8, slot: [32]u8) [32]u8 {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        hasher.update(&contract);
-        hasher.update(&slot);
+    /// StorageKey = blake3(contract_address || slot)
+    fn deriveStorageKey(contract: [32]u8, slot: [32]u8) [32]u8 {
+        var input: [64]u8 = undefined;
+        @memcpy(input[0..32], &contract);
+        @memcpy(input[32..64], &slot);
         var key: [32]u8 = undefined;
-        hasher.final(&key);
+        std.crypto.hash.Blake3.hash(&input, &key, .{});
         return key;
     }
 
@@ -251,12 +270,68 @@ pub const StateBridge = struct {
         return original;
     }
 
+    /// Load a value from contract's user-specific derived storage
+    pub fn derivedStorageLoad(self: *Self, userBytes: [32]u8, slot: [32]u8) [32]u8 {
+        const state: *Overlay = @ptrCast(@alignCast(self.overlay));
+        const user = Address{ .bytes = userBytes };
+        const contract = Address{ .bytes = self.selfAddress };
+        return state.getDerivedStorage(user, contract, slot);
+    }
+
+    /// Store a value in contract's user-specific derived storage
+    pub fn derivedStorageStore(self: *Self, userBytes: [32]u8, slot: [32]u8, value: [32]u8) !void {
+        const state: *Overlay = @ptrCast(@alignCast(self.overlay));
+        const user = Address{ .bytes = userBytes };
+        const contract = Address{ .bytes = self.selfAddress };
+        try state.setDerivedStorage(user, contract, slot, value);
+    }
+
+    /// Load a value from contract's global storage
+    pub fn globalStorageLoad(self: *Self, slot: [32]u8) [32]u8 {
+        const state: *Overlay = @ptrCast(@alignCast(self.overlay));
+        const contract = Address{ .bytes = self.selfAddress };
+        return state.getGlobalStorage(contract, slot);
+    }
+
+    /// Store a delta in contract's global storage, updating local overlay and pushing to delta queue
+    pub fn globalStorageStore(self: *Self, slot: [32]u8, delta: [32]u8, isAddition: bool) !void {
+        const state: *Overlay = @ptrCast(@alignCast(self.overlay));
+        const contract = Address{ .bytes = self.selfAddress };
+
+        // Read current value
+        const current_val_bytes = state.getGlobalStorage(contract, slot);
+        const current_val = bytesToU256(current_val_bytes);
+        const delta_val = bytesToU256(delta);
+
+        // Compute new value
+        const new_val = if (isAddition)
+            current_val +% delta_val
+        else
+            current_val -% delta_val;
+
+        // Write new value to overlay
+        var new_val_bytes: [32]u8 = undefined;
+        std.mem.writeInt(u256, &new_val_bytes, new_val, .big);
+        try state.setGlobalStorage(contract, slot, new_val_bytes);
+
+        // Push AccumulatorDelta to deltaQueue
+        if (self.deltaQueue) |dq| {
+            try dq.push(.{
+                .contract = contract,
+                .slot = slot,
+                .deltaValue = delta,
+                .isAddition = isAddition,
+                .txIndex = self.txIndex,
+            });
+        }
+    }
+
     // ================================================================
     // Account operations
     // ================================================================
 
     /// Get balance of an address
-    pub fn getBalance(self: *Self, addrBytes: [20]u8) [32]u8 {
+    pub fn getBalance(self: *Self, addrBytes: [32]u8) [32]u8 {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
         const addr = Address{ .bytes = addrBytes };
         const bal = state.getBalance(addr);
@@ -266,7 +341,7 @@ pub const StateBridge = struct {
     }
 
     /// Transfer value from current contract to a target address
-    pub fn transfer(self: *Self, to: [20]u8, amount: [32]u8) !void {
+    pub fn transfer(self: *Self, to: [32]u8, amount: [32]u8) !void {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
         const fromAddr = Address{ .bytes = self.selfAddress };
         const toAddr = Address{ .bytes = to };
@@ -276,18 +351,18 @@ pub const StateBridge = struct {
     }
 
     /// Get code at an address
-    pub fn getCode(self: *Self, addrBytes: [20]u8) ![]const u8 {
+    pub fn getCode(self: *Self, addrBytes: [32]u8) ![]const u8 {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
         const addr = Address{ .bytes = addrBytes };
         return state.getCode(addr);
     }
 
     /// Get the code size at an address
-    pub fn getCodeSize(self: *Self, addrBytes: [20]u8) u64 {
+    pub fn getCodeSize(self: *Self, addrBytes: [32]u8) u64 {
         const code = self.getCode(addrBytes) catch return 0;
         defer if (code.len > 0) {
             const state: *Overlay = @ptrCast(@alignCast(self.overlay));
-            state.allocator.free(code);
+            state.general_allocator.free(code);
         };
         return code.len;
     }
@@ -323,7 +398,7 @@ pub const StateBridge = struct {
     /// the same Overlay for isolated-per-TX semantics.
     pub fn call(
         self: *Self,
-        target: [20]u8,
+        target: [32]u8,
         callValue: [32]u8,
         _: []const u8,
         gas: u64,
@@ -404,7 +479,7 @@ pub const StateBridge = struct {
 
     /// Execute SELFDESTRUCT: transfer all balance to beneficiary,
     /// mark account for deletion at end of transaction.
-    pub fn selfDestruct(self: *Self, beneficiary: [20]u8) !void {
+    pub fn selfDestruct(self: *Self, beneficiary: [32]u8) !void {
         const state: *Overlay = @ptrCast(@alignCast(self.overlay));
         const selfAddr = Address{ .bytes = self.selfAddress };
         const beneficiaryAddr = Address{ .bytes = beneficiary };
@@ -436,7 +511,7 @@ pub const StateBridge = struct {
         return self.chainId;
     }
 
-    pub fn msgSender(self: *Self) [20]u8 {
+    pub fn msgSender(self: *Self) [32]u8 {
         return self.caller;
     }
 
@@ -444,7 +519,7 @@ pub const StateBridge = struct {
         return self.value;
     }
 
-    pub fn address(self: *Self) [20]u8 {
+    pub fn address(self: *Self) [32]u8 {
         return self.selfAddress;
     }
 };

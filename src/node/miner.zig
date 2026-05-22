@@ -165,9 +165,8 @@ pub const Miner = struct {
             };
             _ = try block_rewards.applyRewards(self.state, self.rewardConfig, rewardCtx);
 
-            // 5. Commit Verkle trie and recompute state root
-            try self.state.trie.commit();
-            block.header.verkleRoot = types.Hash{ .bytes = self.state.trie.rootHash() };
+            // 5. Flat KV: no per-block state root
+            block.header.verkleRoot = types.Hash.zero();
 
             // 6. Compute woven root from thread partitioning
             const thread_count_now = self.engine.getThreadCount();

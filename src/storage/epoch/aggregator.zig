@@ -144,7 +144,7 @@ pub const EpochAggregator = struct {
             if (tx.value > 0) {
                 const key = TransferKey{
                     .from = tx.from.bytes,
-                    .to = if (tx.to) |to_addr| to_addr.bytes else [_]u8{0} ** 20,
+                    .to = if (tx.to) |to_addr| to_addr.bytes else [_]u8{0} ** 32,
                 };
 
                 const gop = try self.transfers.getOrPut(key);
@@ -369,10 +369,10 @@ pub const EpochAggregator = struct {
                 for (net_transfers) |*transfer| {
                     if (offset + 78 > transfers_data.len) break;
 
-                    @memcpy(&transfer.from, transfers_data[offset..][0..20]);
-                    offset += 20;
-                    @memcpy(&transfer.to, transfers_data[offset..][0..20]);
-                    offset += 20;
+                    @memcpy(&transfer.from, transfers_data[offset..][0..32]);
+                    offset += 32;
+                    @memcpy(&transfer.to, transfers_data[offset..][0..32]);
+                    offset += 32;
                     transfer.total_value = std.mem.readInt(u256, transfers_data[offset..][0..32], .big);
                     offset += 32;
                     transfer.tx_count = std.mem.readInt(u32, transfers_data[offset..][0..4], .big);

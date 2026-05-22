@@ -258,7 +258,7 @@ pub const OverflowMap = struct {
 pub const SlotStore = struct {
     /// Map from account address to its InlineSlots
     /// Uses arena-backed hash map indexed by first 4 bytes of address
-    slots: std.AutoHashMap([20]u8, *InlineSlots),
+    slots: std.AutoHashMap([32]u8, *InlineSlots),
     arena: *Arena,
     allocator: std.mem.Allocator,
 
@@ -270,7 +270,7 @@ pub const SlotStore = struct {
 
     pub fn init(allocator: std.mem.Allocator, arena: *Arena) Self {
         return .{
-            .slots = std.AutoHashMap([20]u8, *InlineSlots).init(allocator),
+            .slots = std.AutoHashMap([32]u8, *InlineSlots).init(allocator),
             .arena = arena,
             .allocator = allocator,
             .total_loads = Atomic(u64).init(0),
@@ -283,7 +283,7 @@ pub const SlotStore = struct {
     }
 
     /// Load a storage value for an account
-    pub fn load(self: *Self, account: [20]u8, key: StorageKey) StorageValue {
+    pub fn load(self: *Self, account: [32]u8, key: StorageKey) StorageValue {
         _ = self.total_loads.fetchAdd(1, .monotonic);
         if (self.slots.get(account)) |inline_slots| {
             return inline_slots.load(key);
@@ -292,7 +292,7 @@ pub const SlotStore = struct {
     }
 
     /// Store a value for an account. Returns the previous value.
-    pub fn store(self: *Self, account: [20]u8, key: StorageKey, value: StorageValue) !StorageValue {
+    pub fn store(self: *Self, account: [32]u8, key: StorageKey, value: StorageValue) !StorageValue {
         _ = self.total_stores.fetchAdd(1, .monotonic);
 
         const result = self.slots.getOrPut(account) catch return error.OutOfMemory;
@@ -387,8 +387,8 @@ test "SlotStore multi-account" {
     var store = SlotStore.init(std.testing.allocator, &arena);
     defer store.deinit();
 
-    const acct1 = [_]u8{0xAA} ** 20;
-    const acct2 = [_]u8{0xBB} ** 20;
+    const acct1 = [_]u8{0xAA} ** 32;
+    const acct2 = [_]u8{0xBB} ** 32;
     const key = [_]u8{0x01} ** 32;
     var val1: StorageValue = [_]u8{0} ** 32;
     val1[31] = 10;

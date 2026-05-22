@@ -108,7 +108,7 @@ fn benchPedersenHash(allocator: Allocator) !void {
 
         const start = std.time.microTimestamp();
         for (0..N) |i| {
-            _ = try xcrs.commit(vecs[i][0..vec_len]);
+            _ = xcrs.commit(vecs[i][0..vec_len]);
         }
         std.debug.print("takes {}µs\n", .{@divTrunc((std.time.microTimestamp() - start), (N))});
     }
@@ -131,7 +131,7 @@ fn benchIPAs(allocator: Allocator) !void {
         for (0..prover_queries[i].A.len) |j| {
             prover_queries[i].A[j] = Fr.fromInteger(i + j + 0x424242);
         }
-        prover_queries[i].commitment = try xcrs.commit(&prover_queries[i].A);
+        prover_queries[i].commitment = xcrs.commit(&prover_queries[i].A);
         prover_queries[i].eval_point = Fr.fromInteger(i + 0x414039).add(z256);
     }
 
@@ -296,7 +296,7 @@ fn analyzePedersenHashConfigs(allocator: Allocator) !void {
                 inline for (vec_lens) |vec_len| {
                     const start = std.time.microTimestamp();
                     for (0..N) |_| {
-                        _ = try precomp.msm(scalars[0..vec_len]);
+                        _ = precomp.msm(scalars[0..vec_len]);
                     }
                     std.debug.print("{}={}µs ", .{ vec_len, @divTrunc((std.time.microTimestamp() - start), (N)) });
                 }
@@ -324,7 +324,7 @@ fn analyzePedersenHashConfigs(allocator: Allocator) !void {
                 inline for (vec_lens) |vec_len| {
                     const start = std.time.microTimestamp();
                     for (0..N) |_| {
-                        _ = try hybprecomp.msm(scalars[0..vec_len]);
+                        _ = hybprecomp.msm(scalars[0..vec_len]);
                     }
                     std.debug.print("{}={}µs ", .{ vec_len, @divTrunc((std.time.microTimestamp() - start), (N)) });
                 }

@@ -30,6 +30,7 @@ const VMResult = core.dag_executor.VMResult;
 const state_mod = core.state;
 const state_bridge = @import("state_bridge");
 const StateBridge = state_bridge.StateBridge;
+const vm = @import("vm");
 
 /// VMBridge configuration
 /// Configuration options for the VMBridge.
@@ -59,11 +60,11 @@ pub const ExecutionContext = struct {
     /// Block timestamp (seconds since Unix epoch)
     timestamp: u64 = 0,
     /// Transaction originator (tx.origin)
-    txOrigin: [20]u8 = [_]u8{0} ** 20,
+    txOrigin: [32]u8 = [_]u8{0} ** 32,
     /// Transaction gas price
     gasPrice: u64 = 0,
     /// Block coinbase (validator address from consensus)
-    coinbase: [20]u8 = [_]u8{0} ** 20,
+    coinbase: [32]u8 = [_]u8{0} ** 32,
     /// Block base fee (EIP-1559)
     baseFee: u64 = 0,
     /// Block prevRandao (VRF output from adaptive consensus)
@@ -104,21 +105,28 @@ pub const VMBridge = struct {
     /// Current execution context (set per-block by the miner/block producer)
     /// Read by parallel lanes — set once before block execution, immutable during.
     execCtx: ExecutionContext,
+    /// Pre-allocated VM sandbox pool (eliminates 512KB alloc/free per TX)
+    vm_pool: vm.vmPool.VMPool,
 
     /// Initializes a new VMBridge instance.
-    pub fn init(allocator: std.mem.Allocator, config: VMConfig) VMBridge {
+    pub fn init(allocator: std.mem.Allocator, config: VMConfig) !VMBridge {
         return .{
             .allocator = allocator,
             .config = config,
             .executionCount = std.atomic.Value(u64).init(0),
             .totalGasUsed = std.atomic.Value(u64).init(0),
             .execCtx = .{},
+            .vm_pool = try vm.vmPool.VMPool.init(allocator, .{
+                .pool_size = 128,
+                .max_overflow = 128,
+                .code_cache_size = 100,
+            }),
         };
     }
 
     /// Deinitializes the VMBridge instance.
     pub fn deinit(self: *VMBridge) void {
-        _ = self;
+        self.vm_pool.deinit();
     }
 
     /// Set execution context for the current block.
@@ -178,7 +186,11 @@ pub const VMBridge = struct {
         gas: u64,
         overlay: *state_mod.Overlay,
         caller: core.types.Address,
+        self_address: core.types.Address,
         value: u256,
+        delta_queue: ?*core.accounts.DeltaQueue,
+        receipt_queue: ?*core.accounts.ReceiptQueue,
+        tx_index: u32,
     ) VMResult {
         // Thread-safe: extract VMBridge from ctx pointer, no global state
         const bridge: *VMBridge = @ptrCast(@alignCast(ctx));
@@ -199,11 +211,15 @@ pub const VMBridge = struct {
         var sb = StateBridge.init(
             bridge.allocator,
             @ptrCast(overlay),
-            caller.bytes, // self_address (contract being called)
+            self_address.bytes, // self_address (contract being called)
             caller.bytes, // caller (msg.sender)
             u256ToBytes(value), // call value
             gas,
         );
+        sb.deltaQueue = delta_queue;
+        sb.receiptQueue = receipt_queue;
+        sb.txIndex = tx_index;
+        sb.vm_pool = &bridge.vm_pool;
         defer sb.deinit();
 
         // Wire full execution context from the block/TX environment

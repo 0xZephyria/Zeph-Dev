@@ -13,8 +13,8 @@ const std = @import("std");
 const Atomic = std.atomic.Value;
 const Arena = @import("arena.zig").Arena;
 
-/// 20-byte Ethereum address
-pub const Address = [20]u8;
+/// 32-byte address
+pub const Address = [32]u8;
 
 /// 32-byte hash
 pub const Hash = [32]u8;
@@ -23,14 +23,14 @@ pub const Hash = [32]u8;
 /// Layout is optimized for spatial locality of hot fields.
 pub const AccountEntry = extern struct {
     // ---- Cache line 1 (64 bytes): Hot data ----
-    address: Address, // 20 bytes — lookup key
+    address: Address, // 32 bytes — lookup key
     flags: u32, // 4 bytes — bitfield (exists, has_code, is_contract, dirty, etc.)
     nonce: u64, // 8 bytes — transaction nonce
-    balance: [32]u8, // 32 bytes — u256 balance (big-endian)
+    _padding: [20]u8, // 20 bytes to align to 64 bytes
 
     // ---- Cache line 2 (64 bytes): Cold data ----
+    balance: [32]u8, // 32 bytes — u256 balance (big-endian)
     code_hash: Hash, // 32 bytes — keccak256 of contract code (or empty hash)
-    storage_root: Hash, // 32 bytes — Verkle trie root of storage
 
     /// Probe distance for Robin Hood hashing (how far from ideal position)
     pub fn probeDistance(self: *const AccountEntry) u32 {
@@ -242,9 +242,9 @@ pub const AccountTable = struct {
             .address = address,
             .flags = FLAG_EXISTS,
             .nonce = 0,
+            ._padding = [_]u8{0} ** 20,
             .balance = [_]u8{0} ** 32,
             .code_hash = EMPTY_CODE_HASH,
-            .storage_root = [_]u8{0} ** 32,
         };
 
         var idx = hashAddress(address) & target_mask;
@@ -480,8 +480,8 @@ test "AccountTable basic operations" {
 
     var table = try AccountTable.init(&arena, 1024);
 
-    const addr1 = [_]u8{0x01} ** 20;
-    const addr2 = [_]u8{0x02} ** 20;
+    const addr1 = [_]u8{0x01} ** 32;
+    const addr2 = [_]u8{0x02} ** 32;
 
     // Initially empty
     try std.testing.expect(table.get(addr1) == null);
@@ -511,7 +511,7 @@ test "AccountTable Robin Hood probing" {
 
     // Insert 100 accounts — should handle collisions gracefully
     for (0..100) |i| {
-        var addr: [20]u8 = [_]u8{0} ** 20;
+        var addr: [32]u8 = [_]u8{0} ** 32;
         addr[0] = @truncate(i);
         addr[1] = @truncate(i >> 8);
         _ = try table.getOrCreate(addr);
@@ -521,7 +521,7 @@ test "AccountTable Robin Hood probing" {
 
     // Verify all are retrievable
     for (0..100) |i| {
-        var addr: [20]u8 = [_]u8{0} ** 20;
+        var addr: [32]u8 = [_]u8{0} ** 32;
         addr[0] = @truncate(i);
         addr[1] = @truncate(i >> 8);
         try std.testing.expect(table.get(addr) != null);
@@ -538,7 +538,7 @@ test "AccountTable iterator" {
     var table = try AccountTable.init(&arena, 256);
 
     for (0..50) |i| {
-        var addr: [20]u8 = [_]u8{0} ** 20;
+        var addr: [32]u8 = [_]u8{0} ** 32;
         addr[0] = @truncate(i);
         _ = try table.getOrCreate(addr);
     }
@@ -561,9 +561,9 @@ test "AccountTable progressive resize" {
     try std.testing.expect(!table.is_resizing);
 
     // Insert 11 entries
-    var addresses: [20][20]u8 = undefined;
+    var addresses: [20][32]u8 = undefined;
     for (0..11) |i| {
-        addresses[i] = [_]u8{0} ** 20;
+        addresses[i] = [_]u8{0} ** 32;
         addresses[i][0] = @truncate(i);
         addresses[i][1] = 0xFF; // Avoid simple collision with index
         _ = try table.getOrCreate(addresses[i]);
@@ -573,13 +573,13 @@ test "AccountTable progressive resize" {
     try std.testing.expectEqual(@as(u32, 11), table.count.load(.acquire));
 
     // Insert 12th entry
-    addresses[11] = [_]u8{0} ** 20;
+    addresses[11] = [_]u8{0} ** 32;
     addresses[11][0] = 11;
     addresses[11][1] = 0xFF;
     _ = try table.getOrCreate(addresses[11]);
 
     // Insert 13th entry (should trigger resize, since count is 12 and 12 * 10 >= 16 * 7)
-    addresses[12] = [_]u8{0} ** 20;
+    addresses[12] = [_]u8{0} ** 32;
     addresses[12][0] = 12;
     addresses[12][1] = 0xFF;
     _ = try table.getOrCreate(addresses[12]);

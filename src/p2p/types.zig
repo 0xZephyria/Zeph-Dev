@@ -164,7 +164,7 @@ pub const VoteMsg = struct {
 
 pub const AuthMsg = struct {
     signature: [64]u8,
-    publicKey: [65]u8,
+    publicKey: [32]u8,   // Ed25519 public key (32 bytes)
     validatorAddress: core.types.Address,
     stakeProof: [32]u8,
 };

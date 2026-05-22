@@ -326,9 +326,10 @@ pub const RpcHandler = struct {
                 // Contract creation — simulate initcode execution
 
                 var overlay = core.state.Overlay.init(allocator, self.state);
+                overlay.finalizeInit();
                 defer overlay.deinit();
 
-                const vm_result = self.dagExecutor.vmCallback.?.execute(call_data, call_data, 30_000_000, &overlay, from_addr, value);
+                const vm_result = self.dagExecutor.vmCallback.?.execute(call_data, &[_]u8{}, 30_000_000, &overlay, from_addr, from_addr, value, null, null, 0);
                 defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
                 if (vm_result.success) {
                     gas += vm_result.gasUsed;
@@ -345,12 +346,11 @@ pub const RpcHandler = struct {
                 defer if (code.len > 0) self.state.allocator.free(code);
 
                 if (code.len > 0) {
-                    var overlay = self.state.newOverlay() catch {
-                        return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{gas}) };
-                    };
+                    var overlay: core.state.Overlay = undefined;
+                    self.state.newOverlay(&overlay);
                     defer overlay.deinit();
 
-                    const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, value);
+                    const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, to_addr, value, null, null, 0);
                     defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
                     if (vm_result.success) {
                         gas = 21000 + vm_result.gasUsed;
@@ -413,10 +413,11 @@ pub const RpcHandler = struct {
         } else 0;
 
         // Execute on a read-only overlay (not committed)
-        var overlay = try self.state.newOverlay();
+        var overlay: core.state.Overlay = undefined;
+        self.state.newOverlay(&overlay);
         defer overlay.deinit();
 
-        const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, value);
+        const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, to_addr, value, null, null, 0);
         defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
 
         if (vm_result.success and vm_result.returnData.len > 0) {
@@ -756,16 +757,11 @@ pub const RpcHandler = struct {
                 try tx_map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
                 try tx_map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
                 try tx_map.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
-                try tx_map.put("type", std.json.Value{ .string = "0x2" }); // Default to EIP-1559 for now
+                try tx_map.put("type", std.json.Value{ .string = "0x0" });
                 try tx_map.put("chainId", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{self.chain.chainId}) });
-                // Signature
-                try tx_map.put("v", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.v}) });
-                var r_bytes: [32]u8 = undefined;
-                std.mem.writeInt(u256, &r_bytes, tx.r, .big);
-                try tx_map.put("r", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &r_bytes)) });
-                var s_bytes: [32]u8 = undefined;
-                std.mem.writeInt(u256, &s_bytes, tx.s, .big);
-                try tx_map.put("s", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &s_bytes)) });
+                // Signature (Ed25519, 64 bytes)
+                try tx_map.put("signature", std.json.Value{ .string = try hex.encode(allocator, &tx.signature) });
+                try tx_map.put("pubKey", std.json.Value{ .string = try hex.encode(allocator, &tx.pub_key) });
 
                 try txs.append(std.json.Value{ .object = tx_map });
             } else {
@@ -886,10 +882,13 @@ pub const RpcHandler = struct {
                 try map.put("cumulativeGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
                 try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
 
-                // EIP-1559 fields
+                // Effective gas price: clamp baseFee arithmetic to u64
                 var effective_gas_price = tx.gasPrice;
                 if (b.header.baseFee > 0) {
-                    effective_gas_price = b.header.baseFee + (if (tx.gasPrice > b.header.baseFee) tx.gasPrice - b.header.baseFee else 0);
+                    //TODO handle overflow, Fix This Issue for now truncating
+                    const base: u64 = @truncate(b.header.baseFee);
+                    const price: u64 = tx.gasPrice;
+                    effective_gas_price = base + (if (price > base) price - base else 0);
                 }
                 if (effective_gas_price == 0) effective_gas_price = 1000; // Minimal default
 
@@ -994,14 +993,9 @@ pub const RpcHandler = struct {
         try map.put("type", std.json.Value{ .string = "0x0" });
         try map.put("chainId", std.json.Value{ .string = "0x1869f" });
 
-        // Signature parts
-        try map.put("v", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.v}) });
-        var r_bytes: [32]u8 = undefined;
-        std.mem.writeInt(u256, &r_bytes, tx.r, .big);
-        try map.put("r", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &r_bytes)) });
-        var s_bytes: [32]u8 = undefined;
-        std.mem.writeInt(u256, &s_bytes, tx.s, .big);
-        try map.put("s", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &s_bytes)) });
+        // Signature parts (Ed25519)
+        try map.put("signature", std.json.Value{ .string = try hex.encode(allocator, &tx.signature) });
+        try map.put("pubKey", std.json.Value{ .string = try hex.encode(allocator, &tx.pub_key) });
 
         return std.json.Value{ .object = map };
     }
@@ -1095,121 +1089,53 @@ pub const RpcHandler = struct {
         log.debug("[RPC] Nonce: {d}\n", .{nonce});
 
         // Sign it!
-        // Hardcoded Devnet Validator Key (ac09... for funded account)
-        var secret_key: [32]u8 = undefined;
-        _ = try std.fmt.hexToBytes(&secret_key, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        // Devnet Ed25519 key seed (32 bytes) — replace with real key management in production
+        const Ed25519 = std.crypto.sign.Ed25519;
+        var seed: [32]u8 = undefined;
+        _ = try std.fmt.hexToBytes(&seed, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-        const Secp256k1 = std.crypto.ecc.Secp256k1;
-        const Ecdsa = std.crypto.sign.ecdsa.Ecdsa(Secp256k1, std.crypto.hash.sha3.Keccak256);
+        //TODO fix the try workaround, need robustness
+        const key_pair = try Ed25519.KeyPair.generateDeterministic(seed);
 
-        const sk = try Ecdsa.SecretKey.fromBytes(secret_key);
-        const key_pair = try Ecdsa.KeyPair.fromSecretKey(sk);
+        // Derive address = blake3(public_key)
+        var derived_addr: types.Address = undefined;
+        std.crypto.hash.Blake3.hash(&key_pair.public_key.bytes, &derived_addr.bytes, .{});
+        log.debug("[RPC] Ed25519 derived addr: {x} (from: {x})\n", .{ derived_addr.bytes, address.bytes });
 
-        const derived_pub = key_pair.public_key.toUncompressedSec1();
-        const account = @import("core").account;
-        const derived_addr = try account.addressFromPubKey(&derived_pub);
-        log.debug("[RPC] KeyPair Derived Addr: {x} (Expected: {x})\n", .{ derived_addr.bytes, address.bytes });
-
-        // 1. Hash Signing Data
-        const SigningData = struct {
-            nonce: u64,
-            gas_price: u256,
-            gas_limit: u64,
-            to: ?types.Address,
-            value: u256,
-            data: []const u8,
-            chain_id: u64,
-            zero1: u8 = 0,
-            zero2: u8 = 0,
-        };
-
-        const signing_data = SigningData{
+        // Construct transaction with binary encoding
+        const tx_inner = types.Transaction{
+            .pub_key = key_pair.public_key.bytes,
+            .from = derived_addr,
             .nonce = nonce,
-            .gas_price = gas_price,
-            .gas_limit = gas_limit,
-            .to = to_addr,
-            .value = value,
-            .data = data_bytes,
-            .chain_id = self.chain.chainId,
-        };
-
-        var hash: [32]u8 = undefined;
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        const encoded_signing = try rlp.encode(allocator, signing_data);
-        defer allocator.free(encoded_signing);
-        hasher.update(encoded_signing);
-        hasher.final(&hash);
-        log.debug("[RPC] Hash created\n", .{});
-
-        // 2. Sign
-        const sig = try key_pair.sign(encoded_signing, null);
-
-        const sig_bytes = sig.toBytes(); // 64 bytes (r, s)
-        log.debug("[RPC] Signed\n", .{});
-
-        // 3. Find Recovery ID
-        var recovery_id: u8 = 0;
-        var found = false;
-
-        // Extract r, s
-        var r_bytes: [32]u8 = undefined;
-        var s_bytes: [32]u8 = undefined;
-        @memcpy(&r_bytes, sig_bytes[0..32]);
-        @memcpy(&s_bytes, sig_bytes[32..64]);
-
-        log.debug("[RPC] Sig R: {x}\n", .{r_bytes});
-        log.debug("[RPC] Sig S: {x}\n", .{s_bytes});
-        log.debug("[RPC] Hash: {x}\n", .{hash});
-
-        // Normalize S if necessary (EIP-2)
-        var s_scalar_val = try Secp256k1.scalar.Scalar.fromBytes(s_bytes, .big);
-        if (s_bytes[0] >= 0x80) {
-            log.debug("[RPC] Normalizing High S\n", .{});
-            s_scalar_val = s_scalar_val.neg();
-            s_bytes = s_scalar_val.toBytes(.big);
-        }
-
-        var recid: u8 = 0;
-        while (recid < 4) : (recid += 1) {
-            const pub_key = account.recover_public_key(hash, r_bytes, s_bytes, recid) catch |err| {
-                log.debug("[RPC] Recid {d} failed: {}\n", .{ recid, err });
-                continue;
-            };
-            const recovered_addr = try account.addressFromPubKey(&pub_key);
-
-            if (std.mem.eql(u8, &recovered_addr.bytes, &address.bytes)) {
-                recovery_id = recid;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            log.debug("[RPC] Recovery failed\n", .{});
-            return error.SigningFailed;
-        }
-        log.debug("[RPC] Recovered ID: {d}\n", .{recovery_id});
-
-        // 4. Construct Transaction
-        const tx = types.Transaction{
-            .nonce = nonce,
-            .gasPrice = gas_price,
+            .gasPrice = @truncate(gas_price),
             .gasLimit = gas_limit,
             .to = to_addr,
             .value = value,
             .data = data_bytes,
-            .v = self.chain.chainId * 2 + 35 + recovery_id,
-            .r = std.mem.readInt(u256, &r_bytes, .big),
-            .s = std.mem.readInt(u256, &s_bytes, .big),
-            .from = address,
         };
 
-        // RLP Encode
-        const encoded_tx = try rlp.encode(allocator, tx);
+        // Sign the binary-encoded signing message (excludes signature field)
+        var signing_buf = std.ArrayListUnmanaged(u8).empty;
+        defer signing_buf.deinit(allocator);
+        try tx_inner.encodeBinary(signing_buf.writer(allocator));
+
+        // Hash with BLAKE3 for the signing message
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.Blake3.hash(signing_buf.items, &hash, .{});
+
+        // Sign with Ed25519
+        const sig = try key_pair.sign(&hash, null);
+
+        var tx_signed = tx_inner;
+        tx_signed.signature = sig.toBytes();
+
+        // Binary-encode the full signed transaction
+        var tx_buf = std.ArrayListUnmanaged(u8).empty;
+        defer tx_buf.deinit(allocator);
+        try tx_signed.encodeBinary(tx_buf.writer(allocator));
 
         // Wrap in forge_sendtransaction format
-        // hex imported at top level
-        const raw_tx_str = try hex.encode(allocator, encoded_tx);
+        const raw_tx_str = try hex.encode(allocator, tx_buf.items);
         log.debug("[RPC] Sending Raw TX: {s}\n", .{raw_tx_str});
 
         var new_params = std.json.Array.init(allocator);
@@ -2189,18 +2115,9 @@ pub const RpcHandler = struct {
             try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.verkleRoot.bytes)) });
         }
 
-        // Trie size estimate
-        const trie = self.state.trie;
-        const trie_stats = trie.getStats();
-        try map.put("totalNodes", std.json.Value{ .integer = @intCast(trie_stats.total_nodes) });
-        try map.put("internalNodes", std.json.Value{ .integer = @intCast(trie_stats.internal_nodes) });
-        try map.put("leafNodes", std.json.Value{ .integer = @intCast(trie_stats.leaf_nodes) });
-        try map.put("totalValues", std.json.Value{ .integer = @intCast(trie_stats.total_values) });
-        try map.put("treeDepth", std.json.Value{ .integer = @intCast(trie_stats.tree_depth) });
-
         // Storage backend
-        try map.put("backend", std.json.Value{ .string = "RocksDB-compatible" });
-        try map.put("proofType", std.json.Value{ .string = "Verkle (IPA commitment)" });
+        try map.put("backend", std.json.Value{ .string = "ZephyrDB FlatTable" });
+        try map.put("proofType", std.json.Value{ .string = "None (Flat KV)" });
 
         return std.json.Value{ .object = map };
     }

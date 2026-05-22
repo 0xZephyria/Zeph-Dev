@@ -207,10 +207,10 @@ fn Field(comptime F: type, comptime mod: u256) type {
             var non_mont: F.NonMontgomeryDomainFieldElement = undefined;
             F.fromMontgomery(&non_mont, self.fe);
 
-            var bytes: [BytesSize]u8 = [_]u8{0} ** BytesSize;
-            F.toBytes(&bytes, non_mont);
-
-            return std.mem.readInt(u256, &bytes, .little);
+            return @as(u256, non_mont[0]) |
+                   (@as(u256, non_mont[1]) << 64) |
+                   (@as(u256, non_mont[2]) << 128) |
+                   (@as(u256, non_mont[3]) << 192);
         }
 
         pub fn sqrt(x: Self) ?Self {

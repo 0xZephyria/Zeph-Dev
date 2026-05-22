@@ -242,6 +242,18 @@ pub fn build(b: *std.Build) void {
     p2p_test.root_module.addImport("encoding", encoding_mod);
     node_test_step.dependOn(&b.addRunArtifact(p2p_test).step);
 
+    // Consensus tests
+    const consensus_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/consensus/vdf_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    consensus_test.root_module.addImport("core", core_mod);
+    consensus_test.root_module.addImport("rlp", rlp_mod);
+    node_test_step.dependOn(&b.addRunArtifact(consensus_test).step);
+
     // DAG Mempool tests
     const dag_test = b.addTest(.{
         .root_module = b.createModule(.{
@@ -287,4 +299,33 @@ pub fn build(b: *std.Build) void {
     }
     const run_forge_test_suite_step = b.step("forge-test", "Run the ForgeVM Test Suite");
     run_forge_test_suite_step.dependOn(&run_forge_test_suite_cmd.step);
+
+    // ---- Blockchain Benchmark ----
+    const blockchain_benchmark = b.addExecutable(.{
+        .name = "blockchain_benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("blockchain_benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    blockchain_benchmark.root_module.addImport("storage", storage_mod);
+    blockchain_benchmark.root_module.addImport("consensus", consensus_mod);
+    blockchain_benchmark.root_module.addImport("core", core_mod);
+    blockchain_benchmark.root_module.addImport("utils", utils_mod);
+    blockchain_benchmark.root_module.addImport("vm_bridge", vm_bridge_mod);
+    blockchain_benchmark.root_module.addImport("rlp", rlp_mod);
+    blockchain_benchmark.root_module.addImport("encoding", encoding_mod);
+    blockchain_benchmark.root_module.addImport("vm", vm_mod);
+    blockchain_benchmark.linkLibC();
+    blockchain_benchmark.linkSystemLibrary("z");
+    b.installArtifact(blockchain_benchmark);
+
+    const run_blockchain_benchmark_cmd = b.addRunArtifact(blockchain_benchmark);
+    run_blockchain_benchmark_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_blockchain_benchmark_cmd.addArgs(args);
+    }
+    const run_blockchain_benchmark_step = b.step("bench-blockchain", "Run the simulated blockchain workflow benchmark");
+    run_blockchain_benchmark_step.dependOn(&run_blockchain_benchmark_cmd.step);
 }

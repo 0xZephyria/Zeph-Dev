@@ -90,11 +90,13 @@ pub const VerkleTrie = struct {
     // Persists across blocks — unchanged subtrees never recompute.
     // At 200K dirty stems per block, this skips ~99.9% of internal node recomputation.
     commitment_cache: std.AutoHashMap([32]u8, Element),
+    commitment_cache_mutex: std.Thread.Mutex,
     cache_hits: u64,
     cache_misses: u64,
 
     // Parallel commit configuration
     commit_threads: u8,
+    commit_pool: std.Thread.Pool,
 
     const Self = @This();
 
@@ -138,13 +140,25 @@ pub const VerkleTrie = struct {
             .incremental_commits = 0,
             .subtrees_recomputed = 0,
             .commitment_cache = std.AutoHashMap([32]u8, Element).init(allocator),
+            .commitment_cache_mutex = .{},
             .cache_hits = 0,
             .cache_misses = 0,
             .commit_threads = actual_threads,
+            .commit_pool = undefined,
         };
 
+        try self.commit_pool.init(.{ .allocator = allocator, .n_jobs = actual_threads });
+
         // Try to load existing root from DB
-        try self.loadRoot();
+        self.loadRoot() catch |err| {
+            self.commit_pool.deinit();
+            self.dirty_stems.deinit();
+            self.commitment_cache.deinit();
+            self.crs.deinit();
+            allocator.destroy(self.crs);
+            allocator.destroy(self);
+            return err;
+        };
 
         return self;
     }
@@ -156,6 +170,7 @@ pub const VerkleTrie = struct {
         self.allocator.destroy(self.crs);
         self.dirty_stems.deinit();
         self.commitment_cache.deinit();
+        self.commit_pool.deinit();
         self.allocator.destroy(self);
     }
 
@@ -185,6 +200,8 @@ pub const VerkleTrie = struct {
         self.stats = TrieStats{};
         self.dirty_count = 0;
         self.dirty_stems.clearRetainingCapacity();
+        self.commitment_cache_mutex.lock();
+        defer self.commitment_cache_mutex.unlock();
         self.commitment_cache.clearRetainingCapacity();
     }
 
@@ -316,6 +333,33 @@ pub const VerkleTrie = struct {
         if (depth > self.stats.tree_depth) {
             self.stats.tree_depth = depth;
         }
+        self.markPathDirty(stem);
+    }
+
+    fn markPathDirty(self: *Self, stem: [STEM_LENGTH]u8) void {
+        if (self.root == null) return;
+        var current_node = self.root.?;
+        var depth: u8 = 0;
+        while (depth < STEM_LENGTH) : (depth += 1) {
+            const index = stem[depth];
+            switch (current_node.*) {
+                .Internal => |internal| {
+                    internal.dirty = true;
+                    if (internal.getChild(index)) |child| {
+                        current_node = child;
+                    } else {
+                        break;
+                    }
+                },
+                .Leaf => |leaf| {
+                    if (std.mem.eql(u8, &leaf.stem, &stem)) {
+                        leaf.dirty = true;
+                    }
+                    break;
+                },
+                else => break,
+            }
+        }
     }
 
     /// Deletes a key from the trie and marks its stem as dirty.
@@ -333,6 +377,7 @@ pub const VerkleTrie = struct {
             self.stats.total_values -|= 1;
             self.dirty_count += 1;
             self.dirty_stems.put(stem, {}) catch {};
+            self.markPathDirty(stem);
         }
     }
 
@@ -408,8 +453,7 @@ pub const VerkleTrie = struct {
         const n_threads: u16 = self.commit_threads;
         const children_per_thread: u16 = (256 + n_threads - 1) / n_threads;
 
-        // Spawn worker threads for each partition
-        var threads: [MAX_COMMIT_THREADS]?std.Thread = [_]?std.Thread{null} ** MAX_COMMIT_THREADS;
+        var wg = std.Thread.WaitGroup{};
         var errors: [MAX_COMMIT_THREADS]?anyerror = [_]?anyerror{null} ** MAX_COMMIT_THREADS;
 
         for (0..n_threads) |t| {
@@ -417,22 +461,18 @@ pub const VerkleTrie = struct {
             const end = @min(start + children_per_thread, 256);
             if (start >= 256) break;
 
-            threads[t] = std.Thread.spawn(.{}, commitSubtreeRange, .{
-                self, internal, @as(u16, @intCast(start)), @as(u16, @intCast(end)), &errors[t],
-            }) catch null;
-
-            // If thread spawn fails, do this range sequentially right here
-            if (threads[t] == null) {
-                self.commitSubtreeRangeSync(internal, @intCast(start), @intCast(end));
-            }
+            wg.start();
+            self.commit_pool.spawn(commitSubtreeRange, .{
+                self, &wg, internal, @as(u16, @intCast(start)), @as(u16, @intCast(end)), &errors[t],
+            }) catch {
+                wg.finish();
+                // If thread pool spawn fails, do this range sequentially right here
+                self.commitSubtreeRangeSync(internal, @as(u16, @intCast(start)), @as(u16, @intCast(end)), &errors[t]);
+            };
         }
 
-        // Wait for all threads to complete
-        for (0..n_threads) |t| {
-            if (threads[t]) |thread| {
-                thread.join();
-            }
-        }
+        // Wait for all tasks to complete
+        wg.wait();
 
         // Check for errors
         for (errors) |err_opt| {
@@ -443,34 +483,38 @@ pub const VerkleTrie = struct {
 
         // Now recompute root commitment from all 256 children
         internal.dirty = true; // Force recomputation since children changed
-        try internal.updateCommitment(self.crs);
+        internal.updateCommitment(self.crs);
     }
 
     /// Worker function for parallel subtree commitment.
     /// Commits all children in range [start, end) of the root internal node.
     fn commitSubtreeRange(
         self: *Self,
+        wg: *std.Thread.WaitGroup,
         internal: *InternalNode,
         start: u16,
         end: u16,
         err_out: *?anyerror,
     ) void {
-        self.commitSubtreeRangeSync(internal, start, end);
-        _ = err_out;
+        defer wg.finish();
+        self.commitSubtreeRangeSync(internal, start, end, err_out);
     }
 
     /// Synchronous subtree range commitment (used by both workers and fallback)
-    fn commitSubtreeRangeSync(self: *Self, internal: *InternalNode, start: u16, end: u16) void {
+    fn commitSubtreeRangeSync(self: *Self, internal: *InternalNode, start: u16, end: u16, err_out: *?anyerror) void {
         var i: u16 = start;
         while (i < end) : (i += 1) {
             if (internal.children[@intCast(i)]) |child| {
-                _ = self.updateCommitmentsWithCache(child) catch continue;
+                _ = self.updateCommitmentsWithCache(child) catch |err| {
+                    err_out.* = err;
+                    continue;
+                };
             }
         }
     }
 
     /// Get incremental commit statistics including cache metrics.
-    pub fn getCommitStats(self: *const Self) struct {
+    pub fn getCommitStats(self: *Self) struct {
         full_commits: u64,
         incremental_commits: u64,
         subtrees_recomputed: u64,
@@ -482,6 +526,8 @@ pub const VerkleTrie = struct {
     } {
         const total = self.cache_hits + self.cache_misses;
         const hit_rate = if (total == 0) 0.0 else @as(f64, @floatFromInt(self.cache_hits)) / @as(f64, @floatFromInt(total));
+        self.commitment_cache_mutex.lock();
+        defer self.commitment_cache_mutex.unlock();
         return .{
             .full_commits = self.full_commits,
             .incremental_commits = self.incremental_commits,
@@ -496,6 +542,8 @@ pub const VerkleTrie = struct {
 
     /// Clear the commitment cache (e.g., at epoch boundaries or for memory pressure)
     pub fn clearCommitmentCache(self: *Self) void {
+        self.commitment_cache_mutex.lock();
+        defer self.commitment_cache_mutex.unlock();
         self.commitment_cache.clearRetainingCapacity();
     }
 
@@ -626,10 +674,10 @@ pub const VerkleTrie = struct {
     fn updateCommitmentsWithCache(self: *Self, node: *Node) !bool {
         switch (node.*) {
             .Internal => |internal| {
+                if (!internal.dirty) {
+                    return false;
+                }
                 var child_updated = false;
-                // ALWAYS recursively update children — a clean parent
-                // can still have dirty children (put() only marks the leaf
-                // dirty, not ancestors).
                 for (&internal.children) |*child_opt| {
                     if (child_opt.*) |child| {
                         if (try self.updateCommitmentsWithCache(child)) {
@@ -643,23 +691,15 @@ pub const VerkleTrie = struct {
                 }
 
                 if (internal.dirty) {
-                    try internal.updateCommitment(self.crs);
-                    // Update cache with new commitment
-                    const new_key = internal.commitment.toBytes();
-                    self.commitment_cache.put(new_key, internal.commitment) catch {};
+                    internal.updateCommitment(self.crs);
                     return true;
                 }
 
-                // Node is clean AND no children changed — cache hit
-                self.cache_hits += 1;
                 return false;
             },
             .Leaf => |leaf| {
                 if (leaf.dirty) {
-                    try leaf.updateCommitment(self.crs);
-                    // Cache leaf commitment
-                    const key = leaf.commitment.toBytes();
-                    self.commitment_cache.put(key, leaf.commitment) catch {};
+                    leaf.updateCommitment(self.crs);
                     return true;
                 }
                 return false;

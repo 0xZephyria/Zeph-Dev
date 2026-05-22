@@ -147,16 +147,14 @@ pub const StatePrefetcher = struct {
                 const nonce_k = state_mod.State.nonceKey(addr);
                 const bal_k = state_mod.State.balanceKey(addr);
 
-                if (self.state.trie.get(nonce_k) catch null) |d| {
-                    self.allocator.free(d);
+                if (self.state.db.read(&nonce_k) != null) {
                     cacheHits += 1;
                 } else {
                     cacheMisses += 1;
                 }
                 keys_fetched += 1;
 
-                if (self.state.trie.get(bal_k) catch null) |d| {
-                    self.allocator.free(d);
+                if (self.state.db.read(&bal_k) != null) {
                     cacheHits += 1;
                 } else {
                     cacheMisses += 1;
@@ -164,11 +162,9 @@ pub const StatePrefetcher = struct {
                 keys_fetched += 1;
             }
 
-            // Prefetch balance + code for receivers
             if (role.isReceiver) {
                 const bal_k = state_mod.State.balanceKey(addr);
-                if (self.state.trie.get(bal_k) catch null) |d| {
-                    self.allocator.free(d);
+                if (self.state.db.read(&bal_k) != null) {
                     cacheHits += 1;
                 } else {
                     cacheMisses += 1;
@@ -177,8 +173,7 @@ pub const StatePrefetcher = struct {
 
                 if (self.config.prefetchCode) {
                     const code_k = state_mod.State.codeKey(addr);
-                    if (self.state.trie.get(code_k) catch null) |d| {
-                        self.allocator.free(d);
+                    if (self.state.db.read(&code_k) != null) {
                         cacheHits += 1;
                     } else {
                         cacheMisses += 1;

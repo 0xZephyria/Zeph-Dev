@@ -143,7 +143,7 @@ pub const TxSanitizer = struct {
     }
 
     /// Validate a transaction. Returns error describing the rejection reason.
-    pub fn validate(self: *const TxSanitizer, tx: *const types.Transaction, state_nonce: u64, state_balance: u256) !void {
+    pub fn validate(self: *const TxSanitizer, allocator: std.mem.Allocator, tx: *const types.Transaction, state_nonce: u64, state_balance: u256) !void {
         // 1. Calldata size check
         if (tx.data.len > self.config.maxCalldata)
             return error.CalldataTooLarge;
@@ -174,27 +174,22 @@ pub const TxSanitizer = struct {
         if (total_cost > state_balance)
             return error.InsufficientFunds;
 
-        // 7. Signature malleability check (s must be in lower half of curve order)
-        // secp256k1 order N / 2
-        const SECP256K1_N_DIV_2: u256 = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
-        if (tx.s > SECP256K1_N_DIV_2)
-            return error.SignatureMalleability;
+        // 7. Verify Ed25519 signature
+        const msg = try tx.getSigningMessage(allocator);
+        defer allocator.free(msg);
 
-        // 8. Signature components must be non-zero
-        if (tx.r == 0 or tx.s == 0)
-            return error.InvalidSignature;
+        const sig_ok = try @import("accounts/eoa.zig").verifySignature(msg, tx.signature, tx.pub_key);
+        if (!sig_ok) return error.InvalidSignature;
 
-        // 9. Recovery ID must be 0 or 1
-        if (tx.v > 1 and tx.v != 27 and tx.v != 28) {
-            // EIP-155: v = chainId * 2 + 35 + recovery_id
-            const expected_base = self.config.chainId * 2 + 35;
-            if (tx.v != expected_base and tx.v != expected_base + 1)
-                return error.InvalidRecoveryId;
-        }
+        // 8. From address must match blake3(pub_key)
+        var expected_from: types.Address = undefined;
+        std.crypto.hash.Blake3.hash(&tx.pub_key, &expected_from.bytes, .{});
+        if (!tx.from.eql(expected_from))
+            return error.InvalidSenderAddress;
 
-        // 10. From address must not be zero (indicates failed recovery)
+        // 9. From address must not be zero
         const zero_addr = types.Address.zero();
-        if (std.mem.eql(u8, &tx.from.bytes, &zero_addr.bytes))
+        if (tx.from.eql(zero_addr))
             return error.ZeroSender;
     }
 };

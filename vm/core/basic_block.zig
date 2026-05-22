@@ -113,8 +113,8 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
             decoder.Opcode.BRANCH => {
                 // B-type: mark branch target and fallthrough as leaders
                 const insn = decoder.decode(word) catch continue;
-                if (insn == .b_type) {
-                    const target_pc = pc +% @as(u32, @bitCast(insn.b_type.imm));
+                if (insn == .bType) {
+                    const target_pc = pc +% @as(u32, @intCast(insn.bType.imm));
                     const target_idx = target_pc / 4;
                     if (target_idx < insn_count) is_leader[target_idx] = true;
                 }
@@ -124,8 +124,8 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
             decoder.Opcode.JAL => {
                 // J-type: mark jump target and fallthrough as leaders
                 const insn = decoder.decode(word) catch continue;
-                if (insn == .j_type) {
-                    const target_pc = pc +% @as(u32, @bitCast(insn.j_type.imm));
+                if (insn == .jType) {
+                    const target_pc = pc +% @as(u32, @intCast(insn.jType.imm));
                     const target_idx = target_pc / 4;
                     if (target_idx < insn_count) is_leader[target_idx] = true;
                 }
@@ -196,7 +196,7 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
                 block_insn_count += 1;
                 continue;
             };
-            if (insn == .r_type and insn.r_type.funct7 == decoder.Funct7.MULDIV) {
+            if (insn == .rType and insn.rType.funct7 == decoder.Funct7.MULDIV) {
                 const extra = gas_table.instructionCost(insn) -| gas_table.InstructionGas.ALU;
                 block_gas += extra;
             }
@@ -259,8 +259,8 @@ fn buildBlock(
     if (ends_with_branch) {
         const insn = decoder.decode(last_word) catch null;
         if (insn) |decoded| {
-            if (decoded == .b_type) {
-                const target_pc = end_pc +% @as(u32, @bitCast(decoded.b_type.imm));
+            if (decoded == .bType) {
+                const target_pc = end_pc +% @as(u32, @intCast(decoded.bType.imm));
                 const target_idx = target_pc / 4;
                 if (target_idx < total_insn_count) {
                     // We'd need the pc_to_block map here, but we handle this in a fixup pass
@@ -291,8 +291,8 @@ pub fn resolveBranchTargets(analysis: *ProgramAnalysis, code: []const u8) void {
 
         const last_word = std.mem.readInt(u32, code[block.end_pc..][0..4], .little);
         const insn = decoder.decode(last_word) catch continue;
-        if (insn == .b_type) {
-            const target_pc = block.end_pc +% @as(u32, @bitCast(insn.b_type.imm));
+        if (insn == .bType) {
+            const target_pc = block.end_pc +% @as(u32, @intCast(insn.bType.imm));
             const target_idx = target_pc / 4;
             if (target_idx < analysis.pc_to_block.len) {
                 block.branch_target = analysis.pc_to_block[target_idx];
@@ -326,10 +326,10 @@ pub fn detectSuperPattern(word1: u32, word2: u32) SuperPattern {
     if (op1 == decoder.Opcode.LUI and op2 == decoder.Opcode.OP_IMM) {
         const insn1 = decoder.decode(word1) catch return .none;
         const insn2 = decoder.decode(word2) catch return .none;
-        if (insn1 == .u_type and insn2 == .i_type) {
+        if (insn1 == .uType and insn2 == .iType) {
             // Check if ADDI's rs1 == LUI's rd (same register)
-            if (insn2.i_type.rs1 == insn1.u_type.rd and insn2.i_type.rd == insn1.u_type.rd) {
-                if (insn2.i_type.funct3 == decoder.Funct3.ADD_SUB) {
+            if (insn2.iType.rs1 == insn1.uType.rd and insn2.iType.rd == insn1.uType.rd) {
+                if (insn2.iType.funct3 == decoder.Funct3.ADD_SUB) {
                     return .lui_addi;
                 }
             }
@@ -340,10 +340,10 @@ pub fn detectSuperPattern(word1: u32, word2: u32) SuperPattern {
     if (op1 == decoder.Opcode.LOAD and op2 == decoder.Opcode.LOAD) {
         const insn1 = decoder.decode(word1) catch return .none;
         const insn2 = decoder.decode(word2) catch return .none;
-        if (insn1 == .i_type and insn2 == .i_type) {
-            if (insn1.i_type.funct3 == decoder.Funct3.LW and insn2.i_type.funct3 == decoder.Funct3.LW) {
+        if (insn1 == .iType and insn2 == .iType) {
+            if (insn1.iType.funct3 == decoder.Funct3.LW and insn2.iType.funct3 == decoder.Funct3.LW) {
                 // Same base register
-                if (insn1.i_type.rs1 == insn2.i_type.rs1) {
+                if (insn1.iType.rs1 == insn2.iType.rs1) {
                     return .double_load;
                 }
             }
@@ -354,10 +354,10 @@ pub fn detectSuperPattern(word1: u32, word2: u32) SuperPattern {
     if (op1 == decoder.Opcode.OP_IMM and op2 == decoder.Opcode.STORE) {
         const insn1 = decoder.decode(word1) catch return .none;
         const insn2 = decoder.decode(word2) catch return .none;
-        if (insn1 == .i_type and insn2 == .s_type) {
-            if (insn1.i_type.funct3 == decoder.Funct3.ADD_SUB and insn2.s_type.funct3 == decoder.Funct3.SW) {
+        if (insn1 == .iType and insn2 == .sType) {
+            if (insn1.iType.funct3 == decoder.Funct3.ADD_SUB and insn2.sType.funct3 == decoder.Funct3.SW) {
                 // The ADDI result register is the source register for the store
-                if (insn1.i_type.rd == insn2.s_type.rs2) {
+                if (insn1.iType.rd == insn2.sType.rs2) {
                     return .addi_store;
                 }
             }

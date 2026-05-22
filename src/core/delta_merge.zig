@@ -213,7 +213,7 @@ pub const DeltaMerger = struct {
         return merged;
     }
 
-    /// Apply merged deltas to the state trie in a single batch pass.
+    /// Apply merged deltas to the state KV store in a single batch pass.
     /// For Additive deltas: reads current value, applies delta, writes back.
     /// For Absolute deltas: writes the value directly.
     pub fn applyToState(
@@ -230,12 +230,11 @@ pub const DeltaMerger = struct {
 
             switch (delta.delta_type) {
                 .Additive => {
-                    // Read current value from trie
-                    const current_data = state.trie.get(key) catch null;
+                    // Read current value from state
+                    const current_data = state.db.read(&key);
                     var current_val: i128 = 0;
 
                     if (current_data) |d| {
-                        defer state.allocator.free(d);
                         if (d.len >= 32) {
                             const u_val = std.mem.readInt(u256, d[0..32], .big);
                             current_val = @intCast(@min(u_val, @as(u256, @intCast(std.math.maxInt(i128)))));
@@ -253,13 +252,13 @@ pub const DeltaMerger = struct {
                         // Nonce: 8 bytes
                         var buf: [8]u8 = undefined;
                         std.mem.writeInt(u64, &buf, @intCast(@max(0, new_val)), .big);
-                        state.trie.put(key, &buf) catch {};
+                        state.db.write(&key, &buf) catch {};
                     } else {
                         // Balance or other: 32 bytes
                         var buf: [32]u8 = undefined;
                         const u_val: u256 = if (new_val >= 0) @intCast(new_val) else 0;
                         std.mem.writeInt(u256, &buf, u_val, .big);
-                        state.trie.put(key, &buf) catch {};
+                        state.db.write(&key, &buf) catch {};
                     }
                 },
                 .Absolute => {
@@ -267,7 +266,7 @@ pub const DeltaMerger = struct {
                     var buf: [32]u8 = undefined;
                     const u_val: u256 = if (delta.value >= 0) @intCast(delta.value) else 0;
                     std.mem.writeInt(u256, &buf, u_val, .big);
-                    state.trie.put(key, &buf) catch {};
+                    state.db.write(&key, &buf) catch {};
                 },
             }
         }

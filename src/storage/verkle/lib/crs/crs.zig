@@ -27,24 +27,24 @@ pub const CRS = struct {
 
     Gs: [DomainSize]ElementNormalized,
     Q: Element,
+    precomp: PrecompMSM,
 
     pub fn init(allocator: Allocator) !CRS {
-        _ = allocator;
         const points = deserialize_vkt_points();
+        const precomp = try PrecompMSM.init(allocator, &points);
         return CRS{
             .Gs = points,
             .Q = Element.generator(),
+            .precomp = precomp,
         };
     }
 
     pub fn deinit(self: *CRS) void {
-        _ = self;
+        self.precomp.deinit();
     }
 
-    pub fn commit(self: CRS, values: []const Fr) !Element {
-        var padded: [DomainSize]Fr = [_]Fr{Fr.zero()} ** DomainSize;
-        @memcpy(padded[0..values.len], values);
-        return self.commitSlow(padded);
+    pub fn commit(self: CRS, values: []const Fr) Element {
+        return self.precomp.msm(values);
     }
 
     pub fn commitSlow(self: CRS, values: [DomainSize]Fr) Element {

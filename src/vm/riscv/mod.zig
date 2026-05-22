@@ -57,6 +57,38 @@ pub fn executeContract(
     var storageBackend = sb.createStorageBackend();
     host.storage = &storageBackend;
 
+    // ── Wire derived storage provider ────────────────────────────────
+    const DerivedStorageProvider = struct {
+        var bridge: *StateBridge = undefined;
+        fn load(host_env: *vm.HostEnv, user: [32]u8, slot: [32]u8) [32]u8 {
+            _ = host_env;
+            return bridge.derivedStorageLoad(user, slot);
+        }
+        fn store(host_env: *vm.HostEnv, user: [32]u8, slot: [32]u8, value: [32]u8) anyerror!void {
+            _ = host_env;
+            try bridge.derivedStorageStore(user, slot, value);
+        }
+    };
+    DerivedStorageProvider.bridge = sb;
+    host.derivedLoadFn = &DerivedStorageProvider.load;
+    host.derivedStoreFn = &DerivedStorageProvider.store;
+
+    // ── Wire global storage provider ─────────────────────────────────
+    const GlobalStorageProvider = struct {
+        var bridge: *StateBridge = undefined;
+        fn load(host_env: *vm.HostEnv, slot: [32]u8) [32]u8 {
+            _ = host_env;
+            return bridge.globalStorageLoad(slot);
+        }
+        fn store(host_env: *vm.HostEnv, slot: [32]u8, delta: [32]u8, isAddition: bool) anyerror!void {
+            _ = host_env;
+            try bridge.globalStorageStore(slot, delta, isAddition);
+        }
+    };
+    GlobalStorageProvider.bridge = sb;
+    host.globalLoadFn = &GlobalStorageProvider.load;
+    host.globalStoreFn = &GlobalStorageProvider.store;
+
     // ── Wire execution context (from block/tx) ──────────────────────
     host.caller = sb.caller;
     host.selfAddress = sb.selfAddress;
@@ -71,11 +103,14 @@ pub fn executeContract(
     host.baseFee = sb.baseFee;
     host.prevrandao = sb.prevRandao;
 
+    // ── Wire VM execution pool (threaded executor + code cache) ─────
+    host.vm_pool = if (sb.vm_pool) |pool| @as(*anyopaque, @ptrCast(pool)) else null;
+
     // ── Wire balance provider ───────────────────────────────────────
     // Routes GET_BALANCE syscall to real state overlay lookup.
     const BalanceProvider = struct {
         var bridge: *StateBridge = undefined;
-        fn getBalance(addr: [20]u8) [32]u8 {
+        fn getBalance(addr: [32]u8) [32]u8 {
             return bridge.getBalance(addr);
         }
     };
@@ -95,7 +130,7 @@ pub fn executeContract(
 
         fn callContract(
             callType: vm.syscallDispatch.CallType,
-            to: [20]u8,
+            to: [32]u8,
             value: [32]u8,
             data: []const u8,
             gas: u64,
@@ -107,10 +142,14 @@ pub fn executeContract(
             if (code.len == 0) {
                 return .{ .success = true, .returnData = &[_]u8{}, .gasUsed = 0 };
             }
+            defer {
+                const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
+                state.general_allocator.free(code);
+            }
 
             // ------ Apply call-type semantics ------
-            var subSelfAddress: [20]u8 = undefined;
-            var subCaller: [20]u8 = undefined;
+            var subSelfAddress: [32]u8 = undefined;
+            var subCaller: [32]u8 = undefined;
             var subValue: [32]u8 = undefined;
             // For delegatecall: run target's CODE but in current contract's STORAGE context.
             // execCode is always `code` (the target's bytecode fetched above).
@@ -205,32 +244,15 @@ pub fn executeContract(
             // Get sender nonce for deterministic address derivation
             const nonce = state.getNonce(senderAddr);
 
-            // Derive new contract address = keccak256(RLP([sender, nonce]))[12..32]
-            // Simplified RLP: keccak256(0xd6 || 0x94 || sender || nonce_byte)
-            // This matches Ethereum's CREATE address derivation
-            var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-            // RLP prefix for a list of [address, nonce]
-            hasher.update(&[_]u8{ 0xd6, 0x94 });
-            hasher.update(&bridge.selfAddress);
-            // Encode nonce (simplified: single byte if < 128, otherwise length-prefixed)
-            if (nonce == 0) {
-                hasher.update(&[_]u8{0x80});
-            } else if (nonce < 128) {
-                hasher.update(&[_]u8{@truncate(nonce)});
-            } else {
-                var nonceBuf: [8]u8 = undefined;
-                std.mem.writeInt(u64, &nonceBuf, nonce, .big);
-                // Find first non-zero byte
-                var start: usize = 0;
-                while (start < 7 and nonceBuf[start] == 0) : (start += 1) {}
-                const nonceLen: u8 = @truncate(8 - start);
-                hasher.update(&[_]u8{0x80 + nonceLen});
-                hasher.update(nonceBuf[start..8]);
-            }
-            var hash: [32]u8 = undefined;
-            hasher.final(&hash);
-            var newAddr: [20]u8 = undefined;
-            @memcpy(&newAddr, hash[12..32]);
+            // Derive new contract address using BLAKE3:
+            // newAddr = blake3(sender_address || nonce_bytes)
+            var nonceBytes: [8]u8 = undefined;
+            std.mem.writeInt(u64, &nonceBytes, nonce, .big);
+            var createInput: [40]u8 = undefined;
+            @memcpy(createInput[0..32], &bridge.selfAddress);
+            @memcpy(createInput[32..40], &nonceBytes);
+            var newAddr: [32]u8 = undefined;
+            std.crypto.hash.Blake3.hash(&createInput, &newAddr, .{});
 
             // Increment sender nonce
             state.setNonce(senderAddr, nonce + 1) catch {};
@@ -242,7 +264,7 @@ pub fn executeContract(
             // Transfer value to new contract
             if (!isZero(value)) {
                 bridge.transfer(newAddr, value) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = 0 };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
                 };
             }
 
@@ -266,13 +288,13 @@ pub fn executeContract(
                 gas,
                 @ptrCast(&subBridge),
             ) catch {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = gas };
+                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = gas };
             };
 
             if (result.success and result.returnData.len > 0) {
                 // Store runtime code at new address
                 state.setCode(newAddrTyped, result.returnData) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = result.gasUsed };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = result.gasUsed };
                 };
             }
 
@@ -303,29 +325,30 @@ pub fn executeContract(
         ) vm.syscallDispatch.CreateProviderResult {
             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
 
-            // Step 1: Hash the initcode
+            // Step 1: Hash the initcode with BLAKE3
             var initcodeHash: [32]u8 = undefined;
-            var codeHasher = std.crypto.hash.sha3.Keccak256.init(.{});
-            codeHasher.update(code);
-            codeHasher.final(&initcodeHash);
+            std.crypto.hash.Blake3.hash(code, &initcodeHash, .{});
 
-            // Step 2: Derive CREATE2 address = keccak256(0xFF || sender || salt || keccak256(initcode))[12..32]
-            var addrHasher = std.crypto.hash.sha3.Keccak256.init(.{});
-            addrHasher.update(&[_]u8{0xFF});
-            addrHasher.update(&bridge.selfAddress);
-            addrHasher.update(&salt);
-            addrHasher.update(&initcodeHash);
-            var hash: [32]u8 = undefined;
-            addrHasher.final(&hash);
-            var newAddr: [20]u8 = undefined;
-            @memcpy(&newAddr, hash[12..32]);
+            // Step 2: Derive CREATE2 address using BLAKE3:
+            // newAddr = blake3(0x02 || sender || salt || blake3(initcode))
+            // 0x02 prefix differentiates from CREATE (nonce-based)
+            var create2Input: [97]u8 = undefined;
+            create2Input[0] = 0x02;
+            @memcpy(create2Input[1..33], &bridge.selfAddress);
+            @memcpy(create2Input[33..65], &salt);
+            @memcpy(create2Input[65..97], &initcodeHash);
+            var newAddr: [32]u8 = undefined;
+            std.crypto.hash.Blake3.hash(&create2Input, &newAddr, .{});
 
             // Step 3: Check for address collision (code already exists at derived address)
             const newAddrTyped = core.types.Address{ .bytes = newAddr };
             const existingCode = state.getCode(newAddrTyped) catch &[_]u8{};
+            defer if (existingCode.len > 0) {
+                state.general_allocator.free(existingCode);
+            };
             if (existingCode.len > 0) {
                 // Address collision — CREATE2 must fail
-                return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = 0 };
+                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
             }
 
             // Step 4: Increment sender nonce (same as CREATE)
@@ -339,7 +362,7 @@ pub fn executeContract(
             // Step 6: Transfer value to new contract
             if (!isZero(value)) {
                 bridge.transfer(newAddr, value) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = 0 };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
                 };
             }
 
@@ -363,13 +386,13 @@ pub fn executeContract(
                 gas,
                 @ptrCast(&subBridge),
             ) catch {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = gas };
+                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = gas };
             };
 
             // Step 8: Store runtime bytecode at derived address
             if (result.success and result.returnData.len > 0) {
                 state.setCode(newAddrTyped, result.returnData) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 20, .gasUsed = result.gasUsed };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = result.gasUsed };
                 };
             }
 
@@ -384,51 +407,30 @@ pub fn executeContract(
     Create2Provider.alloc = allocator;
     host.create2Fn = &Create2Provider.create2Contract;
 
-    // ── Wire ecrecover provider ─────────────────────────────────────
-    // Routes ECRECOVER syscall to real secp256k1 ECDSA signature recovery.
-    // Uses the existing eoa.recoverPublicKey() which performs actual elliptic
-    // curve point recovery on the secp256k1 curve, then derives the Ethereum
-    // address via keccak256(uncompressed_pubkey[1..])[12..32].
-    //
-    // This enables: EIP-712 typed data signing, ERC-20 permit(), meta-transactions,
-    // signature-based authentication, and all signature-dependent DeFi protocols.
+    // ── Wire sig-verify provider (replaces ecrecover) ───────────────
+    // Routes VERIFY_SIG syscall to Ed25519 signature verification.
+    // scheme 0 = Ed25519: verifies sig over hash, derives signer address as blake3(pubkey)
+    // This is pluggable: swap scheme handler to support BLS12-381 or PQC signatures.
     const EcrecoverProvider = struct {
-        fn ecrecoverFn(hash: [32]u8, v: u8, r: [32]u8, s: [32]u8) [20]u8 {
-            // Validate v (must be 27 or 28 for Ethereum-style signatures)
-            if (v != 27 and v != 28) {
-                return [_]u8{0} ** 20; // Invalid v — return zero address
+        fn ecrecoverFn(hash: [32]u8, scheme: u8, pubkey: [32]u8, signature: [64]u8) [32]u8 {
+            switch (scheme) {
+                0 => {
+                    const Ed25519 = std.crypto.sign.Ed25519;
+                    //Ed25519 verificationconst
+                    //ed25519 = std.crypto.sign.Ed25519;
+                    const pk = Ed25519.PublicKey.fromBytes(pubkey) catch return [_]u8{0} ** 32;
+                    const sig = Ed25519.Signature.fromBytes(signature);
+                    // FIXED: Call verify on the ed25519 namespace, passing pk as the 3rd argument
+                    Ed25519.Signature.verify(sig, &hash, pk) catch return [_]u8{0} ** 32; // Derive address = blake3(pubkey)
+                    var addr: [32]u8 = undefined;
+                    std.crypto.hash.Blake3.hash(&pubkey, &addr, .{});
+                    return addr;
+                },
+                else => return [_]u8{0} ** 32, // Unknown scheme
             }
-
-            // Validate r and s are non-zero (basic validity check)
-            if (isZero(r) or isZero(s)) {
-                return [_]u8{0} ** 20;
-            }
-
-            // Validate s is in the lower half of the curve order (EIP-2)
-            // s must be <= secp256k1 order / 2
-            // Upper bound: 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0
-            if (s[0] > 0x7F) {
-                return [_]u8{0} ** 20; // s too high — malleable signature
-            }
-
-            // Recovery ID: v - 27 gives 0 or 1
-            const recoveryId: u8 = v - 27;
-
-            // Real secp256k1 ECDSA point recovery:
-            // 1. Recover the uncompressed public key (65 bytes) from (hash, r, s, recoveryId)
-            // 2. Derive Ethereum address = keccak256(pubkey[1..65])[12..32]
-            const uncompressedPubkey = core.account.recoverPublicKey(hash, r, s, recoveryId) catch {
-                return [_]u8{0} ** 20; // Recovery failed — invalid signature
-            };
-
-            // Derive address from recovered public key
-            const addrResult = core.account.addressFromPubKey(&uncompressedPubkey) catch {
-                return [_]u8{0} ** 20; // Address derivation failed
-            };
-
-            return addrResult.bytes;
         }
     };
+
     host.ecrecoverFn = &EcrecoverProvider.ecrecoverFn;
 
     // ── Wire selfdestruct provider ──────────────────────────────────
@@ -437,7 +439,7 @@ pub fn executeContract(
     // via Overlay.suicide().
     const SelfDestructProvider = struct {
         var bridge: *StateBridge = undefined;
-        fn selfDestructFn(beneficiary: [20]u8) bool {
+        fn selfDestructFn(beneficiary: [32]u8) bool {
             bridge.selfDestruct(beneficiary) catch return false;
             return true;
         }
@@ -446,23 +448,43 @@ pub fn executeContract(
     host.selfDestructFn = &SelfDestructProvider.selfDestructFn;
 
     // ── Execute via the contract loader ─────────────────────────────
-    const sysResult = vm.contractLoader.executeFromElf(
-        allocator,
-        bytecode,
-        calldata,
-        gasLimit,
-        &host,
-    ) catch |err| {
-        std.log.err("executeFromElf failed: {}", .{err});
-        return ExecutionResult{
-            .success = false,
-            .gasUsed = 0,
-            .gasRemaining = gasLimit,
-            .returnData = &[_]u8{},
-            .logs = &[_]vm.syscallDispatch.LogEntry{},
-            .status = .fault,
+    const is_pkg = bytecode.len >= 4 and std.mem.eql(u8, bytecode[0..4], "FORG");
+    const sysResult = if (is_pkg)
+        vm.contractLoader.executeFromZeph(
+            allocator,
+            bytecode,
+            calldata,
+            gasLimit,
+            &host,
+        ) catch |err| {
+            std.log.err("executeFromZeph failed: {}", .{err});
+            return ExecutionResult{
+                .success = false,
+                .gasUsed = 0,
+                .gasRemaining = gasLimit,
+                .returnData = &[_]u8{},
+                .logs = &[_]vm.syscallDispatch.LogEntry{},
+                .status = .fault,
+            };
+        }
+    else
+        vm.contractLoader.executeFromElf(
+            allocator,
+            bytecode,
+            calldata,
+            gasLimit,
+            &host,
+        ) catch |err| {
+            std.log.err("executeFromElf failed: {}", .{err});
+            return ExecutionResult{
+                .success = false,
+                .gasUsed = 0,
+                .gasRemaining = gasLimit,
+                .returnData = &[_]u8{},
+                .logs = &[_]vm.syscallDispatch.LogEntry{},
+                .status = .fault,
+            };
         };
-    };
 
     if (sysResult.status != .returned) {
         if (sysResult.status == .fault) {

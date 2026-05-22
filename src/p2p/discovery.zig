@@ -88,22 +88,22 @@ pub const EnrRecord = struct {
 
     /// Serialize ENR to bytes for transmission
     pub fn serialize(self: *const EnrRecord, buf: []u8) usize {
-        if (buf.len < 72) return 0;
+        if (buf.len < 101) return 0;
         @memcpy(buf[0..4], &self.id);
         std.mem.writeInt(u64, buf[4..12], self.seq, .big);
         @memcpy(buf[12..45], &self.pubkey);
         @memcpy(buf[45..49], &self.ip4);
         std.mem.writeInt(u16, buf[49..51], self.udpPort, .big);
         std.mem.writeInt(u16, buf[51..53], self.tcpPort, .big);
-        @memcpy(buf[53..73], &self.validatorAddr.bytes);
-        @memcpy(buf[73..81], &self.subnets);
-        std.mem.writeInt(u64, buf[81..89], self.stake, .big);
-        return 89;
+        @memcpy(buf[53..85], &self.validatorAddr.bytes);
+        @memcpy(buf[85..93], &self.subnets);
+        std.mem.writeInt(u64, buf[93..101], self.stake, .big);
+        return 101;
     }
 
     /// Deserialize ENR from bytes
     pub fn deserialize(data: []const u8) ?EnrRecord {
-        if (data.len < 89) return null;
+        if (data.len < 101) return null;
         var enr: EnrRecord = undefined;
         @memcpy(&enr.id, data[0..4]);
         enr.seq = std.mem.readInt(u64, data[4..12], .big);
@@ -111,9 +111,9 @@ pub const EnrRecord = struct {
         @memcpy(&enr.ip4, data[45..49]);
         enr.udpPort = std.mem.readInt(u16, data[49..51], .big);
         enr.tcpPort = std.mem.readInt(u16, data[51..53], .big);
-        @memcpy(&enr.validatorAddr.bytes, data[53..73]);
-        @memcpy(&enr.subnets, data[73..81]);
-        enr.stake = std.mem.readInt(u64, data[81..89], .big);
+        @memcpy(&enr.validatorAddr.bytes, data[53..85]);
+        @memcpy(&enr.subnets, data[85..93]);
+        enr.stake = std.mem.readInt(u64, data[93..101], .big);
         return enr;
     }
 };

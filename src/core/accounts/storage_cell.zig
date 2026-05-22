@@ -68,19 +68,19 @@ pub const StorageCellAccount = struct {
 /// unique trie key, so two transactions writing different slots NEVER
 /// touch the same trie node.
 pub fn storageKey(contract: types.Address, slot: [32]u8) [32]u8 {
-    var input: [52]u8 = undefined;
-    @memcpy(input[0..20], &contract.bytes);
-    @memcpy(input[20..52], &slot);
+    var input: [64]u8 = undefined;
+    @memcpy(input[0..32], &contract.bytes);
+    @memcpy(input[32..64], &slot);
     var hash: [32]u8 = undefined;
-    Keccak256.hash(&input, &hash, .{});
+    std.crypto.hash.Blake3.hash(&input, &hash, .{});
     return hash;
 }
 
 /// Derive the storage cell address (for scheduling conflict detection).
-/// This returns an Address (20 bytes) from the full storage key.
+/// This returns an Address (32 bytes) from the full storage key.
 pub fn storageCellAddress(contract: types.Address, slot: [32]u8) types.Address {
     const full_key = storageKey(contract, slot);
     var addr: types.Address = undefined;
-    @memcpy(&addr.bytes, full_key[12..32]);
+    @memcpy(&addr.bytes, &full_key);
     return addr;
 }

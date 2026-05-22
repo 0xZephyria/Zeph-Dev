@@ -81,7 +81,7 @@ pub const InternalNode = struct {
 
     /// Recalculate commitment from children
     /// C = sum(G_i * hash(C_i)) for all non-empty children
-    pub fn updateCommitment(self: *Self, xcrs: *const CRS) !void {
+    pub fn updateCommitment(self: *Self, xcrs: *const CRS) void {
         if (!self.dirty) return;
 
         // Collect child commitment scalars
@@ -95,7 +95,7 @@ pub const InternalNode = struct {
         }
 
         // Compute Pedersen commitment: C = sum(G_i * child_commitments[i])
-        self.commitment = try xcrs.commit(&self.child_commitments);
+        self.commitment = xcrs.commit(&self.child_commitments);
         self.dirty = false;
     }
 
@@ -241,7 +241,7 @@ pub const LeafNode = struct {
     /// C1 = commit(v[0..128] as field elements)
     /// C2 = commit(v[128..256] as field elements)
     /// commitment = commit(1, stem_as_fr, C1_as_fr, C2_as_fr)
-    pub fn updateCommitment(self: *Self, xcrs: *const CRS) !void {
+    pub fn updateCommitment(self: *Self, xcrs: *const CRS) void {
         if (!self.dirty) return;
 
         // Convert first 128 values to field elements
@@ -264,8 +264,8 @@ pub const LeafNode = struct {
             }
         }
 
-        self.c1 = try xcrs.commit(&c1_scalars);
-        self.c2 = try xcrs.commit(&c2_scalars);
+        self.c1 = xcrs.commit(&c1_scalars);
+        self.c2 = xcrs.commit(&c2_scalars);
 
         // Final commitment includes stem and both sub-commitments
         var final_scalars: [256]Fr = [_]Fr{Fr.zero()} ** 256;
@@ -274,7 +274,7 @@ pub const LeafNode = struct {
         final_scalars[2] = self.c1.mapToScalarField();
         final_scalars[3] = self.c2.mapToScalarField();
 
-        self.commitment = try xcrs.commit(&final_scalars);
+        self.commitment = xcrs.commit(&final_scalars);
         self.dirty = false;
     }
 

@@ -7,6 +7,8 @@ const forgeLoader = @import("forge_loader.zig");
 const forgeFormat = @import("forge_format.zig");
 const sandbox = @import("../memory/sandbox.zig");
 const executor = @import("../core/executor.zig");
+const threaded_executor = @import("../core/threaded_executor.zig");
+const basic_block = @import("../core/basic_block.zig");
 const syscallDispatch = @import("../syscall/dispatch.zig");
 const zephbinLoader = @import("zephbin_loader.zig");
 const gasMeter = @import("../gas/meter.zig");
@@ -170,6 +172,16 @@ pub fn executeFromZeph(
     gasLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
+    if (env.vm_pool) |pool_ptr| {
+        const pool: *@import("../vm_pool.zig").VMPool = @ptrCast(@alignCast(pool_ptr));
+        const mem = pool.acquire() orelse {
+            var legacy_mem = try sandbox.SandboxMemory.init(allocator);
+            defer legacy_mem.deinit();
+            return executeFromZephWithMemory(allocator, &legacy_mem, forgeData, calldata, gasLimit, env);
+        };
+        defer pool.release(mem);
+        return executeFromZephWithMemory(allocator, mem, forgeData, calldata, gasLimit, env);
+    }
     var memory = try sandbox.SandboxMemory.init(allocator);
     defer memory.deinit();
     return executeFromZephWithMemory(allocator, &memory, forgeData, calldata, gasLimit, env);
@@ -301,8 +313,27 @@ pub fn executeFromZephBinWithMemory(
     // lands on the exit stub instead of looping back to PC=0.
     vm.regs[1] = stubOffset;
 
-    // 5. Execute
-    const result = vm.execute();
+    // 5. Execute (threaded if VMPool is available)
+    const result = if (env.vm_pool) |pool_ptr| blk: {
+        const pool: *@import("../vm_pool.zig").VMPool = @ptrCast(@alignCast(pool_ptr));
+        const code_slice = memory.backing[0..stubEnd];
+        var code_hash: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(code_slice, &code_hash, .{});
+
+        if (pool.getDecodedCode(code_hash)) |cached| {
+            break :blk threaded_executor.executeThreaded(&vm, cached.decoded_insns, null);
+        }
+
+        const decoded = try threaded_executor.preDecodeProgram(allocator, code_slice, stubEnd);
+        const insn_count: u32 = @intCast(decoded.len);
+
+        var analysis = try basic_block.analyze(allocator, code_slice, stubEnd);
+        defer analysis.deinit();
+        basic_block.resolveBranchTargets(&analysis, code_slice);
+
+        pool.cacheDecodedCode(code_hash, decoded, insn_count, stubEnd);
+        break :blk threaded_executor.executeThreaded(&vm, decoded, &analysis);
+    } else vm.execute();
 
     // 6. Extract return data
     var returnData: []const u8 = &[_]u8{};

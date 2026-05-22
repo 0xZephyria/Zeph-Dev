@@ -33,11 +33,13 @@ pub const zephyrdb = struct {
     pub const arena_mod = @import("zephyrdb/arena.zig");
     pub const account_table_mod = @import("zephyrdb/account_table.zig");
     pub const slot_store_mod = @import("zephyrdb/slot_store.zig");
+    pub const flat_table_mod = @import("zephyrdb/flat_table.zig");
     pub const wal_ring_mod = @import("zephyrdb/wal_ring.zig");
     pub const checkpoint_mod = @import("zephyrdb/checkpoint.zig");
 
     // Convenience re-exports
     pub const ZephyrDB = db.ZephyrDB;
+    pub const FlatTable = flat_table_mod.FlatTable;
     pub const Arena = arena_mod.Arena;
     pub const AccountTable = account_table_mod.AccountTable;
     pub const AccountEntry = account_table_mod.AccountEntry;
@@ -104,6 +106,16 @@ pub const verkle = struct {
     pub const Element = node.Element;
     pub const Fr = node.Fr;
     pub const CRS = node.CRS;
+};
+
+/// FlatKV — Pure Flat KV state storage (Solana approach)
+/// No Merkle trie, no per-block cryptographic commitment.
+/// Sharded HashMap for concurrent access, optional WAL for durability.
+pub const flatkv = struct {
+    pub const kv = @import("flatkv/mod.zig");
+    pub const FlatKV = kv.FlatKV;
+    pub const Config = kv.Config;
+    pub const Stats = kv.Stats;
 };
 
 /// Epoch Aggregation - Constant-size blockchain with full history

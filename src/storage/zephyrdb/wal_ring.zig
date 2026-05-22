@@ -192,7 +192,7 @@ pub const WalRing = struct {
 
         while (self.bg_flush_running.load(.acquire)) {
             // Sleep for the configured interval
-            std.time.sleep(interval_ns);
+            std.Thread.sleep(interval_ns);
 
             // Check if there are pending entries
             const pending = self.pendingEntries();
@@ -238,10 +238,8 @@ pub const WalRing = struct {
     }
 
     /// Append an account state update
-    pub fn appendAccountPut(self: *Self, address: [20]u8, balance: [32]u8) !void {
-        var key: [32]u8 = [_]u8{0} ** 32;
-        @memcpy(key[0..20], &address);
-        try self.append(.AccountPut, key, balance);
+    pub fn appendAccountPut(self: *Self, address: [32]u8, balance: [32]u8) !void {
+        try self.append(.AccountPut, address, balance);
     }
 
     /// Append a storage slot write
@@ -315,7 +313,7 @@ pub const WalRing = struct {
 
         // Update tail and stats atomically
         self.tail.store(head, .release);
-        self.entries_flushed.fetchAdd(count, .monotonic);
+        _ = self.entries_flushed.fetchAdd(count, .monotonic);
         _ = self.flush_count.fetchAdd(1, .monotonic);
 
         // Group commit stats

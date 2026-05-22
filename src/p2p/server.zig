@@ -591,10 +591,10 @@ pub const Server = struct {
     fn handleAuth(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.AuthMsg, payload);
 
-        var pubKeyBytes: [65]u8 = undefined;
-        @memcpy(&pubKeyBytes, &msg.publicKey);
+        // Ed25519 public key is 32 bytes
+        const pubKeyBytes: [32]u8 = msg.publicKey;
 
-        const valid = try core.account.verify_signature(peer.challenge, msg.signature, pubKeyBytes);
+        const valid = try core.account.verify_signature(&peer.challenge, msg.signature, pubKeyBytes);
         if (!valid) {
             peer.updateScore(-50);
             return error.AuthFailed;
@@ -630,7 +630,7 @@ pub const Server = struct {
             // Derive producer address from the first 20 bytes of the signature
             // (in production, this would come from the block header's proposer field)
             var producer_addr = core.types.Address.zero();
-            @memcpy(&producer_addr.bytes, msg.producerSignature[0..20]);
+            @memcpy(&producer_addr.bytes, msg.producerSignature[0..32]);
 
             if (!verifier.verifyShred(
                 msg.blockNumber,

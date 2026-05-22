@@ -147,7 +147,7 @@ pub fn getNetworkConfig(network: []const u8) NetworkConfig {
 // ── Genesis Application ─────────────────────────────────────────────────
 
 /// Apply genesis allocations and system contracts, return the genesis block.
-pub fn applyGenesis(allocator: std.mem.Allocator, trie: anytype, genesis: Genesis) !*types.Block {
+pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis) !*types.Block {
     const state = @import("state.zig");
 
     // 1. Apply token allocations
@@ -155,22 +155,22 @@ pub fn applyGenesis(allocator: std.mem.Allocator, trie: anytype, genesis: Genesi
         const key = state.State.balanceKey(entry.addr);
         var balanceBytes = [_]u8{0} ** 32;
         std.mem.writeInt(u256, &balanceBytes, entry.balance, .big);
-        try trie.put(key, &balanceBytes);
+        try db.write(&key, &balanceBytes);
 
         // Deploy code if present (system contracts)
         if (entry.code) |code| {
             const codeKeyVal = state.State.codeKey(entry.addr);
-            try trie.put(codeKeyVal, code);
+            try db.write(&codeKeyVal, code);
             var codeHash: [32]u8 = undefined;
             std.crypto.hash.sha3.Keccak256.hash(code, &codeHash, .{});
-            try trie.put(state.State.codeHashKey(entry.addr), &codeHash);
+            try db.write(&state.State.codeHashKey(entry.addr), &codeHash);
         }
 
         // Set initial storage if present
         if (entry.storage) |entries| {
             for (entries) |s| {
                 const sKey = state.State.storageKey(entry.addr, s.slot);
-                try trie.put(sKey, &s.value);
+                try db.write(&sKey, &s.value);
             }
         }
     }
@@ -181,34 +181,30 @@ pub fn applyGenesis(allocator: std.mem.Allocator, trie: anytype, genesis: Genesi
         const balKey = state.State.balanceKey(sys.address);
         var balBytes = [_]u8{0} ** 32;
         std.mem.writeInt(u256, &balBytes, sys.balance, .big);
-        try trie.put(balKey, &balBytes);
+        try db.write(&balKey, &balBytes);
 
         // Deploy bytecode
         if (sys.code) |code| {
             const codeKeyVal = state.State.codeKey(sys.address);
-            try trie.put(codeKeyVal, code);
+            try db.write(&codeKeyVal, code);
             var codeHash: [32]u8 = undefined;
             std.crypto.hash.sha3.Keccak256.hash(code, &codeHash, .{});
-            try trie.put(state.State.codeHashKey(sys.address), &codeHash);
+            try db.write(&state.State.codeHashKey(sys.address), &codeHash);
         }
     }
 
-    // 3. Commit state
-    try trie.commit();
-    const verkleRootArr = trie.rootHash();
-
-    // 4. Construct genesis block
+    // 3. Flat KV: no state root computation
     const header = types.Header{
         .parentHash = types.Hash.zero(),
         .number = 0,
         .time = genesis.config.genesisTime,
-        .verkleRoot = types.Hash{ .bytes = verkleRootArr },
+        .verkleRoot = types.Hash.zero(),
         .txHash = types.Hash.zero(),
         .coinbase = genesis.config.coinbase,
         .extraData = &[_]u8{},
         .gasLimit = genesis.config.gasLimit,
         .gasUsed = 0,
-        .baseFee = genesis.config.baseFee orelse 1000000000,
+        .baseFee = 0,
     };
 
     const block = try allocator.create(types.Block);

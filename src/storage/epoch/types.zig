@@ -10,8 +10,8 @@ pub const MAX_ACCOUNTS_PER_EPOCH: usize = 10_000_000; // 10M accounts max
 pub const MAX_DELTA_SIZE: usize = 256 * 1024 * 1024; // 256 MB max compressed delta
 pub const COMPRESSION_LEVEL: i32 = 3; // Zstd compression level (fast)
 
-/// 20-byte Ethereum address
-pub const Address = [20]u8;
+/// 32-byte address
+pub const Address = [32]u8;
 
 /// 32-byte hash
 pub const Hash = [32]u8;
@@ -19,11 +19,11 @@ pub const Hash = [32]u8;
 /// Account state delta entry - tracks changes to a single account
 /// Packed struct for cache efficiency (64 bytes aligned)
 pub const AccountDelta = extern struct {
-    address: Address, // 20 bytes
+    address: Address, // 32 bytes
     balance_delta: i128, // 16 bytes (signed for debits)
     nonce_delta: i64, // 8 bytes (usually +1)
     code_hash: Hash, // 32 bytes (zero if unchanged)
-    // Total: 76 bytes, padded to 80
+    // Total: 88 bytes, padded to 96
 
     pub fn isEmpty(self: *const AccountDelta) bool {
         return self.balance_delta == 0 and
@@ -281,14 +281,14 @@ pub const BlockSummary = struct {
 // Tests
 test "AccountDelta merge" {
     var d1 = AccountDelta{
-        .address = [_]u8{1} ** 20,
+        .address = [_]u8{1} ** 32,
         .balance_delta = 100,
         .nonce_delta = 1,
         .code_hash = [_]u8{0} ** 32,
     };
 
     const d2 = AccountDelta{
-        .address = [_]u8{1} ** 20,
+        .address = [_]u8{1} ** 32,
         .balance_delta = -50,
         .nonce_delta = 1,
         .code_hash = [_]u8{0xAB} ** 32,

@@ -79,7 +79,7 @@ pub fn preDecodeProgram(allocator: std.mem.Allocator, code: []const u8, codeLen:
 
         // Compute gas cost
         var gasCost = gas_table.OPCODE_GAS_TABLE[opcode];
-        if (insn == .r_type and insn.r_type.funct7 == decoder.Funct7.MULDIV) {
+        if (insn == .rType and insn.rType.funct7 == decoder.Funct7.MULDIV) {
             const extra = gas_table.instructionCost(insn) -| gas_table.InstructionGas.ALU;
             gasCost += extra;
         }
@@ -125,12 +125,12 @@ pub fn executeThreaded(
         if (analysis) |a| {
             const block_idx = a.getBlockForPC(vm.pc);
             if (block_idx) |bi| {
-                if (bi < a.blockCount) {
+                if (bi < a.block_count) {
                     const block = a.blocks[bi];
                     // Only pre-charge if we're at the start of the block
-                    if (vm.pc == block.startPc) {
-                        vm.gas.consume(block.totalGas) catch {
-                            vm.status = .out_of_gas;
+                    if (vm.pc == block.start_pc) {
+                        vm.gas.consume(block.total_gas) catch {
+                            vm.status = .outOfGas;
                             break;
                         };
                         // Execute the entire block without per-instruction gas checks
@@ -155,7 +155,7 @@ pub fn executeThreaded(
 
         // Per-instruction gas (only when not using block-level gas)
         vm.gas.consume(di.gasCost) catch {
-            vm.status = .out_of_gas;
+            vm.status = .outOfGas;
             break;
         };
 
@@ -179,10 +179,10 @@ fn executeBlock(
     decoded: []const DecodedInsn,
     block: basic_block.BasicBlock,
 ) void {
-    var pc = block.startPc;
+    var pc = block.start_pc;
     var steps: u16 = 0;
 
-    while (steps < block.insnCount and vm.status == .running) : (steps += 1) {
+    while (steps < block.insn_count and vm.status == .running) : (steps += 1) {
         const insn_idx = pc / 4;
         if (insn_idx >= decoded.len) {
             vm.status = .fault;
@@ -213,7 +213,7 @@ fn executeBlock(
     }
 
     // Reached end of basic block normally — update PC past the block
-    vm.pc = block.endPc +% 4;
+    vm.pc = block.end_pc +% 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,12 +224,12 @@ fn executeBlock(
 /// This is the inner dispatch used by both per-instruction and block execution.
 fn dispatchDecoded(vm: *ForgeVM, di: DecodedInsn) void {
     switch (di.insn) {
-        .r_type => |r| execR(vm, r),
-        .i_type => |i| execI(vm, i, di.opcode),
-        .s_type => |s| execS(vm, s),
-        .b_type => |b| execB(vm, b),
-        .u_type => |u_val| execU(vm, u_val, di.opcode),
-        .j_type => |j| execJ(vm, j),
+        .rType => |r| execR(vm, r),
+        .iType => |i| execI(vm, i, di.opcode),
+        .sType => |s| execS(vm, s),
+        .bType => |b| execB(vm, b),
+        .uType => |u_val| execU(vm, u_val, di.opcode),
+        .jType => |j| execJ(vm, j),
         .system => |sys| execSystem(vm, sys),
         .custom => |c| vm.execCustom(c), // delegate to ForgeVM.execCustom
     }
@@ -561,8 +561,8 @@ inline fn execSystem(vm: *ForgeVM, sys: decoder.SystemOp) void {
                     switch (err) {
                         error.ReturnData => vm.status = .returned,
                         error.Revert => vm.status = .reverted,
-                        error.SelfDestruct => vm.status = .self_destruct,
-                        error.OutOfGas => vm.status = .out_of_gas,
+                        error.SelfDestruct => vm.status = .selfDestruct,
+                        error.OutOfGas => vm.status = .outOfGas,
                         error.UnknownSyscall => {
                             vm.status = .fault;
                             vm.faultReason = "Unknown syscall";

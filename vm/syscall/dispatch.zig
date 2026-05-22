@@ -38,6 +38,8 @@ pub const SyscallId = struct {
     pub const AUTHORITY_GRANT: u32 = 0x21;
     pub const AUTHORITY_REVOKE: u32 = 0x22;
     pub const AUTHORITY_LIST: u32 = 0x23;
+    pub const TRANSIENT_LOAD: u32 = 0x26;
+    pub const TRANSIENT_STORE: u32 = 0x27;
 
     // ── Events ───────────────────────────────────────────────────
     pub const EMIT_EVENT: u32 = 0x30;
@@ -48,6 +50,7 @@ pub const SyscallId = struct {
     pub const DELEGATECALL: u32 = 0x41;
     pub const STATICCALL: u32 = 0x42;
     pub const CREATE_CONTRACT: u32 = 0x43;
+    pub const CREATE2_CONTRACT: u32 = 0x44;
 
     // ── Execution control ────────────────────────────────────────
     pub const RETURN_DATA: u32 = 0x50;
@@ -130,7 +133,7 @@ pub const AccessSets = struct {
     /// Warm storage slots (keys already accessed in this execution)
     warmSlots: std.AutoHashMap([32]u8, void),
     /// Warm addresses (addresses already accessed in this execution)
-    warmAddresses: std.AutoHashMap([20]u8, void),
+    warmAddresses: std.AutoHashMap([32]u8, void),
     /// Original storage values at the start of the transaction (for SSTORE refund calc)
     originalValues: std.AutoHashMap([32]u8, [32]u8),
     allocator: std.mem.Allocator,
@@ -138,7 +141,7 @@ pub const AccessSets = struct {
     pub fn init(allocator: std.mem.Allocator) AccessSets {
         return .{
             .warmSlots = std.AutoHashMap([32]u8, void).init(allocator),
-            .warmAddresses = std.AutoHashMap([20]u8, void).init(allocator),
+            .warmAddresses = std.AutoHashMap([32]u8, void).init(allocator),
             .originalValues = std.AutoHashMap([32]u8, [32]u8).init(allocator),
             .allocator = allocator,
         };
@@ -163,12 +166,12 @@ pub const AccessSets = struct {
     }
 
     /// Check if an address is warm.
-    pub fn isAddressWarm(self: *const AccessSets, addr: [20]u8) bool {
+    pub fn isAddressWarm(self: *const AccessSets, addr: [32]u8) bool {
         return self.warmAddresses.contains(addr);
     }
 
     /// Mark an address as warm. Returns true if it was already warm.
-    pub fn markAddressWarm(self: *AccessSets, addr: [20]u8) bool {
+    pub fn markAddressWarm(self: *AccessSets, addr: [32]u8) bool {
         const wasWarm = self.warmAddresses.contains(addr);
         self.warmAddresses.put(addr, {}) catch {};
         return wasWarm;
@@ -192,15 +195,15 @@ pub const HostEnv = struct {
     storage: ?*StorageBackend,
 
     // Environment values (set by the node before execution)
-    caller: [20]u8,
+    caller: [32]u8,
     callValue: [32]u8,
-    selfAddress: [20]u8,
+    selfAddress: [32]u8,
     blockNumber: u64,
     timestamp: u64,
     chainId: u64,
-    txOrigin: [20]u8,
+    txOrigin: [32]u8,
     gasPrice: u64,
-    coinbase: [20]u8,
+    coinbase: [32]u8,
     gasLimit: u64,
     baseFee: u64,
     prevrandao: [32]u8,
@@ -225,17 +228,19 @@ pub const HostEnv = struct {
 
     // ---- Pluggable providers for node integration ----
 
-    /// Balance provider: returns 32-byte balance for a 20-byte address.
+    /// Balance provider: returns 32-byte balance for a 32-byte address.
     /// If null, getBalance returns 0.
-    balanceFn: ?*const fn (addr: [20]u8) [32]u8 = null,
+    balanceFn: ?*const fn (addr: [32]u8) [32]u8 = null,
 
-    /// Ecrecover provider: recovers signer from hash + v/r/s.
-    /// If null, ecrecover returns zero address.
-    ecrecoverFn: ?*const fn (hash: [32]u8, v: u8, r: [32]u8, s: [32]u8) [20]u8 = null,
+    /// Sig verify provider: verifies Ed25519/pluggable signature and returns derived address.
+    /// Signature scheme: 0 = Ed25519, 1 = BLS12-381, 2 = quantum-resistant.
+    /// Returns blake3(pubkey) as the signer address, or zeroes on failure.
+    /// If null, returns zero address.
+    ecrecoverFn: ?*const fn (hash: [32]u8, scheme: u8, pubkey: [32]u8, signature: [64]u8) [32]u8 = null,
 
     /// Call provider: execute a cross-contract call.
     /// Returns (success, returnData). If null, calls return failure.
-    callFn: ?*const fn (callType: CallType, to: [20]u8, value: [32]u8, data: []const u8, gas: u64) CallProviderResult = null,
+    callFn: ?*const fn (callType: CallType, to: [32]u8, value: [32]u8, data: []const u8, gas: u64) CallProviderResult = null,
 
     /// Create provider: deploy a new contract.
     /// Returns (success, newAddress). If null, creates return failure.
@@ -248,29 +253,38 @@ pub const HostEnv = struct {
 
     /// Selfdestruct provider: transfers balance to beneficiary and marks account for deletion.
     /// If null, selfdestruct is a no-op that still halts execution.
-    selfDestructFn: ?*const fn (beneficiary: [20]u8) bool = null,
+    selfDestructFn: ?*const fn (beneficiary: [32]u8) bool = null,
 
     // ---- ZephyrLang Specific Providers ----
 
     /// Asset transfer provider: FORGE native asset transfer.
-    assetTransferFn: ?*const fn (host: *HostEnv, assetId: [32]u8, from: [20]u8, to: [20]u8, amount: u128) anyerror!void = null,
+    assetTransferFn: ?*const fn (host: *HostEnv, assetId: [32]u8, from: [32]u8, to: [32]u8, amount: u128) anyerror!void = null,
+
+    derivedLoadFn: ?*const fn (host: *HostEnv, user: [32]u8, slot: [32]u8) [32]u8 = null,
+    derivedStoreFn: ?*const fn (host: *HostEnv, user: [32]u8, slot: [32]u8, value: [32]u8) anyerror!void = null,
+    globalLoadFn: ?*const fn (host: *HostEnv, slot: [32]u8) [32]u8 = null,
+    globalStoreFn: ?*const fn (host: *HostEnv, slot: [32]u8, delta: [32]u8, isAddition: bool) anyerror!void = null,
 
     /// Parallel safe hint
     parallelSafe: bool = false,
 
+    /// VM execution pool (reusable sandbox memory, decoded code cache)
+    /// When set, contract_loader uses pooled sandbox + threaded executor. 
+    vm_pool: ?*anyopaque = null,
+
     /// Get code hash for a contract: returns 32-byte hash
-    codeHashFn: ?*const fn (addr: [20]u8) [32]u8 = null,
+    codeHashFn: ?*const fn (addr: [32]u8) [32]u8 = null,
 
     /// Role checking provider
-    roleCheckFn: ?*const fn (addr: [20]u8, role: [32]u8, account: [20]u8) bool = null,
+    roleCheckFn: ?*const fn (addr: [32]u8, role: [32]u8, account: [32]u8) bool = null,
 
     /// Role management provider (for ZephyrLang native roles)
-    roleGrantFn: ?*const fn (addr: [20]u8, role: [32]u8, account: [20]u8) void = null,
-    roleRevokeFn: ?*const fn (addr: [20]u8, role: [32]u8, account: [20]u8) void = null,
+    roleGrantFn: ?*const fn (addr: [32]u8, role: [32]u8, account: [32]u8) void = null,
+    roleRevokeFn: ?*const fn (addr: [32]u8, role: [32]u8, account: [32]u8) void = null,
 
     /// Resource lock/unlock provider (for linear types)
-    resourceLockFn: ?*const fn (addr: [20]u8, id: [32]u8) bool = null,
-    resourceUnlockFn: ?*const fn (addr: [20]u8, id: [32]u8) void = null,
+    resourceLockFn: ?*const fn (addr: [32]u8, id: [32]u8) bool = null,
+    resourceUnlockFn: ?*const fn (addr: [32]u8, id: [32]u8) void = null,
 
     // ---- EIP-1153: Transient Storage (per-TX ephemeral key-value store) ----
     // Transient storage is automatically cleared when HostEnv is deinitialized
@@ -287,20 +301,20 @@ pub const HostEnv = struct {
     // Tracks which contract addresses are currently executing.
     // If a contract calls back into an address that is already in the call stack,
     // and that contract has re-entrancy protection enabled, the call is rejected.
-    reentrantGuard: std.AutoHashMap([20]u8, void),
+    reentrantGuard: std.AutoHashMap([32]u8, void),
 
     pub fn init(allocator: std.mem.Allocator) HostEnv {
         return .{
             .storage = null,
-            .caller = [_]u8{0} ** 20,
+            .caller = [_]u8{0} ** 32,
             .callValue = [_]u8{0} ** 32,
-            .selfAddress = [_]u8{0} ** 20,
+            .selfAddress = [_]u8{0} ** 32,
             .blockNumber = 0,
             .timestamp = 0,
             .chainId = 1,
-            .txOrigin = [_]u8{0} ** 20,
+            .txOrigin = [_]u8{0} ** 32,
             .gasPrice = 0,
-            .coinbase = [_]u8{0} ** 20,
+            .coinbase = [_]u8{0} ** 32,
             .gasLimit = 30_000_000,
             .baseFee = 0,
             .prevrandao = [_]u8{0} ** 32,
@@ -320,7 +334,7 @@ pub const HostEnv = struct {
             .resourceLockFn = null,
             .resourceUnlockFn = null,
             .transientStorage = std.AutoHashMap([32]u8, [32]u8).init(allocator),
-            .reentrantGuard = std.AutoHashMap([20]u8, void).init(allocator),
+            .reentrantGuard = std.AutoHashMap([32]u8, void).init(allocator),
         };
     }
 
@@ -388,7 +402,7 @@ pub const CallProviderResult = struct {
 /// Result from a create provider
 pub const CreateProviderResult = struct {
     success: bool,
-    newAddress: [20]u8,
+    newAddress: [32]u8,
     gasUsed: u64,
 };
 
@@ -427,6 +441,13 @@ fn syscallDispatch(vm_opaque: *anyopaque) executor.SyscallError!void {
     switch (syscallId) {
         SyscallId.STORAGE_LOAD => try storageLoad(vm, env),
         SyscallId.STORAGE_STORE => try storageStore(vm, env),
+        SyscallId.STORAGE_LOAD_DERIVED => try derivedStorageLoad(vm, env),
+        SyscallId.STORAGE_STORE_DERIVED => try derivedStorageStore(vm, env),
+        SyscallId.STORAGE_LOAD_GLOBAL => try globalStorageLoad(vm, env),
+        SyscallId.STORAGE_STORE_GLOBAL => try globalStorageStore(vm, env),
+        SyscallId.TRANSIENT_LOAD => try transientLoad(vm, env),
+        SyscallId.TRANSIENT_STORE => try transientStore(vm, env),
+        SyscallId.CREATE2_CONTRACT => try create2Contract(vm, env),
         SyscallId.EMIT_EVENT => try emitEvent(vm, env),
         SyscallId.EMIT_INDEXED_EVENT => try emitEvent(vm, env), // same impl for now
         SyscallId.GET_CALLER => getCaller(vm, env),
@@ -619,11 +640,11 @@ fn emitEvent(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     env.logs.append(env.allocator, logEntry) catch return SyscallError.InternalError;
 }
 
-/// Syscall 0x06: get_caller → writes msg.sender (20 bytes) to memory at a0
+/// Syscall 0x06: get_caller → writes msg.sender (32 bytes) to memory at a0
 fn getCaller(vm: *ForgeVM, env: *HostEnv) void {
     vm.gas.consume(gasTable.SyscallGas.GET_CALLER) catch return;
     const bufPtr = vm.regs[11];
-    const slice = vm.memory.getSliceMut(bufPtr, 20) catch return;
+    const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.caller);
 }
 
@@ -706,14 +727,14 @@ fn keccak256(vm: *ForgeVM) SyscallError!void {
     @memcpy(result_slice, &hash);
 }
 
-/// Syscall 0x0C: get_balance (EIP-2929 warm/cold) — a0 = ptr to 20-byte address, writes 32-byte balance to a1
+/// Syscall 0x0C: get_balance (EIP-2929 warm/cold) — a0 = ptr to 32-byte address, writes 32-byte balance to a1
 fn getBalance(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const addrPtr: u32 = @truncate(vm.regs[11]);
     const resultPtr: u32 = @truncate(vm.regs[12]);
 
-    // Read 20-byte address from VM memory
-    const addrSlice = vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault;
-    var addr: [20]u8 = undefined;
+    // Read 32-byte address from VM memory
+    const addrSlice = vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault;
+    var addr: [32]u8 = undefined;
     @memcpy(&addr, addrSlice);
 
     const gasCost = gasTable.SyscallGas.ASSET_QUERY_BALANCE;
@@ -751,10 +772,10 @@ fn getGasRemaining(vm: *ForgeVM) void {
     vm.regs[10] = vm.gas.remaining();
 }
 
-/// Syscall 0x15: get_tx_origin → writes 20 bytes to memory at a1
+/// Syscall 0x15: get_tx_origin → writes 32 bytes to memory at a1
 fn getTxOrigin(vm: *ForgeVM, env: *HostEnv) void {
     const bufPtr = vm.regs[11]; // a1 — a0 is the syscall ID
-    const slice = vm.memory.getSliceMut(bufPtr, 20) catch return;
+    const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.txOrigin);
 }
 
@@ -763,10 +784,10 @@ fn getGasPrice(vm: *ForgeVM, env: *HostEnv) void {
     vm.regs[10] = @truncate(env.gasPrice);
 }
 
-/// Syscall 0x17: get_coinbase → writes 20 bytes to memory at a1
+/// Syscall 0x17: get_coinbase → writes 32 bytes to memory at a1
 fn getCoinbase(vm: *ForgeVM, env: *HostEnv) void {
     const bufPtr = vm.regs[11]; // a1 — a0 is the syscall ID
-    const slice = vm.memory.getSliceMut(bufPtr, 20) catch return;
+    const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.coinbase);
 }
 
@@ -790,10 +811,10 @@ fn getPrevrandao(vm: *ForgeVM, env: *HostEnv) void {
     @memcpy(slice, &env.prevrandao);
 }
 
-/// Syscall 0x1B: get_self_address → writes 20 bytes to memory at a1
+/// Syscall 0x1B: get_self_address → writes 32 bytes to memory at a1
 fn getSelfAddress(vm: *ForgeVM, env: *HostEnv) void {
     const bufPtr = vm.regs[11]; // a1 — a0 is the syscall ID
-    const slice = vm.memory.getSliceMut(bufPtr, 20) catch return;
+    const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.selfAddress);
 }
 
@@ -844,8 +865,8 @@ fn logRaw(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 fn callContract(vm: *ForgeVM, env: *HostEnv, callType: CallType) SyscallError!void {
     // Read target address first so we can check warm/cold
     const toPtr_peek = vm.regs[11];
-    const to_slice_peek = vm.memory.getSlice(toPtr_peek, 20) catch return SyscallError.SegFault;
-    var to_addr_peek: [20]u8 = undefined;
+    const to_slice_peek = vm.memory.getSlice(toPtr_peek, 32) catch return SyscallError.SegFault;
+    var to_addr_peek: [32]u8 = undefined;
     @memcpy(&to_addr_peek, to_slice_peek);
 
     // FORGE flat gas model
@@ -857,9 +878,9 @@ fn callContract(vm: *ForgeVM, env: *HostEnv, callType: CallType) SyscallError!vo
     const dataPtr = vm.regs[13];
     const dataLen = vm.regs[14];
 
-    // Read target address (20 bytes)
-    const to_slice = vm.memory.getSlice(toPtr, 20) catch return SyscallError.SegFault;
-    var to: [20]u8 = undefined;
+    // Read target address (32 bytes)
+    const to_slice = vm.memory.getSlice(toPtr, 32) catch return SyscallError.SegFault;
+    var to: [32]u8 = undefined;
     @memcpy(&to, to_slice);
 
     // Read value (32 bytes) — only meaningful for CALL
@@ -975,7 +996,7 @@ fn createContract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
         if (result.success) {
             // Write new address to result buffer
-            const addrSlice = vm.memory.getSliceMut(resultPtr, 20) catch {
+            const addrSlice = vm.memory.getSliceMut(resultPtr, 32) catch {
                 vm.regs[10] = 0;
                 return;
             };
@@ -1008,7 +1029,7 @@ fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const code_len = vm.regs[12]; // a2
     const salt_ptr = vm.regs[13]; // a3
     const value_ptr = vm.regs[14]; // a4
-    const resultPtr = vm.regs[15]; // a5 — result buffer (20 bytes)
+    const resultPtr = vm.regs[15]; // a5 — result buffer (32 bytes)
 
     // Read init code
     var code: []const u8 = &[_]u8{};
@@ -1047,7 +1068,7 @@ fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
         if (result.success) {
             // Write new address to result buffer
-            const addrSlice = vm.memory.getSliceMut(resultPtr, 20) catch {
+            const addrSlice = vm.memory.getSliceMut(resultPtr, 32) catch {
                 vm.regs[10] = 0;
                 return;
             };
@@ -1074,6 +1095,89 @@ fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 //   - Multi-hop AMM routing intermediate state
 //   - EIP-1153 compatible smart contracts
 
+fn derivedStorageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
+    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+
+    const userPtr = vm.regs[11];
+    const keyPtr = vm.regs[12];
+    const resultPtr = vm.regs[13];
+
+    const user_slice = vm.memory.getSlice(userPtr, 32) catch return SyscallError.SegFault;
+    var user: [32]u8 = undefined;
+    @memcpy(&user, user_slice);
+
+    const keyRef = vm.memory.getAligned32(keyPtr) catch return SyscallError.SegFault;
+    const key = keyRef.*;
+
+    var value = [_]u8{0} ** 32;
+    if (env.derivedLoadFn) |loadFn| {
+        value = loadFn(env, user, key);
+    }
+
+    const result_ref = vm.memory.getAligned32Mut(resultPtr) catch return SyscallError.SegFault;
+    result_ref.* = value;
+}
+
+fn derivedStorageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
+    vm.gas.consume(5000) catch return SyscallError.OutOfGas;
+
+    const userPtr = vm.regs[11];
+    const keyPtr = vm.regs[12];
+    const valPtr = vm.regs[13];
+
+    const user_slice = vm.memory.getSlice(userPtr, 32) catch return SyscallError.SegFault;
+    var user: [32]u8 = undefined;
+    @memcpy(&user, user_slice);
+
+    const keyRef = vm.memory.getAligned32(keyPtr) catch return SyscallError.SegFault;
+    const key = keyRef.*;
+
+    const valRef = vm.memory.getAligned32(valPtr) catch return SyscallError.SegFault;
+    const value = valRef.*;
+
+    if (env.derivedStoreFn) |storeFn| {
+        storeFn(env, user, key, value) catch return SyscallError.InternalError;
+    }
+}
+
+fn globalStorageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
+    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+
+    const keyPtr = vm.regs[11];
+    const resultPtr = vm.regs[12];
+
+    const keyRef = vm.memory.getAligned32(keyPtr) catch return SyscallError.SegFault;
+    const key = keyRef.*;
+
+    var value = [_]u8{0} ** 32;
+    if (env.globalLoadFn) |loadFn| {
+        value = loadFn(env, key);
+    }
+
+    const result_ref = vm.memory.getAligned32Mut(resultPtr) catch return SyscallError.SegFault;
+    result_ref.* = value;
+}
+
+fn globalStorageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
+    vm.gas.consume(5000) catch return SyscallError.OutOfGas;
+
+    const keyPtr = vm.regs[11];
+    const deltaPtr = vm.regs[12];
+    const isAdditionVal = vm.regs[13];
+
+    const keyRef = vm.memory.getAligned32(keyPtr) catch return SyscallError.SegFault;
+    const key = keyRef.*;
+
+    const deltaRef = vm.memory.getAligned32(deltaPtr) catch return SyscallError.SegFault;
+    const delta = deltaRef.*;
+
+    const isAddition = isAdditionVal != 0;
+
+    if (env.globalStoreFn) |storeFn| {
+        storeFn(env, key, delta, isAddition) catch return SyscallError.InternalError;
+    }
+}
+
 /// Syscall 0x23: tload — read from transient storage
 /// a0 = syscallId, a1 = pointer to 32-byte key, a2 = pointer to 32-byte result buffer
 /// Gas: 100 (EIP-1153, same as warm SLOAD)
@@ -1089,7 +1193,7 @@ fn transientLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     @memcpy(&key, key_slice);
 
     // Look up in transient storage — default to zero if not set
-    const value = env.transient_storage.get(key) orelse [_]u8{0} ** 32;
+    const value = env.transientStorage.get(key) orelse [_]u8{0} ** 32;
 
     // Write result to VM memory
     const result_slice = vm.memory.getSliceMut(resultPtr, 32) catch return SyscallError.SegFault;
@@ -1116,46 +1220,45 @@ fn transientStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     @memcpy(&newValue, value_slice);
 
     // Store in transient storage (overwrites any existing value)
-    env.transient_storage.put(key, newValue) catch return SyscallError.InternalError;
+    env.transientStorage.put(key, newValue) catch return SyscallError.InternalError;
 }
 
-/// Syscall ECRECOVER
-/// a0 = syscallId, a1 = ptr to 32-byte hash, a2 = v (recovery id 27/28),
-/// a3 = ptr to 32-byte r, a4 = ptr to 32-byte s, a5 = ptr to 20-byte result buffer
-/// Returns: a0 = 1 (success) or 0 (failure); recovered address written to result buffer.
+/// Syscall VERIFY_SIG (replaces ECRECOVER)
+/// a0 = syscallId, a1 = ptr to 32-byte message hash,
+/// a2 = scheme (0=Ed25519, 1=BLS12-381, 2=quantum),
+/// a3 = ptr to 32-byte public key, a4 = ptr to 64-byte signature,
+/// a5 = ptr to 32-byte result buffer (blake3(pubkey) address)
+/// Returns: a0 = 1 (success) or 0 (failure); signer address written to result buffer.
 fn ecrecover(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    // Gas: EVM ecrecover precompile costs 3000
-    vm.gas.consume(3000) catch return SyscallError.OutOfGas;
+    // Gas: signature verification cost (cheaper than EVM ecrecover)
+    vm.gas.consume(2000) catch return SyscallError.OutOfGas;
 
-    const hash_ptr = vm.regs[11]; // a1
-    const v_val = vm.regs[12]; // a2
-    const r_ptr = vm.regs[13]; // a3
-    const s_ptr = vm.regs[14]; // a4
-    const outPtr = vm.regs[15]; // a5 — result buffer (20 bytes)
+    const hash_ptr = vm.regs[11]; // a1 — 32-byte message hash
+    const scheme: u8 = @truncate(vm.regs[12]); // a2 — signature scheme
+    const pubkey_ptr = vm.regs[13]; // a3 — 32-byte Ed25519 public key
+    const sig_ptr = vm.regs[14]; // a4 — 64-byte signature
+    const outPtr = vm.regs[15]; // a5 — result buffer (32 bytes)
 
     // Read hash (32 bytes)
     const hashSlice = vm.memory.getSlice(hash_ptr, 32) catch return SyscallError.SegFault;
     var hash: [32]u8 = undefined;
     @memcpy(&hash, hashSlice);
 
-    // v is passed as register value directly (27 or 28)
-    const v: u8 = @truncate(v_val);
+    // Read pubkey (32 bytes)
+    const pubkeySlice = vm.memory.getSlice(pubkey_ptr, 32) catch return SyscallError.SegFault;
+    var pubkey: [32]u8 = undefined;
+    @memcpy(&pubkey, pubkeySlice);
 
-    // Read r (32 bytes)
-    const r_slice = vm.memory.getSlice(r_ptr, 32) catch return SyscallError.SegFault;
-    var r: [32]u8 = undefined;
-    @memcpy(&r, r_slice);
+    // Read signature (64 bytes)
+    const sigSlice = vm.memory.getSlice(sig_ptr, 64) catch return SyscallError.SegFault;
+    var sig: [64]u8 = undefined;
+    @memcpy(&sig, sigSlice);
 
-    // Read s (32 bytes)
-    const s_slice = vm.memory.getSlice(s_ptr, 32) catch return SyscallError.SegFault;
-    var s: [32]u8 = undefined;
-    @memcpy(&s, s_slice);
-
-    // Execute via provider
+    // Execute via pluggable provider
     if (env.ecrecoverFn) |ecrecoverFn| {
-        const recovered = ecrecoverFn(hash, v, r, s);
+        const recovered = ecrecoverFn(hash, scheme, pubkey, sig);
 
-        // Check for zero address (invalid recovery)
+        // Check for zero address (invalid verification)
         var all_zero = true;
         for (recovered) |b| {
             if (b != 0) {
@@ -1165,10 +1268,10 @@ fn ecrecover(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
         }
 
         if (all_zero) {
-            vm.regs[10] = 0; // Failed recovery
+            vm.regs[10] = 0; // Failed verification
         } else {
-            // Write recovered address to the dedicated output buffer (a5)
-            const addrSlice = vm.memory.getSliceMut(outPtr, 20) catch return SyscallError.SegFault;
+            // Write recovered address to output buffer (a5)
+            const addrSlice = vm.memory.getSliceMut(outPtr, 32) catch return SyscallError.SegFault;
             @memcpy(addrSlice, &recovered);
             vm.regs[10] = 1; // Success
         }
@@ -1191,9 +1294,9 @@ fn selfDestructSyscall(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
     const beneficiaryPtr = vm.regs[11]; // a1 — a0 is syscall ID
 
-    // Read beneficiary address (20 bytes)
-    const benSlice = vm.memory.getSlice(beneficiaryPtr, 20) catch return SyscallError.SegFault;
-    var beneficiary: [20]u8 = undefined;
+    // Read beneficiary address (32 bytes)
+    const benSlice = vm.memory.getSlice(beneficiaryPtr, 32) catch return SyscallError.SegFault;
+    var beneficiary: [32]u8 = undefined;
     @memcpy(&beneficiary, benSlice);
 
     // EIP-2929: charge cold access if beneficiary is not warm
@@ -1279,12 +1382,12 @@ fn codeCopy(vm: *ForgeVM) SyscallError!void {
 }
 
 /// Syscall: extcodesize — get code size of external account
-/// a0 = syscallId, a1 = ptr to 20-byte address
+/// a0 = syscallId, a1 = ptr to 32-byte address
 /// Returns: a0 = code size (or 0 for EOA)
 fn extCodeSize(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const addrPtr = vm.regs[11]; // a1
-    const addrSlice = vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault;
-    var addr: [20]u8 = undefined;
+    const addrSlice = vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault;
+    var addr: [32]u8 = undefined;
     @memcpy(&addr, addrSlice);
 
     // EIP-2929 warm/cold gas
@@ -1303,13 +1406,13 @@ fn extCodeSize(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 // ---------------------------------------------------------------------------
 
 /// Syscall GET_BLOCK_HASH (used as get_code_hash in FORGE)
-/// a0 = syscallId, a1 = ptr to 20-byte address, a2 = ptr to 32-byte result
+/// a0 = syscallId, a1 = ptr to 32-byte address, a2 = ptr to 32-byte result
 fn getCodeHash(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const addrPtr = vm.regs[11]; // a1
     const resultPtr = vm.regs[12]; // a2
 
-    const slice = vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault;
-    var addr: [20]u8 = undefined;
+    const slice = vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault;
+    var addr: [32]u8 = undefined;
     @memcpy(&addr, slice);
 
     // Warmth check: charge EXTCODEHASH warm/cold cost
@@ -1329,12 +1432,12 @@ fn roleCheck(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const rolePtr = vm.regs[12]; // a2
     const accPtr = vm.regs[13]; // a3
 
-    var addr: [20]u8 = undefined;
-    @memcpy(&addr, vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault);
+    var addr: [32]u8 = undefined;
+    @memcpy(&addr, vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault);
     var role: [32]u8 = undefined;
     @memcpy(&role, vm.memory.getSlice(rolePtr, 32) catch return SyscallError.SegFault);
-    var acc: [20]u8 = undefined;
-    @memcpy(&acc, vm.memory.getSlice(accPtr, 20) catch return SyscallError.SegFault);
+    var acc: [32]u8 = undefined;
+    @memcpy(&acc, vm.memory.getSlice(accPtr, 32) catch return SyscallError.SegFault);
 
     vm.gas.consume(400) catch return SyscallError.OutOfGas;
 
@@ -1349,12 +1452,12 @@ fn roleGrant(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const rolePtr = vm.regs[12]; // a2
     const accPtr = vm.regs[13]; // a3
 
-    var addr: [20]u8 = undefined;
-    @memcpy(&addr, vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault);
+    var addr: [32]u8 = undefined;
+    @memcpy(&addr, vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault);
     var role: [32]u8 = undefined;
     @memcpy(&role, vm.memory.getSlice(rolePtr, 32) catch return SyscallError.SegFault);
-    var acc: [20]u8 = undefined;
-    @memcpy(&acc, vm.memory.getSlice(accPtr, 20) catch return SyscallError.SegFault);
+    var acc: [32]u8 = undefined;
+    @memcpy(&acc, vm.memory.getSlice(accPtr, 32) catch return SyscallError.SegFault);
 
     vm.gas.consume(2000) catch return SyscallError.OutOfGas;
 
@@ -1368,12 +1471,12 @@ fn roleRevoke(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const rolePtr = vm.regs[12]; // a2
     const accPtr = vm.regs[13]; // a3
 
-    var addr: [20]u8 = undefined;
-    @memcpy(&addr, vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault);
+    var addr: [32]u8 = undefined;
+    @memcpy(&addr, vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault);
     var role: [32]u8 = undefined;
     @memcpy(&role, vm.memory.getSlice(rolePtr, 32) catch return SyscallError.SegFault);
-    var acc: [20]u8 = undefined;
-    @memcpy(&acc, vm.memory.getSlice(accPtr, 20) catch return SyscallError.SegFault);
+    var acc: [32]u8 = undefined;
+    @memcpy(&acc, vm.memory.getSlice(accPtr, 32) catch return SyscallError.SegFault);
 
     vm.gas.consume(2000) catch return SyscallError.OutOfGas;
 
@@ -1386,8 +1489,8 @@ fn resourceLock(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const addrPtr = vm.regs[11]; // a1
     const id_ptr = vm.regs[12]; // a2
 
-    var addr: [20]u8 = undefined;
-    @memcpy(&addr, vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault);
+    var addr: [32]u8 = undefined;
+    @memcpy(&addr, vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault);
     var id: [32]u8 = undefined;
     @memcpy(&id, vm.memory.getSlice(id_ptr, 32) catch return SyscallError.SegFault);
 
@@ -1449,11 +1552,11 @@ fn handleAssetTransfer(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var assetId: [32]u8 = undefined;
     @memcpy(&assetId, vm.memory.getSlice(assetIdPtr, 32) catch return SyscallError.SegFault);
 
-    var from: [20]u8 = undefined;
-    @memcpy(&from, vm.memory.getSlice(fromPtr, 20) catch return SyscallError.SegFault);
+    var from: [32]u8 = undefined;
+    @memcpy(&from, vm.memory.getSlice(fromPtr, 32) catch return SyscallError.SegFault);
 
-    var to: [20]u8 = undefined;
-    @memcpy(&to, vm.memory.getSlice(toPtr, 20) catch return SyscallError.SegFault);
+    var to: [32]u8 = undefined;
+    @memcpy(&to, vm.memory.getSlice(toPtr, 32) catch return SyscallError.SegFault);
 
     const amountSlice = vm.memory.getSlice(amountPtr, 16) catch return SyscallError.SegFault;
     const amount = std.mem.readInt(u128, amountSlice[0..16], .little);
@@ -1490,8 +1593,8 @@ fn resourceUnlock(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const addrPtr = vm.regs[11]; // a1
     const id_ptr = vm.regs[12]; // a2
 
-    var addr: [20]u8 = undefined;
-    @memcpy(&addr, vm.memory.getSlice(addrPtr, 20) catch return SyscallError.SegFault);
+    var addr: [32]u8 = undefined;
+    @memcpy(&addr, vm.memory.getSlice(addrPtr, 32) catch return SyscallError.SegFault);
     var id: [32]u8 = undefined;
     @memcpy(&id, vm.memory.getSlice(id_ptr, 32) catch return SyscallError.SegFault);
 
@@ -1783,7 +1886,7 @@ test "syscall: create2 deterministic address derivation" {
     defer env.deinit();
 
     // Set the contract's self_address (the CREATE2 sender)
-    var sender: [20]u8 = undefined;
+    var sender: [32]u8 = undefined;
     @memset(&sender, 0xAA);
     env.selfAddress = sender;
 
@@ -1806,7 +1909,7 @@ test "syscall: create2 deterministic address derivation" {
     h2.update(&initcode_hash);
     var expected_hash: [32]u8 = undefined;
     h2.final(&expected_hash);
-    var expected_addr: [20]u8 = undefined;
+    var expected_addr: [32]u8 = undefined;
     @memcpy(&expected_addr, expected_hash[12..32]);
 
     // Verify the computed address is non-zero and deterministic
@@ -1827,7 +1930,7 @@ test "syscall: create2 deterministic address derivation" {
     h3.update(&initcode_hash);
     var hash2: [32]u8 = undefined;
     h3.final(&hash2);
-    var addr2: [20]u8 = undefined;
+    var addr2: [32]u8 = undefined;
     @memcpy(&addr2, hash2[12..32]);
 
     try testing.expectEqualSlices(u8, &expected_addr, &addr2);

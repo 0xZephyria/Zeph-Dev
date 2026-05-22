@@ -684,7 +684,7 @@ pub const ForgeVM = struct {
     // execCustom bridges the two: it maps ZephCustomOp → SyscallId and
     // rearranges registers so the existing syscall handlers work correctly.
 
-    fn execCustom(self: *ForgeVM, c: decoder.CustomType) void {
+    pub fn execCustom(self: *ForgeVM, c: decoder.CustomType) void {
         if (self.syscallHandler == null) {
             self.status = .fault;
             self.faultReason = "No syscall handler for ZEPH custom instruction";

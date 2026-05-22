@@ -163,7 +163,7 @@ pub fn IPA(comptime VectorLength: comptime_int) type {
                 }
                 foldingScalars[i] = scalar;
             }
-            const g0 = try xcrs.precomp.msm(&foldingScalars);
+            const g0 = xcrs.precomp.msm(&foldingScalars);
             const b0 = innerProduct(&B, &foldingScalars);
 
             const part1 = g0.scalarMul(proof.a);
@@ -245,7 +245,7 @@ test "basic proof" {
     // Commit to the polynomial in lagrange basis
     var xcrs = try crs.CRS.init(std.testing.allocator);
     defer xcrs.deinit();
-    const commitment = try xcrs.commit(&lagrange_poly);
+    const commitment = xcrs.commit(&lagrange_poly);
 
     const expected_comm = std.fmt.bytesToHex(commitment.toBytes(), std.fmt.Case.lower);
     try std.testing.expectEqualStrings("1b9dff8f5ebbac250d291dfe90e36283a227c64b113c37f1bfb9e7a743cdb128", &expected_comm);

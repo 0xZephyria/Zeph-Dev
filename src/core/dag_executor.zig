@@ -44,8 +44,6 @@ const delta_mod = @import("delta_merge.zig");
 pub const ExecutorConfig = struct {
     /// Number of execution threads
     numThreads: u32 = 8,
-    /// Per-thread arena size (16MB default)
-    arenaSize: usize = 16 * 1024 * 1024,
     /// Block gas limit
     blockGasLimit: u64 = 1_000_000_000,
     /// Coinbase for fee collection
@@ -79,7 +77,11 @@ pub const VMCallback = struct {
         gas: u64,
         overlay: *state_mod.Overlay,
         caller: types.Address,
+        self_address: types.Address,
         value: u256,
+        delta_queue: ?*accounts.DeltaQueue,
+        receipt_queue: ?*accounts.ReceiptQueue,
+        tx_index: u32,
     ) VMResult,
 
     /// Executes a contract call through the provided VM implementation.
@@ -90,9 +92,25 @@ pub const VMCallback = struct {
         gas: u64,
         overlay: *state_mod.Overlay,
         caller: types.Address,
+        self_address: types.Address,
         value: u256,
+        delta_queue: ?*accounts.DeltaQueue,
+        receipt_queue: ?*accounts.ReceiptQueue,
+        tx_index: u32,
     ) VMResult {
-        return self.exec_fn(self.ctx, code, input, gas, overlay, caller, value);
+        return self.exec_fn(
+            self.ctx,
+            code,
+            input,
+            gas,
+            overlay,
+            caller,
+            self_address,
+            value,
+            delta_queue,
+            receipt_queue,
+            tx_index,
+        );
     }
 };
 
@@ -141,6 +159,12 @@ const LaneContext = struct {
     totalGasUsed: u64,
 };
 
+/// A batch of lanes assigned to one thread — eliminates per-lane thread pool overhead.
+const LaneGroup = struct {
+    executor: *DAGExecutor,
+    contexts: []const LaneContext,
+};
+
 // ── DAG Executor ────────────────────────────────────────────────────────
 
 /// Unified executor for the DAG mempool's zero-conflict execution model.
@@ -152,6 +176,12 @@ pub const DAGExecutor = struct {
     state: *state_mod.State,
     vmCallback: ?VMCallback,
     metadata_registry: ?*const accounts.MetadataRegistry,
+
+    /// Per-block code cache: maps contract address → code bytes.
+    /// Populated on first access within a block, reused for all TXs
+    /// calling the same contract. Cleared between blocks.
+    code_cache: std.AutoHashMap(types.Address, []const u8),
+    code_cache_lock: std.Thread.Mutex = .{},
 
     /// Async state root computer — when set, Phase 3 queues root computation
     /// on a background thread instead of computing inline.
@@ -181,6 +211,7 @@ pub const DAGExecutor = struct {
             .state = state,
             .vmCallback = null,
             .metadata_registry = null,
+            .code_cache = std.AutoHashMap(types.Address, []const u8).init(allocator),
             .async_root_computer = null,
             .state_prefetcher = null,
             .delta_merger = null,
@@ -241,38 +272,55 @@ pub const DAGExecutor = struct {
             };
         }
 
+        // Clear per-block code cache (free previously cached code bytes)
+        {
+            var it = self.code_cache.iterator();
+            while (it.next()) |entry| {
+                self.state.allocator.free(entry.value_ptr.*);
+            }
+            self.code_cache.clearRetainingCapacity();
+        }
+
         // Allocate result arrays
         const tx_results = try self.allocator.alloc(TxResult, plan.totalTxs);
-        @memset(tx_results, TxResult{
-            .success = false,
-            .gasUsed = 0,
-            .fee = 0,
-            .txHash = types.Hash.zero(),
-            .errorMessage = null,
-            .laneId = 0,
-            .txIndex = 0,
-        });
 
-        // Create per-lane overlays and delta/receipt queues
-        const overlays = try self.allocator.alloc(state_mod.Overlay, plan.lanes.len);
-        defer self.allocator.free(overlays);
-
-        const delta_queues = try self.allocator.alloc(accounts.DeltaQueue, plan.lanes.len);
+        // Allocate per-lane overlays, delta queues, and receipt queues
+        const num_lanes = plan.lanes.len;
+        const overlays = try self.allocator.alloc(state_mod.Overlay, num_lanes);
+        var initialized_overlays: usize = 0;
         defer {
-            for (delta_queues) |*dq| dq.deinit();
+            for (overlays[0..initialized_overlays]) |*overlay| {
+                overlay.deinit();
+            }
+            self.allocator.free(overlays);
+        }
+
+        const delta_queues = try self.allocator.alloc(accounts.DeltaQueue, num_lanes);
+        var initialized_deltas: usize = 0;
+        defer {
+            for (delta_queues[0..initialized_deltas]) |*dq| {
+                dq.deinit();
+            }
             self.allocator.free(delta_queues);
         }
 
-        const receipt_queues = try self.allocator.alloc(accounts.ReceiptQueue, plan.lanes.len);
+        const receipt_queues = try self.allocator.alloc(accounts.ReceiptQueue, num_lanes);
+        var initialized_receipts: usize = 0;
         defer {
-            for (receipt_queues) |*rq| rq.deinit();
+            for (receipt_queues[0..initialized_receipts]) |*rq| {
+                rq.deinit();
+            }
             self.allocator.free(receipt_queues);
         }
 
-        for (0..plan.lanes.len) |i| {
+        for (0..num_lanes) |i| {
             overlays[i] = state_mod.Overlay.init(self.allocator, self.state);
+            overlays[i].finalizeInit();
+            initialized_overlays += 1;
             delta_queues[i] = accounts.DeltaQueue.init(self.allocator);
+            initialized_deltas += 1;
             receipt_queues[i] = accounts.ReceiptQueue.init(self.allocator);
+            initialized_receipts += 1;
         }
 
         // Compute global TX offsets for each lane (for deterministic ordering)
@@ -296,61 +344,56 @@ pub const DAGExecutor = struct {
 
         const exec_start = std.time.nanoTimestamp();
 
-        // For small numbers of lanes, skip thread overhead
-        if (plan.lanes.len <= 2) {
-            for (plan.lanes, 0..) |*lane, i| {
-                self.executeLaneSequential(
-                    lane,
-                    &overlays[i],
-                    tx_results[lane_offsets[i]..],
-                    &delta_queues[i],
-                    &receipt_queues[i],
-                    @intCast(i),
-                    lane_offsets[i],
-                );
-            }
-        } else {
-            // Spawn threads for parallel execution
-            var threads = std.ArrayListUnmanaged(std.Thread){};
-            defer threads.deinit(self.allocator);
+        // Use thread pool for parallel execution — avoids per-thread spawn overhead
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = self.allocator, .n_jobs = self.config.numThreads });
+        defer pool.deinit();
 
-            const contexts = try self.allocator.alloc(LaneContext, plan.lanes.len);
-            defer self.allocator.free(contexts);
+        var wg = std.Thread.WaitGroup{};
 
-            for (plan.lanes, 0..) |*lane, i| {
-                contexts[i] = LaneContext{
+        // Group lanes into numThreads batches — reduces per-lane thread pool overhead
+        const num_threads = @max(@as(u32, 1), self.config.numThreads);
+        const contexts = try self.allocator.alloc(LaneContext, plan.lanes.len);
+        defer self.allocator.free(contexts);
+
+        for (plan.lanes, 0..) |*lane, i| {
+            contexts[i] = LaneContext{
+                .executor = self,
+                .lane = lane,
+                .overlay = &overlays[i],
+                .results = tx_results[lane_offsets[i]..],
+                .deltaQueue = &delta_queues[i],
+                .receiptQueue = &receipt_queues[i],
+                .laneId = @intCast(i),
+                .globalTxOffset = lane_offsets[i],
+                .totalGasUsed = 0,
+            };
+        }
+
+        // Build lane groups — round-robin assignment to balance TX count
+        const max_groups = @min(num_threads, @as(u32, @intCast(plan.lanes.len)));
+        const groups = try self.allocator.alloc(LaneGroup, max_groups);
+        defer self.allocator.free(groups);
+
+        {
+            var group_start: usize = 0;
+            for (0..max_groups) |g| {
+                const lanes_rem = plan.lanes.len - group_start;
+                const groups_rem = max_groups - g;
+                const chunk = lanes_rem / groups_rem + @intFromBool(lanes_rem % groups_rem != 0);
+                const chunk_end = @min(group_start + chunk, plan.lanes.len);
+                groups[g] = LaneGroup{
                     .executor = self,
-                    .lane = lane,
-                    .overlay = &overlays[i],
-                    .results = tx_results[lane_offsets[i]..],
-                    .deltaQueue = &delta_queues[i],
-                    .receiptQueue = &receipt_queues[i],
-                    .laneId = @intCast(i),
-                    .globalTxOffset = lane_offsets[i],
-                    .totalGasUsed = 0,
+                    .contexts = contexts[group_start..chunk_end],
                 };
-
-                const thread = std.Thread.spawn(.{}, executeLaneThread, .{&contexts[i]}) catch {
-                    // Fallback to sequential if thread spawn fails
-                    self.executeLaneSequential(
-                        lane,
-                        &overlays[i],
-                        tx_results[lane_offsets[i]..],
-                        &delta_queues[i],
-                        &receipt_queues[i],
-                        @intCast(i),
-                        lane_offsets[i],
-                    );
-                    continue;
-                };
-                try threads.append(self.allocator, thread);
-            }
-
-            // Wait for all threads
-            for (threads.items) |thread| {
-                thread.join();
+                group_start = chunk_end;
             }
         }
+
+        for (groups) |*group| {
+            pool.spawnWg(&wg, executeLaneGroup, .{group});
+        }
+        wg.wait();
 
         const exec_end = std.time.nanoTimestamp();
 
@@ -379,10 +422,9 @@ pub const DAGExecutor = struct {
                 const delta = entry.value_ptr.*;
                 if (delta != 0) {
                     // Read current value from state, apply delta
-                    const current_data = self.state.trie.get(key) catch null;
+                    const current_data = self.state.db.read(&key);
                     var current: u256 = 0;
                     if (current_data) |d| {
-                        defer self.allocator.free(d);
                         if (d.len >= 32) {
                             current = std.mem.readInt(u256, d[0..32], .big);
                         }
@@ -395,7 +437,7 @@ pub const DAGExecutor = struct {
 
                     var buf: [32]u8 = undefined;
                     std.mem.writeInt(u256, &buf, new_val, .big);
-                    self.state.trie.put(key, &buf) catch {};
+                    try self.state.db.write(&key, &buf);
                 }
             }
         }
@@ -436,17 +478,12 @@ pub const DAGExecutor = struct {
         const commit_start = std.time.nanoTimestamp();
 
         const state_root: types.Hash = if (self.async_root_computer) |arc| blk: {
-            // Async mode: queue the commitment and use lagged root
             const block_number = self.blocksExecuted + 1;
-            const dirty = self.state.trie.dirty_count;
-            arc.queueCommit(block_number, dirty);
-
-            // Return the root from `root_lag` blocks ago
+            arc.queueCommit(block_number, 0);
             break :blk arc.getLaggedRoot(block_number);
         } else blk: {
-            // Sync mode: compute inline (original behavior)
-            self.state.trie.commit() catch {};
-            break :blk types.Hash{ .bytes = self.state.trie.rootHash() };
+            // Flat KV mode: no per-block state root
+            break :blk types.Hash.zero();
         };
 
         const commit_end = std.time.nanoTimestamp();
@@ -477,16 +514,18 @@ pub const DAGExecutor = struct {
 
     // ── Lane Execution (Thread Entry Point) ─────────────────────────────
 
-    fn executeLaneThread(ctx: *LaneContext) void {
-        ctx.executor.executeLaneSequential(
-            ctx.lane,
-            ctx.overlay,
-            ctx.results,
-            ctx.deltaQueue,
-            ctx.receiptQueue,
-            ctx.laneId,
-            ctx.globalTxOffset,
-        );
+    fn executeLaneGroup(group: *LaneGroup) void {
+        for (group.contexts) |*ctx| {
+            ctx.executor.executeLaneSequential(
+                ctx.lane,
+                ctx.overlay,
+                ctx.results,
+                ctx.deltaQueue,
+                ctx.receiptQueue,
+                ctx.laneId,
+                ctx.globalTxOffset,
+            );
+        }
     }
 
     fn executeLaneSequential(
@@ -499,11 +538,9 @@ pub const DAGExecutor = struct {
         lane_id: u32,
         global_offset: u32,
     ) void {
-        _ = delta_queue;
-        _ = receipt_queue;
-
         for (lane.txs, 0..) |*tx, i| {
-            const result = self.executeSingleTx(overlay, tx.*);
+            const tx_idx = global_offset + @as(u32, @intCast(i));
+            const result = self.executeSingleTx(overlay, tx.*, delta_queue, receipt_queue, tx_idx);
             results[i] = TxResult{
                 .success = result.success,
                 .gasUsed = result.gasUsed,
@@ -518,7 +555,14 @@ pub const DAGExecutor = struct {
 
     // ── Single TX Execution ─────────────────────────────────────────────
 
-    fn executeSingleTx(self: *DAGExecutor, overlay: *state_mod.Overlay, tx: types.Transaction) TxResult {
+    fn executeSingleTx(
+        self: *DAGExecutor,
+        overlay: *state_mod.Overlay,
+        tx: types.Transaction,
+        delta_queue: ?*accounts.DeltaQueue,
+        receipt_queue: ?*accounts.ReceiptQueue,
+        tx_idx: u32,
+    ) TxResult {
         // 1. Verify nonce
         const current_nonce = overlay.getNonce(tx.from);
         if (tx.nonce != current_nonce) {
@@ -583,7 +627,10 @@ pub const DAGExecutor = struct {
 
             // Contract call (if data present)
             if (tx.data.len > 0 and self.vmCallback != null) {
-                const code_data = self.state.getCode(to_addr) catch &[_]u8{};
+                const code_data = self.fetchCode(to_addr) catch &[_]u8{};
+                defer if (code_data.len > 0) {
+                    self.state.allocator.free(code_data);
+                };
                 if (code_data.len > 0) {
                     const remaining_gas = tx.gasLimit - intrinsic;
                     const vm_result = self.vmCallback.?.execute(
@@ -592,14 +639,18 @@ pub const DAGExecutor = struct {
                         remaining_gas,
                         overlay,
                         tx.from,
+                        to_addr,
                         tx.value,
+                        delta_queue,
+                        receipt_queue,
+                        tx_idx,
                     );
                     gas_used += vm_result.gasUsed;
                     success = vm_result.success;
                 }
             } else if (tx.data.len == 0 and self.config.transferFastPath) {
                 // Simple transfer — fast path complete, no VM needed
-                self.transfersFastPath += 1;
+                _ = @atomicRmw(u64, &self.transfersFastPath, .Add, 1, .monotonic);
             }
         } else {
             // Contract creation
@@ -620,16 +671,18 @@ pub const DAGExecutor = struct {
                     remaining_gas,
                     overlay,
                     tx.from,
+                    new_addr,
                     tx.value,
+                    delta_queue,
+                    receipt_queue,
+                    tx_idx,
                 );
                 gas_used += vm_result.gasUsed;
                 success = vm_result.success;
             }
         }
 
-        // 6. Refund unused gas
-        const gas_refund = @min(overlay.refund, gas_used / 5);
-        gas_used -|= gas_refund;
+        // 6. Refund unused gas (EIP-3529 refunds are removed, only refund unused limit)
         const actual_fee = tx.gasPrice * @as(u256, gas_used);
         const refund_amount = max_fee - actual_fee;
         if (refund_amount > 0) {
@@ -650,6 +703,32 @@ pub const DAGExecutor = struct {
             .laneId = 0,
             .txIndex = 0,
         };
+    }
+
+    /// Fetch contract code, using per-block cache to avoid redundant state reads.
+    /// Returns allocated bytes (caller must free via self.state.allocator).
+    fn fetchCode(self: *DAGExecutor, addr: types.Address) ![]const u8 {
+        // Fast path — check cache under lock
+        self.code_cache_lock.lock();
+        if (self.code_cache.get(addr)) |cached| {
+            const result = try self.state.allocator.dupe(u8, cached);
+            self.code_cache_lock.unlock();
+            return result;
+        }
+        self.code_cache_lock.unlock();
+
+        // Miss — fetch from state (outside lock)
+        const code = try self.state.getCode(addr);
+        if (code.len == 0) return code;
+
+        // Store in cache (re-lock, re-check to avoid double insert)
+        const cached_copy = try self.state.allocator.dupe(u8, code);
+        self.code_cache_lock.lock();
+        self.code_cache.put(addr, cached_copy) catch {
+            self.state.allocator.free(cached_copy);
+        };
+        self.code_cache_lock.unlock();
+        return code; // caller frees this via defer
     }
 
     /// Get performance statistics.

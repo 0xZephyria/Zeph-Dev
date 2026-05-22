@@ -160,9 +160,7 @@ pub const EthServiceImpl = struct {
     pub fn Call(self: *EthServiceImpl, ctx: grpc.Context, req_data: []const u8) ![]const u8 {
         if (!self.check_auth(ctx)) return error.Unauthorized;
         // Simulate execution
-        // 1. Create Overlay
-        var overlay = try self.context.chain.state.new_overlay();
-        defer overlay.deinit();
+        // 1. Create Overlay (TODO: use proper state reference)
 
         // 2. Mock execution result
         // In real logic, we'd set up EVM with overlay and run bytes.

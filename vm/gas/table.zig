@@ -50,6 +50,7 @@ pub const SyscallGas = struct {
     pub const DELEGATECALL: u64 = 200;
     pub const STATICCALL: u64 = 200;
     pub const CREATE_CONTRACT: u64 = 32000;
+    pub const CREATE2_PER_WORD: u64 = 6;
 
     // ── Events ──
     pub const EMIT_EVENT_BASE: u64 = 100;

@@ -1,5 +1,8 @@
 const std = @import("std");
 const VDF = @import("vdf.zig").VDF;
+comptime {
+    _ = @import("votepool.zig");
+}
 
 test "VDF basic compute and verify" {
     const allocator = std.testing.allocator;

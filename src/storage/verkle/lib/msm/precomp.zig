@@ -37,12 +37,12 @@ pub fn HybridPrecompMSM(
             self.precomp2.deinit();
         }
 
-        pub fn msm(self: Self, mont_scalars: []const Fr) !Element {
+        pub fn msm(self: Self, mont_scalars: []const Fr) Element {
             if (mont_scalars.len < cutoff) {
                 return self.precomp1.msm(mont_scalars);
             }
-            const left = try self.precomp1.msm(mont_scalars[0..cutoff]);
-            const right = try self.precomp2.msm(mont_scalars[cutoff..]);
+            const left = self.precomp1.msm(mont_scalars[0..cutoff]);
+            const right = self.precomp2.msm(mont_scalars[cutoff..]);
             var res: Element = undefined;
             res.add(left, right);
             return res;
@@ -113,13 +113,8 @@ pub fn PrecompMSM(
             self.allocator.free(self.table);
         }
 
-        pub fn msm(self: Self, mont_scalars: []const Fr) !Element {
-            if (mont_scalars.len > self.basis_len) {
-                return error.ScalarLengthBiggerThanBasis;
-            }
-
-            var scalars = try self.allocator.alloc(u256, mont_scalars.len);
-            defer self.allocator.free(scalars);
+        pub fn msm(self: Self, mont_scalars: []const Fr) Element {
+            var scalars: [256]u256 = undefined;
             for (0..mont_scalars.len) |i| {
                 scalars[i] = mont_scalars[i].toInteger();
             }
@@ -202,7 +197,7 @@ test "correctness" {
             full_scalars[i] = Fr.zero();
         }
         const exp = xcrs.commitSlow(full_scalars);
-        const got = try precomp.msm(msm_scalars);
+        const got = precomp.msm(msm_scalars);
 
         try std.testing.expect(Element.equal(exp, got));
     }
@@ -234,7 +229,7 @@ test "hybrid" {
             full_scalars[i] = Fr.zero();
         }
         const exp = xcrs.commitSlow(full_scalars);
-        const got = try precomp.msm(msm_scalars);
+        const got = precomp.msm(msm_scalars);
 
         try std.testing.expect(Element.equal(exp, got));
     }

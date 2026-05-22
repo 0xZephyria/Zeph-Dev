@@ -43,15 +43,14 @@ pub const GasMeter = struct {
 
     /// Add gas refund (e.g., clearing a storage slot).
     pub fn addRefund(self: *GasMeter, amount: u64) void {
-        self.refund += amount;
+        _ = self;
+        _ = amount;
+        // No-op: EIP-3529 refunds are completely deprecated.
     }
 
-    /// Compute effective gas used after refund (capped at half spent).
+    /// Compute effective gas used after refund.
     pub fn effectiveGasUsed(self: *const GasMeter) u64 {
-        // EIP-3529: refund capped at 1/5 of gas used
-        const maxRefund = self.used / 5;
-        const actualRefund = @min(self.refund, maxRefund);
-        return self.used - actualRefund;
+        return self.used;
     }
 };
 
@@ -97,10 +96,9 @@ test "consumeOpcode uses lookup table" {
     try testing.expectEqual(@as(u64, 3), meter.used);
 }
 
-test "refund capped at 1/5 of gas used" {
+test "refund is a no-op" {
     var meter = GasMeter.init(1000);
     try meter.consume(100);
     meter.addRefund(50); // Request 50 refund
-    // Max refund = 100/5 = 20
-    try testing.expectEqual(@as(u64, 80), meter.effectiveGasUsed());
+    try testing.expectEqual(@as(u64, 100), meter.effectiveGasUsed());
 }

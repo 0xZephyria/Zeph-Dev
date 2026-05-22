@@ -295,7 +295,7 @@ pub const DAGVertex = struct {
             // 3. Contract call: per-user derived key (NEVER conflicts with other users)
             if (tx.data.len >= 4) {
                 var senderSlot: [32]u8 = [_]u8{0} ** 32;
-                @memcpy(senderSlot[0..20], &tx.from.bytes);
+                @memcpy(&senderSlot, &tx.from.bytes);
                 vertex.addKey(State.derivedStorageKey(tx.from, toAddr, senderSlot));
             }
         } else {
@@ -497,11 +497,11 @@ pub const DAGMempool = struct {
             return error.GasPriceTooLow;
         }
 
-        // 5. TX sanitization (signature, nonce bounds, balance, malleability)
+        // 5. TX sanitization (signature, nonce bounds, balance)
         if (self.config.enableSanitization) {
             const state_nonce = self.state.getNonce(tx.from);
             const state_balance = self.state.getBalance(tx.from);
-            self.sanitizer.validate(tx, state_nonce, state_balance) catch |err| {
+            self.sanitizer.validate(self.allocator, tx, state_nonce, state_balance) catch |err| {
                 self.incrMetric(.sanitizationRejected);
                 return err;
             };

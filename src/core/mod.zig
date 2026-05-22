@@ -27,6 +27,7 @@ pub const block_rewards = @import("block_rewards.zig");
 pub const async_state_root = @import("async_state_root.zig");
 pub const state_prefetcher = @import("state_prefetcher.zig");
 pub const delta_merge = @import("delta_merge.zig");
+pub const signature = @import("signature.zig");
 
 // Shorthand re-exports for backward compatibility with p2p, rpc, node modules
 pub const Blockchain = blockchain.Blockchain;

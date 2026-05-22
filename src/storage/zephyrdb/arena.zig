@@ -124,7 +124,7 @@ pub const Arena = struct {
 
     /// Initialize with a smaller size for testing (uses heap instead of mmap)
     pub fn initForTesting(alloc: std.mem.Allocator, capacity: usize) !Self {
-        const mem = try alloc.alignedAlloc(u8, 4096, capacity);
+        const mem = try alloc.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(4096), capacity);
         @memset(mem, 0);
 
         return Self{
@@ -149,7 +149,7 @@ pub const Arena = struct {
             unmapMemory(self.base, self.capacity);
         } else {
             const slice = self.base[0..self.capacity];
-            self.fallback.free(@alignCast(slice));
+            self.fallback.free(slice);
         }
     }
 
@@ -299,7 +299,7 @@ pub const Arena = struct {
 
 fn mapMemory(size: usize) ![*]align(4096) u8 {
     if (@import("builtin").os.tag == .linux) {
-        const result = std.posix.mmap(
+        const result = try std.posix.mmap(
             null,
             size,
             std.posix.PROT.READ | std.posix.PROT.WRITE,
@@ -307,10 +307,10 @@ fn mapMemory(size: usize) ![*]align(4096) u8 {
             -1,
             0,
         );
-        return @alignCast(result.ptr);
+        return @as([*]align(4096) u8, @ptrCast(result.ptr));
     } else {
         // macOS and other POSIX systems
-        const result = std.posix.mmap(
+        const result = try std.posix.mmap(
             null,
             size,
             std.posix.PROT.READ | std.posix.PROT.WRITE,
@@ -318,7 +318,7 @@ fn mapMemory(size: usize) ![*]align(4096) u8 {
             -1,
             0,
         );
-        return @alignCast(result.ptr);
+        return @as([*]align(4096) u8, @ptrCast(result.ptr));
     }
 }
 
