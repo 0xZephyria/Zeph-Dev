@@ -21,7 +21,6 @@ const Peer = @import("peer.zig").Peer;
 const p2p = @import("mod.zig");
 const zquic = p2p.quic;
 const posix = std.posix;
-const Connection = zquic.transport.connection.Connection;
 const rlp = @import("encoding").rlp;
 const turbine_mod = @import("turbine.zig");
 const gulf_stream_mod = @import("gulf_stream.zig");
@@ -184,7 +183,7 @@ pub const Server = struct {
         var localSubnets: [8]u8 = [_]u8{0} ** 8;
         {
             var hash: [32]u8 = undefined;
-            std.crypto.hash.sha3.Keccak256.hash(&discovery.localNode.id, &hash, .{});
+            std.crypto.hash.Blake3.hash(&discovery.localNode.id, &hash, .{});
             const s1: types.SubnetID = @intCast(hash[0] % types.GOSSIP_SUBNETS);
             const s2: types.SubnetID = @intCast(hash[1] % types.GOSSIP_SUBNETS);
             types.setSubnetBit(&localSubnets, s1);
@@ -281,6 +280,18 @@ pub const Server = struct {
         self.running = true;
         self.thread = try std.Thread.spawn(.{}, serverLoop, .{self});
         self.pruneThread = try std.Thread.spawn(.{}, pruneLoop, .{self});
+
+        // Connect to bootstrap nodes
+        self.discovery.mutex.lock();
+        const bootstrap_copy = try self.allocator.dupe(discovery_mod.Node, self.discovery.bootstrapNodes.items);
+        self.discovery.mutex.unlock();
+        defer self.allocator.free(bootstrap_copy);
+
+        for (bootstrap_copy) |node| {
+            self.connectPeer(node.address) catch |err| {
+                log.debug("Failed to connect to bootstrap node: {}\n", .{err});
+            };
+        }
     }
 
     pub fn stop(self: *Self) void {
@@ -362,6 +373,7 @@ pub const Server = struct {
 
             const len = posix.recvfrom(self.sock, &packet.buffer, 0, @ptrCast(&from), &fromlen) catch |err| {
                 self.packetPool.free(packetsSlice.ptr);
+                self.flushOutbox() catch {};
                 if (err == error.WouldBlock or err == error.Again) {
                     continue;
                 }
@@ -432,12 +444,8 @@ pub const Server = struct {
                 });
 
                 const p = try Peer.init(self.allocator, ip, std.mem.bigToNative(u16, sender.port));
-
-                var conn = try Connection.init(self.allocator);
-                conn.connection_id = connId;
-                try conn.establish();
-                p.attachQuic(conn);
-                try p.openStream(1);
+                p.connection_id = connId;
+                p.server = self;
 
                 // Generate challenge
                 std.crypto.random.bytes(&p.challenge);
@@ -490,6 +498,8 @@ pub const Server = struct {
             types.MsgCommitteeHandshake => try self.handleCommitteeHandshake(peer, payload),
             types.MsgSubnetSubscribe => try self.handleSubnetSubscribe(peer, payload),
             types.MsgGetNodeData => try self.handleGetNodeData(peer, payload),
+            types.MsgGetPeers => try self.handleGetPeers(peer, payload),
+            types.MsgPeers => try self.handlePeers(peer, payload),
             types.MsgPing => try self.handlePing(peer, payload),
             types.MsgPong => try self.handlePong(peer, payload),
             types.MsgGetBlocks => try self.handleGetBlocks(peer, payload),
@@ -546,6 +556,21 @@ pub const Server = struct {
 
         const heapBlock = try self.allocator.create(core.types.Block);
         heapBlock.* = msg.block;
+        errdefer self.allocator.destroy(heapBlock);
+
+        const parent_block = try self.chain.getBlockByHash(msg.block.header.parentHash) orelse {
+            log.warn("Parent block not found for incoming block {d}, dropping\n", .{msg.block.header.number});
+            self.allocator.destroy(heapBlock);
+            return;
+        };
+        defer self.chain.freeBlock(parent_block);
+
+        self.engine.verify(heapBlock, &parent_block.header) catch |err| {
+            log.err("Block verification failed: {}\n", .{err});
+            self.allocator.destroy(heapBlock);
+            peer.updateScore(-50);
+            return;
+        };
 
         self.chain.addBlock(heapBlock) catch |err| {
             log.debug("Invalid block from peer: {}\n", .{err});
@@ -606,6 +631,29 @@ pub const Server = struct {
         peer.validatorAddress = addr;
         peer.authenticated = true;
         peer.updateScoreLocked(20);
+
+        // Set the peer's ID (derived from the public key)
+        @memset(&peer.id, 0);
+        @memcpy(peer.id[0..32], &msg.publicKey);
+
+        // Register with Kademlia discovery
+        const node_addr = try std.net.Address.parseIp4(peer.ipSlice(), peer.port);
+        var node_hash: [32]u8 = undefined;
+        std.crypto.hash.Blake3.hash(peer.id[0..], &node_hash, .{});
+
+        const d_node = discovery_mod.Node{
+            .id = peer.id,
+            .hash = node_hash,
+            .address = node_addr,
+            .lastSeen = std.time.milliTimestamp(),
+            .lastPing = std.time.milliTimestamp(),
+            .pingFailures = 0,
+            .peerRole = peer.peerRole,
+            .validatorAddress = peer.validatorAddress,
+            .subscribedSubnets = peer.subscribedSubnets,
+            .stakeAmount = peer.stakeAmount,
+        };
+        self.discovery.addNode(d_node) catch {};
     }
 
     fn handleShred(self: *Self, peer: *Peer, payload: []const u8) !void {
@@ -738,6 +786,58 @@ pub const Server = struct {
 
         // High priority broadcast to entire network
         try self.broadcastRaw(types.MsgSlashEvidence, payload);
+    }
+
+    fn handleGetPeers(self: *Self, peer: *Peer, payload: []const u8) !void {
+        log.debug("PEX: Received MsgGetPeers from peer {s}:{}\n", .{ peer.ipSlice(), peer.port });
+        const msg = try rlp.decode(self.allocator, types.GetPeersMsg, payload);
+        _ = msg;
+
+        var node_list = std.ArrayListUnmanaged(types.NodeInfo){};
+        defer node_list.deinit(self.allocator);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (self.peers.items) |p| {
+            if (!p.handshakeComplete or p == peer) continue;
+            var node_info = types.NodeInfo{
+                .id = p.id,
+                .ip = [_]u8{0} ** 16,
+                .ipLen = @intCast(p.ipLen),
+                .port = p.port,
+                .peerRole = p.peerRole,
+                .subnets = p.subscribedSubnets,
+            };
+            @memcpy(node_info.ip[0..p.ipLen], p.ipSlice());
+            try node_list.append(self.allocator, node_info);
+        }
+
+        log.debug("PEX: Sending {} peers to {s}:{}\n", .{ node_list.items.len, peer.ipSlice(), peer.port });
+        const resp = types.PeersMsg{ .nodes = node_list.items };
+        try peer.send(types.MsgPeers, resp);
+    }
+
+    fn handlePeers(self: *Self, peer: *Peer, payload: []const u8) !void {
+        log.debug("PEX: Received MsgPeers from peer {s}:{}\n", .{ peer.ipSlice(), peer.port });
+        const msg = rlp.decode(self.allocator, types.PeersMsg, payload) catch |err| {
+            log.err("PEX: Failed to decode MsgPeers: {}\n", .{err});
+            return err;
+        };
+        defer self.allocator.free(msg.nodes);
+        log.debug("PEX: Received {} node entries from {s}:{}\n", .{ msg.nodes.len, peer.ipSlice(), peer.port });
+
+        for (msg.nodes) |node| {
+            const ip_str = node.ip[0..node.ipLen];
+            log.debug("PEX: Connecting to discovered peer: {s}:{}\n", .{ ip_str, node.port });
+            const addr = std.net.Address.parseIp4(ip_str, node.port) catch |err| {
+                log.err("PEX: Failed to parse IP address '{s}': {}\n", .{ ip_str, err });
+                continue;
+            };
+            self.connectPeer(addr) catch |err| {
+                log.err("PEX: Failed to connect to discovered peer {s}:{}: {}\n", .{ ip_str, node.port, err });
+            };
+        }
     }
 
     fn handleCommitteeHandshake(self: *Self, peer: *Peer, payload: []const u8) !void {
@@ -1205,6 +1305,7 @@ pub const Server = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        const now = std.time.milliTimestamp();
         var i: usize = 0;
         while (i < self.peers.items.len) {
             const peer = self.peers.items[i];
@@ -1249,9 +1350,106 @@ pub const Server = struct {
 
                 peer.deinit();
             } else {
+                // Keep-alive pinging: if peer has been idle for > 60 seconds, send a ping to keep it alive
+                if (now - peer.lastMessageTime > 60_000) {
+                    const ping_msg = types.PingMsg{
+                        .nonce = std.crypto.random.int(u64),
+                        .timestamp = now,
+                    };
+                    peer.send(types.MsgPing, ping_msg) catch {};
+                }
                 i += 1;
             }
         }
+
+        // Proactively connect to Kademlia discovered nodes if under budget
+        if (self.peers.items.len < self.config.maxPeers) {
+            const needed = self.config.maxPeers - self.peers.items.len;
+            if (self.discovery.findClosest(self.discovery.localNode.hash, needed)) |discovered| {
+                defer self.allocator.free(discovered);
+                for (discovered) |node| {
+                    // Don't connect to ourselves
+                    if (std.mem.eql(u8, &node.id, &self.discovery.localNode.id)) continue;
+                    self.connectPeerLocked(node.address) catch {};
+                }
+            } else |_| {}
+        }
+
+        // Trigger periodic PEX query to discover more peers if under budget
+        if (self.peers.items.len > 0 and self.peers.items.len < self.config.maxPeers) {
+            const rand_idx = std.crypto.random.intRangeLessThan(usize, 0, self.peers.items.len);
+            const rand_peer = self.peers.items[rand_idx];
+            log.debug("PEX: Periodic check for {s}:{} (handshakeComplete={})\n", .{ rand_peer.ipSlice(), rand_peer.port, rand_peer.handshakeComplete });
+            if (rand_peer.handshakeComplete) {
+                log.debug("PEX: Triggering MsgGetPeers to {s}:{}\n", .{ rand_peer.ipSlice(), rand_peer.port });
+                const req = types.GetPeersMsg{ .version = types.PROTOCOL_VERSION };
+                rand_peer.send(types.MsgGetPeers, req) catch |err| {
+                    log.debug("PEX: Failed to send MsgGetPeers to {s}:{}: {}\n", .{ rand_peer.ipSlice(), rand_peer.port, err });
+                };
+            }
+        }
+    }
+
+    pub fn connectPeer(self: *Self, address: std.net.Address) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return try self.connectPeerLocked(address);
+    }
+
+    fn connectPeerLocked(self: *Self, address: std.net.Address) !void {
+        // Check connection budget
+        const ip = switch (address.any.family) {
+            std.posix.AF.INET => address.in.sa.addr,
+            else => return error.UnsupportedAddressFamily,
+        };
+
+        if (self.peers.items.len >= self.config.maxPeers) {
+            return error.TooManyPeers;
+        }
+
+        // Check if already connected
+        for (self.peers.items) |p| {
+            const p_addr = try std.net.Address.parseIp4(p.ipSlice(), p.port);
+            if (p_addr.in.sa.port == address.in.sa.port and p_addr.in.sa.addr == address.in.sa.addr) {
+                return; // Already connected
+            }
+        }
+
+        var ip_buf: [20]u8 = undefined;
+        const ip_str = try std.fmt.bufPrint(&ip_buf, "{d}.{d}.{d}.{d}", .{
+            (ip >> 0) & 0xFF,
+            (ip >> 8) & 0xFF,
+            (ip >> 16) & 0xFF,
+            (ip >> 24) & 0xFF,
+        });
+
+        const p = try Peer.init(self.allocator, ip_str, std.mem.bigToNative(u16, address.in.sa.port));
+        p.server = self;
+
+        // Generate challenge
+        std.crypto.random.bytes(&p.challenge);
+
+        // Send status with subnet info
+        const status = types.StatusMsg{
+            .protocolVersion = types.PROTOCOL_VERSION,
+            .chainId = self.chain.chainId,
+            .genesisHash = self.chain.genesisHash,
+            .headHash = self.chain.getHeadHash(),
+            .headNumber = self.chain.getHeadNumber(),
+            .challenge = p.challenge,
+            .peerRole = .Validator,
+            .subscribedSubnets = self.localSubnets,
+            .stakeAmount = 0,
+        };
+        try p.send(types.MsgStatus, status);
+
+        try self.peers.append(self.allocator, p);
+        try self.peersById.ensureTotalCapacity(self.peersById.count() + 1);
+        self.peersById.putAssumeCapacity(p.connection_id, p);
+        try self.peersByIp.put(ip, p);
+
+        self.stats.peersConnected += 1;
+        log.debug("Proactively connecting to peer: {s}:{} (total: {})\n", .{ ip_str, p.port, self.peers.items.len });
     }
 
     // ── Stats ───────────────────────────────────────────────────────────

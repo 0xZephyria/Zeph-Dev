@@ -38,9 +38,9 @@ pub const Peer = struct {
     peerRole: types.PeerRole,
 
     // Connection
-    quicConn: ?zquic.transport.connection.Connection,
-    quicStream: ?zquic.transport.stream.QuicStream,
+    connection_id: u64,
     connected: bool,
+    server: ?*p2p.Server,
 
     // Outbox
     outbox: std.ArrayListUnmanaged([]const u8),
@@ -98,9 +98,9 @@ pub const Peer = struct {
             .handshakeComplete = false,
             .challenge = [_]u8{0} ** 32,
             .peerRole = .FullNode,
-            .quicConn = null,
-            .quicStream = null,
+            .connection_id = std.crypto.random.int(u64),
             .connected = true,
+            .server = null,
             .outbox = .{},
             .mutex = .{},
             .headHash = core.types.Hash.zero(),
@@ -125,12 +125,6 @@ pub const Peer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.quicStream) |*stream| {
-            stream.close();
-        }
-        if (self.quicConn) |*conn| {
-            conn.close();
-        }
         for (self.outbox.items) |msg| {
             self.allocator.free(msg);
         }
@@ -144,20 +138,6 @@ pub const Peer = struct {
         return self.ip[0..self.ipLen];
     }
 
-    // ── QUIC Connection Management ──────────────────────────────────────
-
-    pub fn attachQuic(self: *Self, conn: zquic.transport.connection.Connection) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        self.quicConn = conn;
-    }
-
-    pub fn openStream(self: *Self, id: u64) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        self.quicStream = try zquic.transport.stream.QuicStream.init(self.allocator, id, .Bidirectional);
-    }
-
     // ── Sending ─────────────────────────────────────────────────────────
 
     /// Send a message with the given code. Serializes payload via RLP.
@@ -168,18 +148,35 @@ pub const Peer = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.quicStream) |*stream| {
-            var code_buf: [8]u8 = undefined;
-            std.mem.writeInt(u64, &code_buf, msgCode, .big);
-            _ = try stream.write(&code_buf);
-            _ = try stream.write(bytes);
+        if (self.server) |srv| {
+            const payload_len = 8 + bytes.len;
+            const payload = try self.allocator.alloc(u8, payload_len);
+            defer self.allocator.free(payload);
+
+            std.mem.writeInt(u64, payload[0..8], msgCode, .big);
+            @memcpy(payload[8..], bytes);
+
+            const pkt = zquic.transport.packet.Packet{
+                .packet_type = .OneRTT,
+                .connection_id = self.connection_id,
+                .payload = payload,
+            };
+
+            const encoded_buf_len = payload_len + 10;
+            const encoded_buf = try self.allocator.alloc(u8, encoded_buf_len);
+            defer self.allocator.free(encoded_buf);
+
+            const written = try pkt.encode(encoded_buf);
+
+            const dest = try std.net.Address.parseIp4(self.ipSlice(), self.port);
+            try srv.enqueueSend(dest, encoded_buf[0..written]);
             self.allocator.free(bytes);
 
-            self.bytesSent += 8 + bytes.len;
+            self.bytesSent += written;
             self.packetsSent += 1;
         } else {
             self.allocator.free(bytes);
-            return error.NoQuicStream;
+            return error.NoServerRef;
         }
     }
 
@@ -188,16 +185,33 @@ pub const Peer = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.quicStream) |*stream| {
-            var code_buf: [8]u8 = undefined;
-            std.mem.writeInt(u64, &code_buf, msgCode, .big);
-            _ = try stream.write(&code_buf);
-            _ = try stream.write(raw_data);
+        if (self.server) |srv| {
+            const payload_len = 8 + raw_data.len;
+            const payload = try self.allocator.alloc(u8, payload_len);
+            defer self.allocator.free(payload);
 
-            self.bytesSent += 8 + raw_data.len;
+            std.mem.writeInt(u64, payload[0..8], msgCode, .big);
+            @memcpy(payload[8..], raw_data);
+
+            const pkt = zquic.transport.packet.Packet{
+                .packet_type = .OneRTT,
+                .connection_id = self.connection_id,
+                .payload = payload,
+            };
+
+            const encoded_buf_len = payload_len + 10;
+            const encoded_buf = try self.allocator.alloc(u8, encoded_buf_len);
+            defer self.allocator.free(encoded_buf);
+
+            const written = try pkt.encode(encoded_buf);
+
+            const dest = try std.net.Address.parseIp4(self.ipSlice(), self.port);
+            try srv.enqueueSend(dest, encoded_buf[0..written]);
+
+            self.bytesSent += written;
             self.packetsSent += 1;
         } else {
-            return error.NoQuicStream;
+            return error.NoServerRef;
         }
     }
 

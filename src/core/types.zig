@@ -41,7 +41,7 @@ pub const Address = extern struct {
     }
 };
 
-/// Represents a 32-byte cryptographic hash (Keccak-256).
+/// Represents a 32-byte cryptographic hash (Blake3).
 pub const Hash = extern struct {
     bytes: [32]u8,
 
@@ -354,7 +354,7 @@ pub const Block = struct {
 
     pub fn hash(self: *const Block) Hash {
         var h_res = Hash.zero();
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         const ally = std.heap.page_allocator;
         const encoded = self.header.rlpEncode(ally) catch return h_res;
         defer ally.free(encoded);

@@ -349,7 +349,7 @@ fn processSingleRequest(ctx: *Context, allocator: std.mem.Allocator, root: std.j
             return;
         }
 
-        log.debug("[RPC] Internal error for '{s}': {}\n", .{ method_str, err });
+        log.err("[RPC] Internal error for '{s}': {}\n", .{ method_str, err });
         try writeErrorResponse(writer, id, -32603, "Internal error");
         return;
     };

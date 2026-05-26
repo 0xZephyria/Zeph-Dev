@@ -72,7 +72,7 @@ pub const LeaderSchedule = struct {
             std.mem.writeInt(u64, seed_buf[0..8], epoch, .little);
             std.mem.writeInt(u64, seed_buf[8..16], target_slot, .little);
             var hash: [32]u8 = undefined;
-            std.crypto.hash.sha3.Keccak256.hash(&seed_buf, &hash, .{});
+            std.crypto.hash.Blake3.hash(&seed_buf, &hash, .{});
             const idx = std.mem.readInt(u64, hash[0..8], .little) % validators.len;
 
             self.slots[i] = .{

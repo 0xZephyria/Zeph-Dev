@@ -145,6 +145,7 @@ pub const VMBridge = struct {
         return VMCallback{
             .ctx = @ptrCast(self),
             .exec_fn = &executeCallback,
+            .prewarm_fn = &prewarmCallback,
         };
     }
 
@@ -155,7 +156,13 @@ pub const VMBridge = struct {
         return core.executor.VMCallback{
             .ctx = @ptrCast(self),
             .exec_fn = @ptrCast(&executeCallback),
+            .prewarm_fn = @ptrCast(&prewarmCallback),
         };
+    }
+
+    fn prewarmCallback(ctx: *anyopaque, code: []const u8) anyerror!void {
+        const bridge: *VMBridge = @ptrCast(@alignCast(ctx));
+        try vm.contractLoader.preWarmAot(bridge.allocator, code);
     }
 
     /// Get execution statistics (thread-safe reads)

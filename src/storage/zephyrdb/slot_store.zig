@@ -4,7 +4,7 @@
 // Contracts using ≤8 slots (most ERC20s, simple contracts) never allocate overflow.
 // Larger contracts spill to an overflow hash map backed by arena memory.
 //
-// Key derivation: keccak256(account_address || slot_index) — EVM-compatible storage layout.
+// Key derivation: blake3(account_address || slot_index) — parallel storage layout.
 
 const std = @import("std");
 const Arena = @import("arena.zig").Arena;

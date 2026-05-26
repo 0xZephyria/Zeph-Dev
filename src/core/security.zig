@@ -11,7 +11,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 // ── Rate Limiter ────────────────────────────────────────────────────────
 

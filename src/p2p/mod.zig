@@ -11,7 +11,6 @@ pub const types = @import("types.zig");
 pub const server = @import("server.zig");
 pub const peer = @import("peer.zig");
 pub const quic = @import("quic/root.zig");
-pub const grpc = @import("grpc/server.zig");
 pub const discovery = @import("discovery.zig");
 pub const turbine = @import("turbine.zig");
 pub const gulf_stream = @import("gulf_stream.zig");

@@ -83,6 +83,10 @@ pub const VMCallback = struct {
         receipt_queue: ?*accounts.ReceiptQueue,
         tx_index: u32,
     ) VMResult,
+    prewarm_fn: ?*const fn (
+        ctx: *anyopaque,
+        code: []const u8,
+    ) anyerror!void = null,
 
     /// Executes a contract call through the provided VM implementation.
     pub fn execute(
@@ -111,6 +115,13 @@ pub const VMCallback = struct {
             receipt_queue,
             tx_index,
         );
+    }
+
+    /// Pre-warms the VM JIT/AOT cache with the given contract bytecode.
+    pub fn preWarm(self: *const VMCallback, code: []const u8) !void {
+        if (self.prewarm_fn) |pw| {
+            try pw(self.ctx, code);
+        }
     }
 };
 
@@ -338,6 +349,34 @@ pub const DAGExecutor = struct {
         // the trie to warm the cache before parallel execution.
         if (self.state_prefetcher) |pf| {
             _ = pf.prefetchForPlan(plan);
+        }
+
+        // ── Phase 0.5: AOT Cache Pre-warming ───────────────────────────
+        // Sequentially compile/load AOT shared libraries to prevent thread contention.
+        if (self.vmCallback) |callback| {
+            if (callback.prewarm_fn != null) {
+                var unique_contracts = std.AutoHashMap(types.Address, void).init(self.allocator);
+                defer unique_contracts.deinit();
+
+                for (plan.lanes) |*lane| {
+                    for (lane.txs) |*tx| {
+                        if (tx.to) |to_addr| {
+                            if (tx.data.len > 0) {
+                                unique_contracts.put(to_addr, {}) catch {};
+                            }
+                        }
+                    }
+                }
+
+                var it = unique_contracts.keyIterator();
+                while (it.next()) |addr_ptr| {
+                    const addr = addr_ptr.*;
+                    const code_data = self.fetchCode(addr) catch &[_]u8{};
+                    if (code_data.len > 0) {
+                        callback.preWarm(code_data) catch {};
+                    }
+                }
+            }
         }
 
         // ── Phase 1: Parallel Lane Execution ────────────────────────────
@@ -628,9 +667,6 @@ pub const DAGExecutor = struct {
             // Contract call (if data present)
             if (tx.data.len > 0 and self.vmCallback != null) {
                 const code_data = self.fetchCode(to_addr) catch &[_]u8{};
-                defer if (code_data.len > 0) {
-                    self.state.allocator.free(code_data);
-                };
                 if (code_data.len > 0) {
                     const remaining_gas = tx.gasLimit - intrinsic;
                     const vm_result = self.vmCallback.?.execute(
@@ -679,6 +715,15 @@ pub const DAGExecutor = struct {
                 );
                 gas_used += vm_result.gasUsed;
                 success = vm_result.success;
+
+                if (success) {
+                    const code_to_store = if (std.mem.startsWith(u8, tx.data, "\x7fELF") or std.mem.startsWith(u8, tx.data, "FORG")) tx.data else vm_result.returnData;
+                    if (code_to_store.len > 0) {
+                        overlay.setCode(new_addr, code_to_store) catch {
+                            success = false;
+                        };
+                    }
+                }
             }
         }
 
@@ -706,14 +751,13 @@ pub const DAGExecutor = struct {
     }
 
     /// Fetch contract code, using per-block cache to avoid redundant state reads.
-    /// Returns allocated bytes (caller must free via self.state.allocator).
+    /// Returns cached bytes (no allocation or deallocation needed by caller).
     fn fetchCode(self: *DAGExecutor, addr: types.Address) ![]const u8 {
         // Fast path — check cache under lock
         self.code_cache_lock.lock();
         if (self.code_cache.get(addr)) |cached| {
-            const result = try self.state.allocator.dupe(u8, cached);
             self.code_cache_lock.unlock();
-            return result;
+            return cached;
         }
         self.code_cache_lock.unlock();
 
@@ -722,13 +766,17 @@ pub const DAGExecutor = struct {
         if (code.len == 0) return code;
 
         // Store in cache (re-lock, re-check to avoid double insert)
-        const cached_copy = try self.state.allocator.dupe(u8, code);
         self.code_cache_lock.lock();
-        self.code_cache.put(addr, cached_copy) catch {
-            self.state.allocator.free(cached_copy);
-        };
-        self.code_cache_lock.unlock();
-        return code; // caller frees this via defer
+        defer self.code_cache_lock.unlock();
+
+        const g = try self.code_cache.getOrPut(addr);
+        if (g.found_existing) {
+            self.state.allocator.free(code);
+            return g.value_ptr.*;
+        } else {
+            g.value_ptr.* = code;
+            return code;
+        }
     }
 
     /// Get performance statistics.

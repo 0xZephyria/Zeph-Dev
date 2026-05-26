@@ -253,7 +253,7 @@ pub const Snowball = struct {
         }
     }
 
-    /// Select k random peers for querying (uses Keccak256 PRNG).
+    /// Select k random peers for querying (uses Blake3 PRNG).
     /// Returns indices into the validator array.
     pub fn selectPeers(
         self: *const Self,
@@ -274,7 +274,7 @@ pub const Snowball = struct {
 
         var state = seed;
         for (0..types.SNOWBALL_K) |i| {
-            var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+            var hasher = std.crypto.hash.Blake3.init(.{});
             hasher.update(&state);
             var buf: [12]u8 = undefined;
             std.mem.writeInt(u64, buf[0..8], slot, .big);

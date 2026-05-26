@@ -226,7 +226,7 @@ pub const AdaptiveConsensus = struct {
     pub fn deterministicProposer(self: *const Self, slot: u64) u32 {
         if (self.validatorCount == 0) return 0;
         // Hash(epochSeed ‖ slot) → deterministic index
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(&self.epochSeed);
         var buf8: [8]u8 = undefined;
         std.mem.writeInt(u64, &buf8, slot, .big);
@@ -383,7 +383,7 @@ pub const AdaptiveConsensus = struct {
         // Compute next randomness seed
         var next_seed: [32]u8 = undefined;
         {
-            var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+            var hasher = std.crypto.hash.Blake3.init(.{});
             hasher.update(&self.epochSeed);
             hasher.update(&agg_sig_bytes);
             var buf8: [8]u8 = undefined;

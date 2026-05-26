@@ -44,7 +44,7 @@ pub const FileMetadata = struct {
 pub const Level = struct {
     allocator: Allocator,
     level_num: u8,
-    files: std.ArrayList(FileMetadata),
+    files: std.ArrayListUnmanaged(FileMetadata),
     total_size: u64,
     max_size: u64,
 
@@ -54,7 +54,7 @@ pub const Level = struct {
         return Self{
             .allocator = allocator,
             .level_num = level_num,
-            .files = std.ArrayList(FileMetadata).init(allocator),
+            .files = .{},
             .total_size = 0,
             .max_size = max_size,
         };
@@ -64,11 +64,11 @@ pub const Level = struct {
         for (self.files.items) |*file| {
             file.deinit(self.allocator);
         }
-        self.files.deinit();
+        self.files.deinit(self.allocator);
     }
 
     pub fn addFile(self: *Self, meta: FileMetadata) !void {
-        try self.files.append(meta);
+        try self.files.append(self.allocator, meta);
         self.total_size += meta.file_size;
     }
 
@@ -93,14 +93,14 @@ pub const Level = struct {
     }
 
     /// Get files overlapping with key range using SIMD key comparison
-    pub fn getOverlappingFiles(self: *const Self, smallest: [32]u8, largest: [32]u8) std.ArrayList(FileMetadata) {
-        var result = std.ArrayList(FileMetadata).init(self.allocator);
+    pub fn getOverlappingFiles(self: *const Self, smallest: [32]u8, largest: [32]u8) std.ArrayListUnmanaged(FileMetadata) {
+        var result = std.ArrayListUnmanaged(FileMetadata){};
         for (self.files.items) |file| {
             // Check if ranges overlap using SIMD 4×u64 comparison
             if (simd.simdKeyCompare(file.largest_key, smallest) != .lt and
                 simd.simdKeyCompare(file.smallest_key, largest) != .gt)
             {
-                result.append(file) catch continue;
+                result.append(self.allocator, file) catch continue;
             }
         }
         return result;
@@ -112,8 +112,8 @@ pub const CompactionJob = struct {
     allocator: Allocator,
     input_level: u8,
     output_level: u8,
-    input_files: std.ArrayList(FileMetadata),
-    output_files: std.ArrayList(FileMetadata),
+    input_files: std.ArrayListUnmanaged(FileMetadata),
+    output_files: std.ArrayListUnmanaged(FileMetadata),
     smallest_key: [32]u8,
     largest_key: [32]u8,
     is_trivial_move: bool,
@@ -125,8 +125,8 @@ pub const CompactionJob = struct {
             .allocator = allocator,
             .input_level = input_level,
             .output_level = output_level,
-            .input_files = std.ArrayList(FileMetadata).init(allocator),
-            .output_files = std.ArrayList(FileMetadata).init(allocator),
+            .input_files = .{},
+            .output_files = .{},
             .smallest_key = [_]u8{0xFF} ** 32,
             .largest_key = [_]u8{0x00} ** 32,
             .is_trivial_move = false,
@@ -134,12 +134,12 @@ pub const CompactionJob = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.input_files.deinit();
-        self.output_files.deinit();
+        self.input_files.deinit(self.allocator);
+        self.output_files.deinit(self.allocator);
     }
 
     pub fn addInputFile(self: *Self, file: FileMetadata) !void {
-        try self.input_files.append(file);
+        try self.input_files.append(self.allocator, file);
 
         // Update key range using SIMD comparison
         if (simd.simdKeyCompare(file.smallest_key, self.smallest_key) == .lt) {
@@ -230,7 +230,7 @@ pub const CompactionManager = struct {
     // Compaction state
     running: std.atomic.Value(bool),
     compaction_thread: ?std.Thread,
-    pending_jobs: std.ArrayList(CompactionJob),
+    pending_jobs: std.ArrayListUnmanaged(CompactionJob),
     job_mutex: std.Thread.Mutex,
 
     const Self = @This();
@@ -259,7 +259,7 @@ pub const CompactionManager = struct {
             .next_file_number = std.atomic.Value(u64).init(1),
             .running = std.atomic.Value(bool).init(false),
             .compaction_thread = null,
-            .pending_jobs = std.ArrayList(CompactionJob).init(allocator),
+            .pending_jobs = .{},
             .job_mutex = std.Thread.Mutex{},
         };
 
@@ -278,7 +278,7 @@ pub const CompactionManager = struct {
         for (self.pending_jobs.items) |*job| {
             job.deinit();
         }
-        self.pending_jobs.deinit();
+        self.pending_jobs.deinit(self.allocator);
 
         self.allocator.free(self.data_dir);
         self.allocator.destroy(self);
@@ -335,12 +335,13 @@ pub const CompactionManager = struct {
 
         // Find overlapping files in output level
         const overlapping = self.levels[level + 1].getOverlappingFiles(job.smallest_key, job.largest_key);
-        defer overlapping.deinit();
+        var overlapping_copy = overlapping;
+        defer overlapping_copy.deinit(self.allocator);
         for (overlapping.items) |file| {
             try job.addInputFile(file);
         }
 
-        try self.pending_jobs.append(job);
+        try self.pending_jobs.append(self.allocator, job);
     }
 
     /// Manual trigger for compaction
@@ -367,20 +368,20 @@ pub const CompactionManager = struct {
         while (self.running.load(.acquire)) {
             // Check for pending jobs
             self.job_mutex.lock();
-            const job_opt = if (self.pending_jobs.items.len > 0)
+            var job_opt = if (self.pending_jobs.items.len > 0)
                 self.pending_jobs.orderedRemove(0)
             else
                 null;
             self.job_mutex.unlock();
 
             if (job_opt) |*job| {
-                self.executeCompaction(job) catch |err| {
+                self.executeCompaction(@constCast(job)) catch |err| {
                     std.log.err("Compaction error: {}", .{err});
                 };
                 @constCast(job).deinit();
             } else {
                 // Sleep if no work
-                std.time.sleep(100 * std.time.ns_per_ms);
+                std.Thread.sleep(100 * std.time.ns_per_ms);
             }
         }
     }

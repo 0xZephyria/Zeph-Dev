@@ -15,7 +15,7 @@
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 pub const ContractRoot = struct {
     header: AccountHeader,
@@ -61,10 +61,10 @@ pub fn codeKey(addr: types.Address) [32]u8 {
     return key;
 }
 
-/// Contract stem: keccak256(address)[0..31]
+/// Contract stem: blake3(address)[0..31]
 pub fn contractStem(addr: types.Address) [31]u8 {
     var h: [32]u8 = undefined;
-    Keccak256.hash(&addr.bytes, &h, .{});
+    Blake3.hash(&addr.bytes, &h, .{});
     var stem: [31]u8 = undefined;
     @memcpy(&stem, h[0..31]);
     return stem;
@@ -72,29 +72,24 @@ pub fn contractStem(addr: types.Address) [31]u8 {
 
 /// Derive contract address from deployer + nonce (CREATE opcode)
 pub fn deriveAddress(deployer: types.Address, nonce: u64) types.Address {
-    const ally = std.heap.page_allocator;
-    const rlp_mod = @import("encoding").rlp;
-    const Derivation = struct { from: types.Address, nonce: u64 };
-    const d = Derivation{ .from = deployer, .nonce = nonce };
-    const encoded = rlp_mod.encode(ally, d) catch return types.Address.zero();
-    defer ally.free(encoded);
-    var h: [32]u8 = undefined;
-    Keccak256.hash(encoded, &h, .{});
+    var nonceBytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &nonceBytes, nonce, .big);
+    var createInput: [40]u8 = undefined;
+    @memcpy(createInput[0..32], &deployer.bytes);
+    @memcpy(createInput[32..40], &nonceBytes);
     var addr: types.Address = undefined;
-    @memcpy(&addr.bytes, h[12..32]);
+    Blake3.hash(&createInput, &addr.bytes, .{});
     return addr;
 }
 
 /// Derive contract address from CREATE2 (deployer + salt + init_code_hash)
 pub fn deriveCreate2Address(deployer: types.Address, salt: [32]u8, init_code_hash: [32]u8) types.Address {
-    var input: [85]u8 = undefined;
-    input[0] = 0xff;
-    @memcpy(input[1..21], &deployer.bytes);
-    @memcpy(input[21..53], &salt);
-    @memcpy(input[53..85], &init_code_hash);
-    var h: [32]u8 = undefined;
-    Keccak256.hash(&input, &h, .{});
+    var create2Input: [97]u8 = undefined;
+    create2Input[0] = 0x02;
+    @memcpy(create2Input[1..33], &deployer.bytes);
+    @memcpy(create2Input[33..65], &salt);
+    @memcpy(create2Input[65..97], &init_code_hash);
     var addr: types.Address = undefined;
-    @memcpy(&addr.bytes, h[12..32]);
+    Blake3.hash(&create2Input, &addr.bytes, .{});
     return addr;
 }

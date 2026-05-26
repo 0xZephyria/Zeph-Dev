@@ -6,7 +6,7 @@
 //
 // Each Ethereum storage slot becomes an independent account in the Verkle trie.
 // Address derivation:
-//   StorageAccountKey = keccak256(contract_root_address || slot_hash)
+//   StorageAccountKey = blake3(contract_root_address || slot_hash)
 //
 // One slot = one account. No shared storage blob.
 // Parallel transactions touching different slots have ZERO overlap.
@@ -21,7 +21,7 @@
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 pub const StorageCellAccount = struct {
     header: AccountHeader,
@@ -62,7 +62,7 @@ pub const StorageCellAccount = struct {
 // ── Key Derivation ──────────────────────────────────────────────────────
 
 /// Derive the storage cell key in the global Verkle trie.
-/// Key = keccak256(contract_address || storage_slot)
+/// Key = blake3(contract_address || storage_slot)
 ///
 /// This is the CORE of the zero-conflict model: each slot maps to a
 /// unique trie key, so two transactions writing different slots NEVER

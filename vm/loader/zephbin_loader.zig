@@ -101,7 +101,8 @@ pub const ZephBinPackage = struct {
 /// a full header.  Does NOT validate the version — use `parse` for that.
 pub fn isZephBin(data: []const u8) bool {
     if (data.len < @sizeOf(ZephBinHeader)) return false;
-    return std.mem.eql(u8, data[0..4], &ZEPHBIN_MAGIC);
+    return std.mem.eql(u8, data[0..4], &ZEPHBIN_MAGIC) and
+        std.mem.readInt(u16, data[4..6], .little) == ZEPHBIN_VERSION;
 }
 
 /// Parse a ZephBin binary.  Returns a ZephBinPackage whose `actions` slice is
@@ -172,6 +173,7 @@ test "isZephBin rejects non-FORG data" {
 test "isZephBin recognises FORG magic" {
     var data = [_]u8{0} ** 64;
     @memcpy(data[0..4], "FORG");
+    std.mem.writeInt(u16, data[4..6], ZEPHBIN_VERSION, .little);
     try testing.expect(isZephBin(&data));
 }
 
@@ -187,9 +189,9 @@ test "parse empty contract (0 actions)" {
     @memcpy(data[0..4], "FORG");
     std.mem.writeInt(u16, data[4..6], ZEPHBIN_VERSION, .little);
     // accessListLen = 0, bytecodeLen = 2 (just the u16 actionCount=0), dataSectionLen = 0
-    std.mem.writeInt(u32, data[52..56], 0, .little); // accessListLen
-    std.mem.writeInt(u32, data[56..60], 2, .little); // bytecodeLen
-    std.mem.writeInt(u32, data[64..68], 0, .little); // dataSectionLen
+    std.mem.writeInt(u32, data[44..48], 0, .little); // accessListLen
+    std.mem.writeInt(u32, data[48..52], 2, .little); // bytecodeLen
+    std.mem.writeInt(u32, data[56..60], 0, .little); // dataSectionLen
     // bytecode section starts at byte 64, contains [0x00, 0x00] (actionCount=0)
     // data[64] = 0x00, data[65] = 0x00
 
@@ -215,8 +217,9 @@ test "pickAction falls back to index 0 on unknown selector" {
     var data = [_]u8{0} ** (64 + 14);
     @memcpy(data[0..4], "FORG");
     std.mem.writeInt(u16, data[4..6], ZEPHBIN_VERSION, .little);
-    std.mem.writeInt(u32, data[52..56], 0, .little); // accessListLen
-    std.mem.writeInt(u32, data[56..60], 14, .little); // bytecodeLen
+    std.mem.writeInt(u32, data[44..48], 0, .little); // accessListLen
+    std.mem.writeInt(u32, data[48..52], 14, .little); // bytecodeLen
+    std.mem.writeInt(u32, data[56..60], 0, .little); // dataSectionLen
     @memcpy(data[64..78], &bcSection);
 
     var pkg = try parse(testing.allocator, &data);

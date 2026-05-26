@@ -184,7 +184,7 @@ pub const Miner = struct {
 
             var tc: u8 = 0;
             while (tc < thread_count_now) : (tc += 1) {
-                var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+                var hasher = std.crypto.hash.Blake3.init(.{});
                 hasher.update(&block.header.verkleRoot.bytes);
                 hasher.update(&[_]u8{tc});
                 var count_buf: [4]u8 = undefined;
@@ -381,7 +381,7 @@ pub const Miner = struct {
             var next_len: usize = 0;
             var i: usize = 0;
             while (i + 1 < len) : (i += 2) {
-                var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+                var hasher = std.crypto.hash.Blake3.init(.{});
                 hasher.update(&current[i].bytes);
                 hasher.update(&current[i + 1].bytes);
                 hasher.final(&current[next_len].bytes);
@@ -389,7 +389,7 @@ pub const Miner = struct {
             }
             if (i < len) {
                 // Odd node: hash with itself
-                var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+                var hasher = std.crypto.hash.Blake3.init(.{});
                 hasher.update(&current[i].bytes);
                 hasher.update(&current[i].bytes);
                 hasher.final(&current[next_len].bytes);

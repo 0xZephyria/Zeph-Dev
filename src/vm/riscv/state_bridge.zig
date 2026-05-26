@@ -11,17 +11,17 @@
 //   1. SLOAD/SSTORE route through the per-TX Overlay — each TX gets
 //      isolated state that commits only on success. The Overlay uses
 //      the global Verkle trie's storage_cell key derivation:
-//        StorageKey = keccak256(contract_address || slot)
+//        StorageKey = blake3(contract_address || slot)
 //      This means different contract slots are DIFFERENT trie keys.
 //
 //   2. Per-user derived storage (token balances, ERC20 mappings):
-//        DerivedKey = keccak256(user || contract || slot)
+//        DerivedKey = blake3(user || contract || slot)
 //      Two users touching the same logical slot get DIFFERENT trie keys.
 //      This is handled at the SDK/contract level — the SDK's storage
 //      module emits derived keys automatically for per-user mappings.
 //
 //   3. Global accumulators (totalSupply, pool reserves):
-//        GlobalKey = keccak256(contract || "global" || slot)
+//        GlobalKey = blake3(contract || "global" || slot)
 //      These are commutative — deltas merge order-independently.
 //
 //   4. Cross-contract calls create a sub-bridge with depth tracking
@@ -157,7 +157,7 @@ pub const StateBridge = struct {
 
     /// Set the allowed write-key set for DAG isolation enforcement.
     /// Called by the DAG executor before each TX execution.
-    /// Keys are the storage_cell keys: keccak256(contract || slot).
+    /// Keys are the storage_cell keys: blake3(contract || slot).
     pub fn setWriteKeys(self: *Self, keys: []const [32]u8) void {
         self.allowedWriteKeys = keys;
         self.rejectedWrites = 0;
@@ -215,7 +215,7 @@ pub const StateBridge = struct {
     // ================================================================
     // These route through the per-TX Overlay. The Overlay uses the
     // Verkle trie's account-per-slot model where:
-    //   StorageKey = keccak256(contract_address || slot)
+    //   StorageKey = blake3(contract_address || slot)
     // This guarantees that different slots = different trie keys = zero conflicts.
 
     /// Load a value from contract storage
@@ -365,6 +365,19 @@ pub const StateBridge = struct {
             state.general_allocator.free(code);
         };
         return code.len;
+    }
+
+    /// Get the code hash at an address (Blake3)
+    pub fn getCodeHash(self: *Self, addrBytes: [32]u8) [32]u8 {
+        const code = self.getCode(addrBytes) catch return [_]u8{0} ** 32;
+        if (code.len == 0) return [_]u8{0} ** 32;
+        defer {
+            const state: *Overlay = @ptrCast(@alignCast(self.overlay));
+            state.general_allocator.free(code);
+        }
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.Blake3.hash(code, &hash, .{});
+        return hash;
     }
 
     // ================================================================

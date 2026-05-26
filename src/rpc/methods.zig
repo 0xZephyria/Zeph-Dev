@@ -306,8 +306,7 @@ pub const RpcHandler = struct {
             const from_str = if (tx_obj.object.get("from")) |v| (if (v == .string) v.string else null) else null;
             var from_addr: types.Address = types.Address.zero();
             if (from_str) |fs| {
-                const trimmed = if (std.mem.startsWith(u8, fs, "0x")) fs[2..] else fs;
-                _ = std.fmt.hexToBytes(&from_addr.bytes, trimmed) catch {};
+                from_addr = parseAddress(fs) catch types.Address.zero();
             }
 
             const value_str = if (tx_obj.object.get("value")) |v| (if (v == .string) v.string else null) else null;
@@ -336,9 +335,7 @@ pub const RpcHandler = struct {
                 }
             } else if (to_str) |ts| {
                 // Contract call — simulate on existing code
-                var to_addr: types.Address = undefined;
-                const trimmed = if (std.mem.startsWith(u8, ts, "0x")) ts[2..] else ts;
-                _ = std.fmt.hexToBytes(&to_addr.bytes, trimmed) catch {
+                const to_addr = parseAddress(ts) catch {
                     return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{gas}) };
                 };
 
@@ -379,9 +376,7 @@ pub const RpcHandler = struct {
         const to_str = if (tx_obj.object.get("to")) |v| (if (v == .string) v.string else null) else null;
         if (to_str == null) return std.json.Value{ .string = "0x" };
 
-        var to_addr: types.Address = undefined;
-        const trimmed_to = if (std.mem.startsWith(u8, to_str.?, "0x")) to_str.?[2..] else to_str.?;
-        _ = try std.fmt.hexToBytes(&to_addr.bytes, trimmed_to);
+        const to_addr = try parseAddress(to_str.?);
 
         // Check if target has code
         const code = self.state.getCode(to_addr) catch &[_]u8{};
@@ -393,11 +388,7 @@ pub const RpcHandler = struct {
 
         // Parse from, value, data
         const from_str = if (tx_obj.object.get("from")) |v| (if (v == .string) v.string else null) else null;
-        var from_addr: types.Address = types.Address.zero();
-        if (from_str) |fs| {
-            const trimmed = if (std.mem.startsWith(u8, fs, "0x")) fs[2..] else fs;
-            _ = std.fmt.hexToBytes(&from_addr.bytes, trimmed) catch {};
-        }
+        const from_addr = if (from_str) |fs| parseAddress(fs) catch types.Address.zero() else types.Address.zero();
 
         const data_str = if (tx_obj.object.get("data")) |v| (if (v == .string) v.string else null) else if (tx_obj.object.get("input")) |v| (if (v == .string) v.string else null) else null;
         const call_data = if (data_str) |ds|
@@ -420,7 +411,7 @@ pub const RpcHandler = struct {
         const vm_result = self.dagExecutor.vmCallback.?.execute(code, call_data, 30_000_000, &overlay, from_addr, to_addr, value, null, null, 0);
         defer if (vm_result.returnData.len > 0) self.allocator.free(vm_result.returnData);
 
-        if (vm_result.success and vm_result.returnData.len > 0) {
+        if (vm_result.returnData.len > 0) {
             const hex_out = try hex.encode(allocator, vm_result.returnData);
             return std.json.Value{ .string = hex_out };
         }
@@ -433,19 +424,16 @@ pub const RpcHandler = struct {
         const addr_str = params.array.items[0].string;
         log.debug("[RPC] ethGetCode: {s}\n", .{addr_str});
 
-        var address: types.Address = undefined;
-        const trimmed = if (std.mem.startsWith(u8, addr_str, "0x")) addr_str[2..] else addr_str;
-        _ = try std.fmt.hexToBytes(&address.bytes, trimmed);
+        const address = try parseAddress(addr_str);
 
         const code = try self.state.getCode(address);
         defer self.state.allocator.free(code);
 
         log.debug("[RPC] ethGetCode: Len={d}\n", .{code.len});
 
-        // hex imported at top level
+        // hex.encode already prepends "0x"
         const encoded = try hex.encode(allocator, code);
-        const result_str = try std.fmt.allocPrint(allocator, "0x{s}", .{encoded});
-        return std.json.Value{ .string = result_str };
+        return std.json.Value{ .string = encoded };
     }
 
     fn netVersion(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
@@ -482,9 +470,7 @@ pub const RpcHandler = struct {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
 
         const addr_str = params.array.items[0].string;
-        var address: types.Address = undefined;
-        const trimmed = if (std.mem.startsWith(u8, addr_str, "0x")) addr_str[2..] else addr_str;
-        _ = try std.fmt.hexToBytes(&address.bytes, trimmed);
+        const address = try parseAddress(addr_str);
 
         // Parse block tag (default to "latest")
         const block_tag: []const u8 = if (params.array.items.len > 1 and params.array.items[1] == .string)
@@ -505,9 +491,7 @@ pub const RpcHandler = struct {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
 
         const addr_str = params.array.items[0].string;
-        var address: types.Address = undefined;
-        const trimmed = if (std.mem.startsWith(u8, addr_str, "0x")) addr_str[2..] else addr_str;
-        _ = try std.fmt.hexToBytes(&address.bytes, trimmed);
+        const address = try parseAddress(addr_str);
 
         // Parse block tag (default to "latest")
         const block_tag: []const u8 = if (params.array.items.len > 1 and params.array.items[1] == .string)
@@ -527,9 +511,7 @@ pub const RpcHandler = struct {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
 
         const addr_str = params.array.items[0].string;
-        var address: types.Address = undefined;
-        const trimmed = if (std.mem.startsWith(u8, addr_str, "0x")) addr_str[2..] else addr_str;
-        _ = try std.fmt.hexToBytes(&address.bytes, trimmed);
+        const address = try parseAddress(addr_str);
 
         // Parse block tag (default to "latest")
         const block_tag: []const u8 = if (params.array.items.len > 1 and params.array.items[1] == .string)
@@ -670,14 +652,14 @@ pub const RpcHandler = struct {
 
         const trimmed = if (std.mem.startsWith(u8, raw_tx_hex, "0x")) raw_tx_hex[2..] else raw_tx_hex;
         const actual_bytes = hex.decode(allocator, trimmed) catch |err| {
-            log.debug("[RPC] hex decode failed: {}\n", .{err});
+            log.err("[RPC] hex decode failed: {}\n", .{err});
             return error.InvalidParams;
         };
 
         // Decode RLP transaction
         const tx_decode = @import("core").tx_decode;
         const tx = tx_decode.decodeTransaction(allocator, actual_bytes) catch |err| {
-            log.debug("[RPC] TX decode failed: {}\n", .{err});
+            log.err("[RPC] TX decode failed: {}\n", .{err});
             return error.InvalidParams;
         };
 
@@ -687,7 +669,7 @@ pub const RpcHandler = struct {
 
         // Add to DAG mempool
         self.dagPool.add(heap_tx) catch |err| {
-            log.debug("[RPC] DAG mempool rejected TX: {}\n", .{err});
+            log.err("[RPC] DAG mempool rejected TX: {}\n", .{err});
             heap_tx.deinit(self.allocator);
             self.allocator.destroy(heap_tx);
             return err;
@@ -710,7 +692,7 @@ pub const RpcHandler = struct {
         try map.put("number", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.number}) });
 
         var h_res: [32]u8 = undefined;
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         const encoded = try block.header.rlpEncode(allocator);
         defer allocator.free(encoded);
         hasher.update(encoded);
@@ -824,9 +806,7 @@ pub const RpcHandler = struct {
         const tx_hash_hex = params.array.items[0].string;
         log.debug("[RPC] eth_getTransactionReceipt: {s}\n", .{tx_hash_hex});
 
-        var tx_hash: types.Hash = undefined;
-        const trimmed = if (std.mem.startsWith(u8, tx_hash_hex, "0x")) tx_hash_hex[2..] else tx_hash_hex;
-        _ = std.fmt.hexToBytes(&tx_hash.bytes, trimmed) catch {
+        const tx_hash = parseHash(tx_hash_hex) catch {
             return error.InvalidParams;
         };
 
@@ -885,10 +865,8 @@ pub const RpcHandler = struct {
                 // Effective gas price: clamp baseFee arithmetic to u64
                 var effective_gas_price = tx.gasPrice;
                 if (b.header.baseFee > 0) {
-                    //TODO handle overflow, Fix This Issue for now truncating
-                    const base: u64 = @truncate(b.header.baseFee);
-                    const price: u64 = tx.gasPrice;
-                    effective_gas_price = base + (if (price > base) price - base else 0);
+                    const base = std.math.cast(u64, b.header.baseFee) orelse std.math.maxInt(u64);
+                    effective_gas_price = @max(base, tx.gasPrice);
                 }
                 if (effective_gas_price == 0) effective_gas_price = 1000; // Minimal default
 
@@ -913,9 +891,7 @@ pub const RpcHandler = struct {
         const block_hash_hex = params.array.items[0].string;
         const full_tx = if (params.array.items.len > 1) params.array.items[1].bool else false;
 
-        var block_hash: types.Hash = undefined;
-        const bytes = try std.fmt.hexToBytes(&block_hash.bytes, std.mem.trimLeft(u8, block_hash_hex, "0x"));
-        if (bytes.len != 32) return error.InvalidParams;
+        const block_hash = try parseHash(block_hash_hex);
 
         if (try self.chain.getBlockByHash(block_hash)) |block| {
             defer self.chain.freeBlock(block);
@@ -929,9 +905,7 @@ pub const RpcHandler = struct {
         const tx_hash_hex = params.array.items[0].string;
         log.debug("[RPC] eth_getTransactionByHash: {s}\n", .{tx_hash_hex});
 
-        var tx_hash: types.Hash = undefined;
-        const bytes = try std.fmt.hexToBytes(&tx_hash.bytes, std.mem.trimLeft(u8, tx_hash_hex, "0x"));
-        if (bytes.len != 32) return error.InvalidParams;
+        const tx_hash = try parseHash(tx_hash_hex);
 
         // 1. Check Blockchain
         if (try self.chain.getTransactionLocation(tx_hash)) |loc| {
@@ -1033,6 +1007,23 @@ pub const RpcHandler = struct {
         }
     }
 
+    fn parseAddress(hex_str: []const u8) !types.Address {
+        var addr = types.Address.zero();
+        const clean = if (std.mem.startsWith(u8, hex_str, "0x")) hex_str[2..] else hex_str;
+        if (clean.len != 40 and clean.len != 64) return error.InvalidAddressLength;
+        const bytes_len = clean.len / 2;
+        _ = try std.fmt.hexToBytes(addr.bytes[0..bytes_len], clean);
+        return addr;
+    }
+
+    fn parseHash(hex_str: []const u8) !types.Hash {
+        var hash = types.Hash.zero();
+        const clean = if (std.mem.startsWith(u8, hex_str, "0x")) hex_str[2..] else hex_str;
+        if (clean.len != 64) return error.InvalidHashLength;
+        _ = try std.fmt.hexToBytes(&hash.bytes, clean);
+        return hash;
+    }
+
     fn ethSendTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
         log.debug("[RPC] eth_sendTransaction called\n", .{});
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
@@ -1048,9 +1039,7 @@ pub const RpcHandler = struct {
         if (tx_obj.object.get("to")) |val| {
             if (parseJsonString(val)) |s| {
                 if (s.len > 0 and !std.mem.eql(u8, s, "0x")) {
-                    var addr: types.Address = undefined;
-                    _ = try std.fmt.hexToBytes(&addr.bytes, std.mem.trimLeft(u8, s, "0x"));
-                    to_addr = addr;
+                    to_addr = try parseAddress(s);
                 }
             }
         }
@@ -1078,15 +1067,10 @@ pub const RpcHandler = struct {
 
         log.debug("[RPC] Parsed params: GasLimit={d} Value={x} GasPrice={x}\n", .{ gas_limit, value, gas_price });
 
-        var address: types.Address = undefined;
-        _ = try std.fmt.hexToBytes(&address.bytes, std.mem.trimLeft(u8, from_str, "0x"));
+        const address = try parseAddress(from_str);
 
         // Helper to parse hex data
         const data_bytes = try hex.decode(allocator, data_str);
-
-        // Get Nonce from state
-        const nonce = self.state.getNonce(address);
-        log.debug("[RPC] Nonce: {d}\n", .{nonce});
 
         // Sign it!
         // Devnet Ed25519 key seed (32 bytes) — replace with real key management in production
@@ -1094,13 +1078,25 @@ pub const RpcHandler = struct {
         var seed: [32]u8 = undefined;
         _ = try std.fmt.hexToBytes(&seed, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-        //TODO fix the try workaround, need robustness
         const key_pair = try Ed25519.KeyPair.generateDeterministic(seed);
 
         // Derive address = blake3(public_key)
         var derived_addr: types.Address = undefined;
         std.crypto.hash.Blake3.hash(&key_pair.public_key.bytes, &derived_addr.bytes, .{});
         log.debug("[RPC] Ed25519 derived addr: {x} (from: {x})\n", .{ derived_addr.bytes, address.bytes });
+
+        // Enforce that the requested from address matches the devnet key (legacy or Blake3-derived)
+        var legacy_dev_addr = types.Address.zero();
+        _ = try std.fmt.hexToBytes(legacy_dev_addr.bytes[0..20], "f39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+
+        if (!address.eql(derived_addr) and !address.eql(legacy_dev_addr)) {
+            log.err("[RPC] ethSendTransaction sender {x} does not match dev key (derived={x}, legacy={x})\n", .{ address.bytes, derived_addr.bytes, legacy_dev_addr.bytes });
+            return error.KeyNotFound;
+        }
+
+        // Get Nonce from state using the derived address since it is the actual signer/sender
+        const nonce = self.state.getNonce(derived_addr);
+        log.debug("[RPC] Nonce: {d}\n", .{nonce});
 
         // Construct transaction with binary encoding
         const tx_inner = types.Transaction{
@@ -1119,12 +1115,8 @@ pub const RpcHandler = struct {
         defer signing_buf.deinit(allocator);
         try tx_inner.encodeBinary(signing_buf.writer(allocator));
 
-        // Hash with BLAKE3 for the signing message
-        var hash: [32]u8 = undefined;
-        std.crypto.hash.Blake3.hash(signing_buf.items, &hash, .{});
-
-        // Sign with Ed25519
-        const sig = try key_pair.sign(&hash, null);
+        // Sign with Ed25519 directly on the binary-encoded signing message
+        const sig = try key_pair.sign(signing_buf.items, null);
 
         var tx_signed = tx_inner;
         tx_signed.signature = sig.toBytes();
@@ -1151,8 +1143,7 @@ pub const RpcHandler = struct {
         const addr_str = params.array.items[0].string;
         const slot_str = params.array.items[1].string;
 
-        var address: types.Address = undefined;
-        _ = try std.fmt.hexToBytes(&address.bytes, std.mem.trimLeft(u8, addr_str, "0x"));
+        const address = try parseAddress(addr_str);
 
         var slot: [32]u8 = [_]u8{0} ** 32;
         const slot_hex = std.mem.trimLeft(u8, slot_str, "0x");
@@ -1270,7 +1261,7 @@ pub const RpcHandler = struct {
                     try log_obj.put("blockNumber", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.number}) });
 
                     var h_res: [32]u8 = undefined;
-                    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+                    var hasher = std.crypto.hash.Blake3.init(.{});
                     const encoded = try block.header.rlpEncode(allocator);
                     defer allocator.free(encoded);
                     hasher.update(encoded);
@@ -1335,8 +1326,7 @@ pub const RpcHandler = struct {
         if (params != .array or params.array.items.len < 1) return error.InvalidParams;
         const hash_hex = params.array.items[0].string;
 
-        var block_hash: types.Hash = undefined;
-        _ = try std.fmt.hexToBytes(&block_hash.bytes, std.mem.trimLeft(u8, hash_hex, "0x"));
+        const block_hash = try parseHash(hash_hex);
 
         if (try self.chain.getBlockByHash(block_hash)) |b| {
             defer self.chain.freeBlock(b);
@@ -1468,8 +1458,7 @@ pub const RpcHandler = struct {
             break :blk std.fmt.parseInt(u64, trimmed, 16) catch return error.InvalidParams;
         };
 
-        var block_hash: types.Hash = undefined;
-        _ = try std.fmt.hexToBytes(&block_hash.bytes, std.mem.trimLeft(u8, hash_hex, "0x"));
+        const block_hash = try parseHash(hash_hex);
 
         if (try self.chain.getBlockByHash(block_hash)) |b| {
             defer self.chain.freeBlock(b);
@@ -1561,7 +1550,7 @@ pub const RpcHandler = struct {
                         defer self.chain.freeBlock(block);
                         var buf: [66]u8 = undefined;
                         var h_res: [32]u8 = undefined;
-                        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+                        var hasher = std.crypto.hash.Blake3.init(.{});
                         const encoded = block.header.rlpEncode(allocator) catch continue;
                         defer allocator.free(encoded);
                         hasher.update(encoded);
@@ -1627,7 +1616,7 @@ pub const RpcHandler = struct {
         defer if (data.len > 0) allocator.free(data);
 
         var hash: [32]u8 = undefined;
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(data);
         hasher.final(&hash);
 
@@ -1747,13 +1736,13 @@ pub const RpcHandler = struct {
         var types_arr = std.json.Array.init(allocator);
 
         const account_types = [_]struct { id: u8, name: []const u8, desc: []const u8, key_scheme: []const u8 }{
-            .{ .id = 0, .name = "EOA", .desc = "Externally Owned Account", .key_scheme = "keccak256(address)" },
-            .{ .id = 1, .name = "ContractRoot", .desc = "Contract metadata and nonce", .key_scheme = "keccak256(address || 0x01)" },
-            .{ .id = 2, .name = "Code", .desc = "Contract bytecode (immutable)", .key_scheme = "keccak256(address || 0x02)" },
-            .{ .id = 3, .name = "Config", .desc = "Contract configuration", .key_scheme = "keccak256(address || 0x03)" },
-            .{ .id = 4, .name = "StorageCell", .desc = "Per-slot isolated storage", .key_scheme = "keccak256(address || slot)" },
-            .{ .id = 5, .name = "DerivedState", .desc = "Per-user derived storage", .key_scheme = "keccak256(user || contract || slot)" },
-            .{ .id = 6, .name = "Vault", .desc = "Contract balance holder (separated from storage)", .key_scheme = "keccak256(vault || address)" },
+            .{ .id = 0, .name = "EOA", .desc = "Externally Owned Account", .key_scheme = "blake3(address)" },
+            .{ .id = 1, .name = "ContractRoot", .desc = "Contract metadata and nonce", .key_scheme = "blake3(address || 0x01)" },
+            .{ .id = 2, .name = "Code", .desc = "Contract bytecode (immutable)", .key_scheme = "blake3(address || 0x02)" },
+            .{ .id = 3, .name = "Config", .desc = "Contract configuration", .key_scheme = "blake3(address || 0x03)" },
+            .{ .id = 4, .name = "StorageCell", .desc = "Per-slot isolated storage", .key_scheme = "blake3(address || slot)" },
+            .{ .id = 5, .name = "DerivedState", .desc = "Per-user derived storage", .key_scheme = "blake3(user || contract || slot)" },
+            .{ .id = 6, .name = "Vault", .desc = "Contract balance holder (separated from storage)", .key_scheme = "blake3(vault || address)" },
             .{ .id = 7, .name = "System", .desc = "Protocol-level system account", .key_scheme = "fixed prefix" },
         };
 

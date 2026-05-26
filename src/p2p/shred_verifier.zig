@@ -235,7 +235,7 @@ test "ShredVerifier init and validator management" {
     var verifier = ShredVerifier.init(allocator, .{});
     defer verifier.deinit();
 
-    const addr = types.Address{ .bytes = [_]u8{0x01} ** 20 };
+    const addr = types.Address{ .bytes = [_]u8{0x01} ** 32 };
     try verifier.addValidator(.{
         .address = addr,
         .pubkey = [_]u8{0} ** 32,
@@ -285,7 +285,7 @@ test "ShredVerifier rejects unknown producer" {
         0,
         &[_]u8{0},
         [_]u8{0} ** 64,
-        types.Address{ .bytes = [_]u8{0xFF} ** 20 },
+        types.Address{ .bytes = [_]u8{0xFF} ** 32 },
     );
     try std.testing.expect(!result); // Should fail (unknown)
     try std.testing.expectEqual(@as(u64, 1), verifier.totalFailed);

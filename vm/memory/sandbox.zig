@@ -11,7 +11,7 @@ const std = @import("std");
 // Falls back to full memset when the tracker overflows.
 
 /// A single contiguous dirty memory range.
-pub const DirtyRange = struct {
+pub const DirtyRange = extern struct {
     start: u32,
     len: u32,
 };
@@ -22,7 +22,7 @@ pub const MAX_DIRTY_RANGES: usize = 256;
 
 /// Tracks dirty (written) memory ranges for efficient reset.
 /// Zero-allocation — uses a fixed-size inline array.
-pub const DirtyTracker = struct {
+pub const DirtyTracker = extern struct {
     ranges: [MAX_DIRTY_RANGES]DirtyRange = undefined,
     count: usize = 0,
     /// When true, tracker overflowed — must do full memset on reset.
@@ -59,10 +59,13 @@ pub const DirtyTracker = struct {
     /// Reset only the dirty ranges in the given backing memory, then clear the tracker.
     /// Returns true if tracked reset was used, false if full memset was needed.
     pub fn resetDirtyRegions(self: *Self, backing: []u8) bool {
-        if (self.fully_dirty or self.count == 0) {
+        if (self.fully_dirty) {
             self.count = 0;
             self.fully_dirty = false;
             return false; // Caller should do full memset
+        }
+        if (self.count == 0) {
+            return true; // Already clean!
         }
 
         for (self.ranges[0..self.count]) |range| {
@@ -200,28 +203,27 @@ pub const SandboxMemory = struct {
     /// Used by VM instance pool to reuse sandbox memory across TXs.
     /// Only clears heap, stack, calldata, and return regions — code region is overwritten by loadCode.
     pub fn reset(self: *SandboxMemory) void {
-        // Clear heap (256 KB)
-        @memset(self.backing[heapStart .. heapEnd + 1], 0);
-        // Clear stack (64 KB)
-        @memset(self.backing[stackStart .. stackEnd + 1], 0);
-        // Clear calldata (16 KB)
-        @memset(self.backing[calldataStart .. calldataEnd + 1], 0);
-        // Clear return data (16 KB)
-        @memset(self.backing[returnStart .. returnEnd + 1], 0);
-        // Clear scratch (32 KB)
-        @memset(self.backing[scratchStart .. scratchEnd + 1], 0);
-        // Always reset the dirty tracker too
-        self.dirty_tracker.clear();
+        if (!self.dirty_tracker.resetDirtyRegions(self.backing)) {
+            // Clear heap (256 KB)
+            @memset(self.backing[heapStart .. heapEnd + 1], 0);
+            // Clear stack (64 KB)
+            @memset(self.backing[stackStart .. stackEnd + 1], 0);
+            // Clear calldata (16 KB)
+            @memset(self.backing[calldataStart .. calldataEnd + 1], 0);
+            // Clear return data (16 KB)
+            @memset(self.backing[returnStart .. returnEnd + 1], 0);
+            // Clear scratch (32 KB)
+            @memset(self.backing[scratchStart .. scratchEnd + 1], 0);
+            // Always reset the dirty tracker too
+            self.dirty_tracker.clear();
+        }
     }
 
     /// Optimized reset: zeros only the memory ranges that were actually written.
     /// For typical TXs touching a few KB, this is ~100x faster than full reset.
     /// Falls back to full reset if the dirty tracker overflowed.
     pub fn resetTracked(self: *SandboxMemory) void {
-        if (!self.dirty_tracker.resetDirtyRegions(self.backing)) {
-            // Tracker overflowed or was empty — do full reset
-            self.reset();
-        }
+        self.reset();
     }
 
     // -------------------------------------------------------------------
@@ -321,6 +323,7 @@ pub const SandboxMemory = struct {
     pub fn loadCalldata(self: *SandboxMemory, calldata: []const u8) MemoryError!void {
         if (calldata.len > calldataSize) return MemoryError.SegFault;
         @memcpy(self.backing[calldataStart..][0..calldata.len], calldata);
+        self.dirty_tracker.markDirty(calldataStart, @intCast(calldata.len));
     }
 
     /// Read return data from the return region.

@@ -1,0 +1,2330 @@
+test
++- run test stderr
+[AOT Cache Miss] hash[0]=73, selector=6f91d85a
+[AOT Cache Lib Miss] Compiling...
+[AOT Cache Miss] hash[0]=73, selector=ba4d2440
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=1ce900f6
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=25b04e4e
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=47779aaa
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=dc9e26b
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=a0873bbc
+[AOT Cache Lib Hit]
+test
++- run test 141/142 passed, 1 failed
+error: 'vm.test.PolkaVM Contract: Execute resolc compiled SimpleToken.elf' failed: === ELF RELOCATIONS ===
+=== EXPORTS SECTION ===
+01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 
+=== EXPORTS RELOCATIONS ===
+Reloc 0: offset=0x1 type=2 sym='deploy__EXPORT_METADATA' val=0x286 addend=0x0
+Reloc 1: offset=0x9 type=2 sym='deploy' val=0x770 addend=0x0
+Reloc 2: offset=0x12 type=2 sym='call__EXPORT_METADATA' val=0x299 addend=0x0
+Reloc 3: offset=0x1a type=2 sym='call' val=0x762 addend=0x0
+=== RVC INSTRUCTION ANALYSIS FROM 0x2b4 ===
+RVC at offset 0x2b4: 0x7115
+RVC at offset 0x2b6: 0xed86
+RVC at offset 0x2b8: 0xe9a2
+RVC at offset 0x2ba: 0xe5a6
+RVC at offset 0x2bc: 0x1180
+RVC at offset 0x2c2: 0x848a
+RVC at offset 0x2c4: 0x4501
+RVC at offset 0x2c6: 0xf0c8
+RVC at offset 0x2c8: 0xf4c8
+RVC at offset 0x2ca: 0xf8c8
+RVC at offset 0x2cc: 0xfcc8
+RVC at offset 0x2da: 0x74c8
+RVC at offset 0x2dc: 0x78cc
+RVC at offset 0x2de: 0x7cd0
+RVC at offset 0x2e0: 0x70d4
+RVC at offset 0x2e2: 0x8d51
+RVC at offset 0x2e4: 0x8dd5
+RVC at offset 0x2e6: 0x8d4d
+RVC at offset 0x2e8: 0xc101
+RVC at offset 0x2f2: 0xa001
+RVC at offset 0x2fc: 0xec88
+RVC at offset 0x2fe: 0x1502
+RVC at offset 0x300: 0x9101
+RVC at offset 0x302: 0x057d
+RVC at offset 0x304: 0x9901
+RVC at offset 0x30e: 0xe4cc
+RVC at offset 0x318: 0xe8cc
+RVC at offset 0x31e: 0xe0d0
+RVC at offset 0x330: 0x6c8c
+RVC at offset 0x33a: 0x2501
+RVC at offset 0x33c: 0x6c8c
+RVC at offset 0x33e: 0x4601
+RVC at offset 0x348: 0x457d
+RVC at offset 0x34a: 0x6c8c
+RVC at offset 0x358: 0xa001
+RVC at offset 0x36a: 0x78b0
+RVC at offset 0x36c: 0x7cb4
+RVC at offset 0x36e: 0x4505
+RVC at offset 0x370: 0x1502
+RVC at offset 0x372: 0x8d31
+RVC at offset 0x378: 0x8d55
+RVC at offset 0x386: 0xe181
+RVC at offset 0x394: 0x4505
+RVC at offset 0x396: 0x4601
+RVC at offset 0x3a0: 0x70a8
+RVC at offset 0x3a2: 0xec88
+RVC at offset 0x3a4: 0x74a8
+RVC at offset 0x3a6: 0xe888
+RVC at offset 0x3b4: 0xe090
+RVC at offset 0x3b6: 0xe494
+RVC at offset 0x3c4: 0x6cac
+RVC at offset 0x3c6: 0x1502
+RVC at offset 0x3c8: 0x6090
+RVC at offset 0x3ca: 0x8e49
+RVC at offset 0x3cc: 0x6494
+RVC at offset 0x3ce: 0x8ecd
+RVC at offset 0x3d4: 0x9901
+RVC at offset 0x3d6: 0x812a
+RVC at offset 0x3d8: 0x4581
+RVC at offset 0x3da: 0xe10c
+RVC at offset 0x3dc: 0xe50c
+RVC at offset 0x3de: 0xe90c
+RVC at offset 0x3e0: 0xed0c
+RVC at offset 0x3e6: 0x9981
+RVC at offset 0x3e8: 0x812e
+RVC at offset 0x3ea: 0x6c98
+RVC at offset 0x3ec: 0xe198
+RVC at offset 0x3ee: 0x6898
+RVC at offset 0x3f0: 0xe598
+RVC at offset 0x3f2: 0xe990
+RVC at offset 0x3f4: 0xed94
+RVC at offset 0x40e: 0x7488
+RVC at offset 0x410: 0x788c
+RVC at offset 0x412: 0x7c90
+RVC at offset 0x414: 0x7094
+RVC at offset 0x416: 0x8d51
+RVC at offset 0x41c: 0x8e49
+RVC at offset 0x41e: 0x8d4d
+RVC at offset 0x420: 0x9201
+RVC at offset 0x422: 0x1502
+RVC at offset 0x424: 0x8d51
+RVC at offset 0x426: 0xe101
+RVC at offset 0x430: 0x9d35
+RVC at offset 0x432: 0x4581
+RVC at offset 0x434: 0x4601
+RVC at offset 0x436: 0xec94
+RVC at offset 0x448: 0x6c88
+RVC at offset 0x44a: 0x4581
+RVC at offset 0x458: 0x4501
+RVC at offset 0x45a: 0xa001
+RVC at offset 0x464: 0x7111
+RVC at offset 0x466: 0xfd86
+RVC at offset 0x468: 0xf9a2
+RVC at offset 0x46a: 0xf5a6
+RVC at offset 0x46c: 0x0200
+RVC at offset 0x472: 0x848a
+RVC at offset 0x480: 0xe0f0
+RVC at offset 0x482: 0x4601
+RVC at offset 0x484: 0xe4f0
+RVC at offset 0x486: 0xe8f0
+RVC at offset 0x488: 0xecf0
+RVC at offset 0x49a: 0xfc88
+RVC at offset 0x49c: 0x4108
+RVC at offset 0x49e: 0x4591
+RVC at offset 0x4a8: 0x9901
+RVC at offset 0x4aa: 0xf888
+RVC at offset 0x4ac: 0x812a
+RVC at offset 0x4ae: 0x2501
+RVC at offset 0x4b0: 0x4581
+RVC at offset 0x4ba: 0x7888
+RVC at offset 0x4bc: 0x4d48
+RVC at offset 0x4ca: 0x7c88
+RVC at offset 0x4cc: 0x4108
+RVC at offset 0x4ce: 0x458d
+RVC at offset 0x4e8: 0x70c8
+RVC at offset 0x4ea: 0xf488
+RVC at offset 0x4ec: 0x74c8
+RVC at offset 0x4ee: 0xec88
+RVC at offset 0x4f0: 0x78c8
+RVC at offset 0x4f2: 0xf088
+RVC at offset 0x4f8: 0x9901
+RVC at offset 0x4fa: 0xf888
+RVC at offset 0x50c: 0x7894
+RVC at offset 0x50e: 0x6688
+RVC at offset 0x510: 0x6a8c
+RVC at offset 0x512: 0x6e90
+RVC at offset 0x514: 0x6294
+RVC at offset 0x516: 0x8d51
+RVC at offset 0x518: 0x8dd5
+RVC at offset 0x51a: 0x8d4d
+RVC at offset 0x51c: 0x6585
+RVC at offset 0x526: 0xf88c
+RVC at offset 0x52c: 0x9901
+RVC at offset 0x52e: 0xe888
+RVC at offset 0x540: 0x6888
+RVC at offset 0x546: 0x651c
+RVC at offset 0x54c: 0x6d18
+RVC at offset 0x54e: 0x6c88
+RVC at offset 0x554: 0x7088
+RVC at offset 0x55a: 0x7488
+RVC at offset 0x564: 0x9201
+RVC at offset 0x566: 0x9181
+RVC at offset 0x568: 0x8e55
+RVC at offset 0x56e: 0x9101
+RVC at offset 0x570: 0x8dd5
+RVC at offset 0x572: 0x7c94
+RVC at offset 0x574: 0xea90
+RVC at offset 0x576: 0xee8c
+RVC at offset 0x578: 0xd288
+RVC at offset 0x582: 0x9a01
+RVC at offset 0x584: 0x8132
+RVC at offset 0x58a: 0xe61c
+RVC at offset 0x590: 0xee18
+RVC at offset 0x596: 0x9901
+RVC at offset 0x598: 0x812a
+RVC at offset 0x5a6: 0xfc94
+RVC at offset 0x5ac: 0x9301
+RVC at offset 0x5ae: 0x1502
+RVC at offset 0x5b4: 0x2601
+RVC at offset 0x5b6: 0x4521
+RVC at offset 0x5b8: 0x7894
+RVC at offset 0x5c2: 0xc101
+RVC at offset 0x5d4: 0x60c8
+RVC at offset 0x5d6: 0xfc88
+RVC at offset 0x5d8: 0x64c8
+RVC at offset 0x5da: 0xf888
+RVC at offset 0x5dc: 0x68c8
+RVC at offset 0x5de: 0xf488
+RVC at offset 0x5e0: 0x6cc8
+RVC at offset 0x5e2: 0xf088
+RVC at offset 0x5ec: 0x7c94
+RVC at offset 0x5ee: 0x788c
+RVC at offset 0x5f0: 0x7090
+RVC at offset 0x5f2: 0x8dd1
+RVC at offset 0x5f4: 0x7498
+RVC at offset 0x5fa: 0x8e4d
+RVC at offset 0x5fc: 0x8dd9
+RVC at offset 0x5fe: 0x9201
+RVC at offset 0x600: 0x1582
+RVC at offset 0x602: 0x8dd1
+RVC at offset 0x604: 0xe181
+RVC at offset 0x606: 0x862a
+RVC at offset 0x608: 0x9101
+RVC at offset 0x60a: 0xe101
+RVC at offset 0x610: 0xf888
+RVC at offset 0x612: 0x8536
+RVC at offset 0x614: 0x85b2
+RVC at offset 0x616: 0xf490
+RVC at offset 0x628: 0xf090
+RVC at offset 0x62a: 0x8132
+RVC at offset 0x62c: 0x748c
+RVC at offset 0x62e: 0xc20c
+RVC at offset 0x630: 0x2501
+RVC at offset 0x636: 0x4601
+RVC at offset 0x640: 0x7088
+RVC at offset 0x642: 0x4108
+RVC at offset 0x644: 0x788c
+RVC at offset 0x64a: 0x0000
+RVC at offset 0x65c: 0x9901
+RVC at offset 0x65e: 0xf888
+RVC at offset 0x660: 0x812a
+RVC at offset 0x662: 0x4581
+RVC at offset 0x664: 0xe10c
+RVC at offset 0x666: 0xe50c
+RVC at offset 0x668: 0xe90c
+RVC at offset 0x66a: 0xed0c
+RVC at offset 0x66c: 0x2501
+RVC at offset 0x676: 0x7894
+RVC at offset 0x678: 0x6688
+RVC at offset 0x67a: 0x6a8c
+RVC at offset 0x67c: 0x6e90
+RVC at offset 0x67e: 0x6294
+RVC at offset 0x680: 0x8d51
+RVC at offset 0x682: 0x8dd5
+RVC at offset 0x684: 0x8d4d
+RVC at offset 0x686: 0xc101
+RVC at offset 0x690: 0xa001
+RVC at offset 0x69a: 0xa001
+RVC at offset 0x6a8: 0x4505
+RVC at offset 0x6aa: 0xa011
+RVC at offset 0x6ac: 0x5c8c
+RVC at offset 0x6ae: 0x4601
+RVC at offset 0x6c0: 0x85aa
+RVC at offset 0x6c2: 0x9101
+RVC at offset 0x6c4: 0xe101
+RVC at offset 0x6c6: 0x7c88
+RVC at offset 0x6c8: 0xf88c
+RVC at offset 0x6d6: 0x5890
+RVC at offset 0x6d8: 0x4505
+RVC at offset 0x6ea: 0x7c88
+RVC at offset 0x6ec: 0x4108
+RVC at offset 0x6ee: 0x458d
+RVC at offset 0x6fc: 0xa001
+RVC at offset 0x712: 0x70b0
+RVC at offset 0x714: 0x74b4
+RVC at offset 0x722: 0xe0b0
+RVC at offset 0x724: 0xe4b4
+RVC at offset 0x726: 0xe8b8
+RVC at offset 0x734: 0x7c88
+RVC at offset 0x736: 0x4148
+RVC at offset 0x744: 0x7c8c
+RVC at offset 0x746: 0xc1c8
+RVC at offset 0x758: 0x4501
+RVC at offset 0x762: 0x1161
+RVC at offset 0x764: 0xe006
+RVC at offset 0x766: 0x4501
+RVC at offset 0x770: 0x1161
+RVC at offset 0x772: 0xe006
+RVC at offset 0x774: 0x4505
+RVC at offset 0x782: 0x9981
+RVC at offset 0x784: 0x812e
+RVC at offset 0x796: 0x8282
+RVC at offset 0x798: 0x812a
+RVC at offset 0x7aa: 0x2501
+RVC at offset 0x7ac: 0x8282
+RVC at offset 0x7b6: 0x410c
+RVC at offset 0x7b8: 0xc181
+RVC at offset 0x7c2: 0x2501
+RVC at offset 0x7cc: 0x8082
+RVC at offset 0x7d2: 0xf886
+RVC at offset 0x7d4: 0xf4a2
+RVC at offset 0x7d6: 0xf0a6
+RVC at offset 0x7d8: 0x862e
+RVC at offset 0x7da: 0xecaa
+RVC at offset 0x7e0: 0x8532
+RVC at offset 0x80a: 0x06a2
+RVC at offset 0x80c: 0x0742
+RVC at offset 0x80e: 0x07e2
+RVC at offset 0x810: 0x8e55
+RVC at offset 0x812: 0xe8b2
+RVC at offset 0x814: 0x8f5d
+RVC at offset 0x816: 0xe4ba
+RVC at offset 0x828: 0x0322
+RVC at offset 0x82a: 0x05c2
+RVC at offset 0x82c: 0x04e2
+RVC at offset 0x82e: 0x06a2
+RVC at offset 0x830: 0x0742
+RVC at offset 0x832: 0x07e2
+RVC at offset 0x838: 0xe0a2
+RVC at offset 0x83a: 0x8dc5
+RVC at offset 0x83c: 0xfc2e
+RVC at offset 0x83e: 0x8e55
+RVC at offset 0x840: 0xf832
+RVC at offset 0x842: 0x8f5d
+RVC at offset 0x844: 0xf43a
+RVC at offset 0x856: 0x05a2
+RVC at offset 0x858: 0x0642
+RVC at offset 0x85a: 0x06e2
+RVC at offset 0x85c: 0x8dd9
+RVC at offset 0x85e: 0xf02e
+RVC at offset 0x860: 0x8e55
+RVC at offset 0x862: 0xec32
+RVC at offset 0x874: 0x04a2
+RVC at offset 0x876: 0x8e45
+RVC at offset 0x878: 0xe832
+RVC at offset 0x87a: 0x0742
+RVC at offset 0x87c: 0x05e2
+RVC at offset 0x87e: 0x8dd9
+RVC at offset 0x880: 0xe42e
+RVC at offset 0x892: 0x06a2
+RVC at offset 0x894: 0x8ed9
+RVC at offset 0x896: 0xe036
+RVC at offset 0x898: 0x0642
+RVC at offset 0x89a: 0x05e2
+RVC at offset 0x8b0: 0x06a2
+RVC at offset 0x8b6: 0x0642
+RVC at offset 0x8b8: 0x05e2
+RVC at offset 0x8ce: 0x0622
+RVC at offset 0x8d4: 0x05c2
+RVC at offset 0x8d6: 0x0562
+RVC at offset 0x8d8: 0x8dc9
+RVC at offset 0x8da: 0x6546
+RVC at offset 0x8dc: 0x6626
+RVC at offset 0x8de: 0x8e49
+RVC at offset 0x8e0: 0x6506
+RVC at offset 0x8e2: 0x7762
+RVC at offset 0x8e4: 0x8f49
+RVC at offset 0x8e6: 0x7542
+RVC at offset 0x8e8: 0x76a2
+RVC at offset 0x8ea: 0x8ec9
+RVC at offset 0x8ec: 0x7502
+RVC at offset 0x8ee: 0x60e2
+RVC at offset 0x8f4: 0x64c2
+RVC at offset 0x8f6: 0x6422
+RVC at offset 0x8fc: 0x6402
+RVC at offset 0x906: 0x8ddd
+RVC at offset 0x908: 0x1702
+RVC at offset 0x90a: 0x8e59
+RVC at offset 0x90c: 0x1502
+RVC at offset 0x90e: 0x1402
+RVC at offset 0x910: 0x1582
+RVC at offset 0x912: 0x8d55
+RVC at offset 0x918: 0x8dc5
+RVC at offset 0x92a: 0x6766
+RVC at offset 0x92c: 0xe30c
+RVC at offset 0x92e: 0xe714
+RVC at offset 0x930: 0xeb08
+RVC at offset 0x932: 0xef10
+RVC at offset 0x934: 0x70c6
+RVC at offset 0x936: 0x7426
+RVC at offset 0x938: 0x7486
+RVC at offset 0x93e: 0x8082
+RVC at offset 0x944: 0xf006
+RVC at offset 0x946: 0xec22
+RVC at offset 0x948: 0xe826
+RVC at offset 0x94a: 0x6190
+RVC at offset 0x94c: 0xe432
+RVC at offset 0x94e: 0x6590
+RVC at offset 0x950: 0xe032
+RVC at offset 0x952: 0x6980
+RVC at offset 0x954: 0x6d84
+RVC at offset 0x96a: 0x6682
+RVC at offset 0x970: 0x6722
+RVC at offset 0x982: 0xe43e
+RVC at offset 0x99c: 0x8341
+RVC at offset 0x9c6: 0x82c1
+RVC at offset 0x9f8: 0x67a2
+RVC at offset 0xa66: 0x7082
+RVC at offset 0xa68: 0x6462
+RVC at offset 0xa6a: 0x64c2
+RVC at offset 0xa70: 0x8082
+RVC at offset 0xa72: 0x711d
+RVC at offset 0xa74: 0xec86
+RVC at offset 0xa76: 0xe8a2
+RVC at offset 0xa78: 0xe4a6
+RVC at offset 0xa7a: 0x1080
+RVC at offset 0xa80: 0x84aa
+RVC at offset 0xa82: 0x6d88
+RVC at offset 0xa84: 0x6990
+RVC at offset 0xa86: 0x6594
+RVC at offset 0xa88: 0x618c
+RVC at offset 0xa9a: 0xf02a
+RVC at offset 0xa9c: 0xf432
+RVC at offset 0xa9e: 0xf836
+RVC at offset 0xaa0: 0xfc2e
+RVC at offset 0xaaa: 0x4501
+RVC at offset 0xab4: 0x6562
+RVC at offset 0xab6: 0x65c2
+RVC at offset 0xab8: 0x6622
+RVC at offset 0xaba: 0x6682
+RVC at offset 0xacc: 0xe088
+RVC at offset 0xace: 0xe48c
+RVC at offset 0xad0: 0xe890
+RVC at offset 0xad2: 0xec94
+RVC at offset 0xad8: 0x60e6
+RVC at offset 0xada: 0x6446
+RVC at offset 0xadc: 0x64a6
+RVC at offset 0xade: 0x6125
+RVC at offset 0xae0: 0x8082
+RVC at offset 0xae2: 0x711d
+RVC at offset 0xae4: 0xec86
+RVC at offset 0xae6: 0xe8a2
+RVC at offset 0xae8: 0x1080
+RVC at offset 0xaf2: 0x6514
+RVC at offset 0xaf4: 0x6918
+RVC at offset 0xaf6: 0x6d08
+RVC at offset 0xafc: 0x6590
+RVC at offset 0xafe: 0x699c
+RVC at offset 0xb00: 0x6d8c
+RVC at offset 0xb22: 0xf02a
+RVC at offset 0xb24: 0xf43a
+RVC at offset 0xb26: 0xf836
+RVC at offset 0xb28: 0xfc16
+RVC at offset 0xb2a: 0xe02e
+RVC at offset 0xb2c: 0xe43e
+RVC at offset 0xb2e: 0xe832
+RVC at offset 0xb30: 0xec1a
+RVC at offset 0xb3a: 0x4501
+RVC at offset 0xb48: 0x60e6
+RVC at offset 0xb4a: 0x6446
+RVC at offset 0xb4c: 0x6125
+RVC at offset 0xb4e: 0x8082
+RVC at offset 0xb54: 0xc201
+RVC at offset 0xb5a: 0xe281
+RVC at offset 0xb68: 0x95aa
+RVC at offset 0xb6a: 0x05fd
+RVC at offset 0xb70: 0x1601
+RVC at offset 0xb72: 0x8df1
+RVC at offset 0xb88: 0x2501
+RVC at offset 0xb92: 0x952e
+RVC at offset 0xb94: 0x8082
+RVC at offset 0xb96: 0x0000
+Total RVC instructions: 422 out of 780 total instructions
+=== TEXT RELOCATIONS SUMMARY ===
+Type 2: 34 relocations
+Type 16: 7 relocations
+Type 19: 42 relocations
+Type 23: 13 relocations
+Type 24: 12 relocations
+Type 25: 1 relocations
+Type 44: 9 relocations
+Type 45: 6 relocations
+Type 51: 68 relocations
+ALL relocations:
+Reloc: offset=0x4 type=2 sym='address__IMPORT_METADATA' val=0x0 addend=0x0
+Reloc: offset=0x12 type=2 sym='balance__IMPORT_METADATA' val=0x13 addend=0x0
+Reloc: offset=0x20 type=2 sym='balance_of__IMPORT_METADATA' val=0x26 addend=0x0
+Reloc: offset=0x2e type=2 sym='base_fee__IMPORT_METADATA' val=0x39 addend=0x0
+Reloc: offset=0x3c type=2 sym='block_author__IMPORT_METADATA' val=0x4c addend=0x0
+Reloc: offset=0x4a type=2 sym='block_hash__IMPORT_METADATA' val=0x5f addend=0x0
+Reloc: offset=0x58 type=2 sym='block_number__IMPORT_METADATA' val=0x72 addend=0x0
+Reloc: offset=0x66 type=2 sym='call_data_copy__IMPORT_METADATA' val=0x98 addend=0x0
+Reloc: offset=0x74 type=2 sym='call_data_load__IMPORT_METADATA' val=0xab addend=0x0
+Reloc: offset=0x82 type=2 sym='call_data_size__IMPORT_METADATA' val=0xbe addend=0x0
+Reloc: offset=0x90 type=2 sym='call_evm__IMPORT_METADATA' val=0x85 addend=0x0
+Reloc: offset=0x9e type=2 sym='caller__IMPORT_METADATA' val=0xd1 addend=0x0
+Reloc: offset=0xac type=2 sym='chain_id__IMPORT_METADATA' val=0xe4 addend=0x0
+Reloc: offset=0xba type=2 sym='code_hash__IMPORT_METADATA' val=0x10a addend=0x0
+Reloc: offset=0xc8 type=2 sym='code_size__IMPORT_METADATA' val=0xf7 addend=0x0
+Reloc: offset=0xd6 type=2 sym='consume_all_gas__IMPORT_METADATA' val=0x11d addend=0x0
+Reloc: offset=0xe4 type=2 sym='delegate_call_evm__IMPORT_METADATA' val=0x130 addend=0x0
+Reloc: offset=0xf2 type=2 sym='deposit_event__IMPORT_METADATA' val=0x143 addend=0x0
+Reloc: offset=0x100 type=2 sym='gas_limit__IMPORT_METADATA' val=0x156 addend=0x0
+Reloc: offset=0x10e type=2 sym='gas_price__IMPORT_METADATA' val=0x169 addend=0x0
+Reloc: offset=0x11c type=2 sym='get_immutable_data__IMPORT_METADATA' val=0x17c addend=0x0
+Reloc: offset=0x12a type=2 sym='get_storage_or_zero__IMPORT_METADATA' val=0x18f addend=0x0
+Reloc: offset=0x138 type=2 sym='hash_keccak_256__IMPORT_METADATA' val=0x1a2 addend=0x0
+Reloc: offset=0x146 type=2 sym='instantiate__IMPORT_METADATA' val=0x1b5 addend=0x0
+Reloc: offset=0x154 type=2 sym='now__IMPORT_METADATA' val=0x1c8 addend=0x0
+Reloc: offset=0x162 type=2 sym='origin__IMPORT_METADATA' val=0x1db addend=0x0
+Reloc: offset=0x170 type=2 sym='ref_time_left__IMPORT_METADATA' val=0x201 addend=0x0
+Reloc: offset=0x17e type=2 sym='return_data_copy__IMPORT_METADATA' val=0x214 addend=0x0
+Reloc: offset=0x18c type=2 sym='return_data_size__IMPORT_METADATA' val=0x227 addend=0x0
+Reloc: offset=0x19a type=2 sym='seal_return__IMPORT_METADATA' val=0x1ee addend=0x0
+Reloc: offset=0x1a8 type=2 sym='set_immutable_data__IMPORT_METADATA' val=0x23a addend=0x0
+Reloc: offset=0x1b6 type=2 sym='set_storage_or_clear__IMPORT_METADATA' val=0x24d addend=0x0
+Reloc: offset=0x1c4 type=2 sym='terminate__IMPORT_METADATA' val=0x260 addend=0x0
+Reloc: offset=0x1d2 type=2 sym='value_transferred__IMPORT_METADATA' val=0x273 addend=0x0
+Reloc: offset=0x292 type=19 sym='call_data_size' val=0x7e addend=0x0
+Reloc: offset=0x292 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x29a type=23 sym='.L_MergedGlobals' val=0x20010 addend=0x0
+Reloc: offset=0x29a type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x29e type=25 sym='.Lpcrel_hi4' val=0x29a addend=0x0
+Reloc: offset=0x29e type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2a2 type=44 sym='.L0 ' val=0x2ac addend=0x0
+Reloc: offset=0x2a4 type=19 sym='.L__deploy' val=0x2b4 addend=0x0
+Reloc: offset=0x2a4 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2ac type=19 sym='.L__runtime' val=0x464 addend=0x0
+Reloc: offset=0x2ac type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2d2 type=19 sym='value_transferred' val=0x1ce addend=0x0
+Reloc: offset=0x2d2 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2e8 type=44 sym='.L0 ' val=0x2f4 addend=0x0
+Reloc: offset=0x2ea type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x2ea type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2ee type=24 sym='.Lpcrel_hi5' val=0x2ea addend=0x0
+Reloc: offset=0x2ee type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2f2 type=45 sym='.L0 ' val=0x390 addend=0x0
+Reloc: offset=0x2f4 type=23 sym='.L_MergedGlobals' val=0x20010 addend=0x0
+Reloc: offset=0x2f4 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2f8 type=24 sym='.Lpcrel_hi6' val=0x2f4 addend=0x0
+Reloc: offset=0x2f8 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x324 type=19 sym='__revive_store_heap_word' val=0x940 addend=0x0
+Reloc: offset=0x324 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x332 type=19 sym='__sbrk_internal' val=0xb50 addend=0x0
+Reloc: offset=0x332 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x340 type=19 sym='call_data_copy' val=0x62 addend=0x0
+Reloc: offset=0x340 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x34c type=16 sym='.L0 ' val=0x35a addend=0x0
+Reloc: offset=0x350 type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x350 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x354 type=24 sym='.Lpcrel_hi7' val=0x350 addend=0x0
+Reloc: offset=0x354 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x358 type=45 sym='.L0 ' val=0x390 addend=0x0
+Reloc: offset=0x362 type=19 sym='__revive_load_heap_word' val=0x7ce addend=0x0
+Reloc: offset=0x362 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x386 type=44 sym='.L0 ' val=0x3a0 addend=0x0
+Reloc: offset=0x388 type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x388 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x38c type=24 sym='.Lpcrel_hi8' val=0x388 addend=0x0
+Reloc: offset=0x38c type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x398 type=19 sym='seal_return' val=0x196 addend=0x0
+Reloc: offset=0x398 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x3a8 type=19 sym='OUTLINED_FUNCTION_0' val=0x77e addend=0x0
+Reloc: offset=0x3a8 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x3b8 type=19 sym='__revive_load_storage_word' val=0xa72 addend=0x0
+Reloc: offset=0x3b8 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x3f6 type=19 sym='__revive_store_storage_word' val=0xae2 addend=0x0
+Reloc: offset=0x3f6 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x406 type=19 sym='__revive_load_heap_word' val=0x7ce addend=0x0
+Reloc: offset=0x406 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x426 type=44 sym='.L0 ' val=0x45c addend=0x0
+Reloc: offset=0x428 type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x428 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x42c type=24 sym='.Lpcrel_hi9' val=0x428 addend=0x0
+Reloc: offset=0x42c type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x438 type=19 sym='call_data_copy' val=0x62 addend=0x0
+Reloc: offset=0x438 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x440 type=19 sym='__revive_store_immutable_data' val=0x7ae addend=0x0
+Reloc: offset=0x440 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x44c type=19 sym='__sbrk_internal' val=0xb50 addend=0x0
+Reloc: offset=0x44c type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x45a type=45 sym='.L0 ' val=0x396 addend=0x0
+Reloc: offset=0x45c type=19 sym='consume_all_gas' val=0xd2 addend=0x0
+Reloc: offset=0x45c type=51 sym='' val=0x0 addend=0x0
+=== SYMBOL TABLE ===
+Symbol: name='' shndx=0 val=0x0 info=0
+Symbol: name='bad_debug_info.sol:TransferExample' shndx=65521 val=0x0 info=4
+Symbol: name='$d' shndx=3 val=0x0 info=0
+Symbol: name='address' shndx=1 val=0x0 info=2
+Symbol: name='.L0 ' shndx=1 val=0x0 info=0
+Symbol: name='address__IMPORT_METADATA' shndx=18 val=0x0 info=1
+Symbol: name='$x' shndx=1 val=0xc info=0
+Symbol: name='balance' shndx=1 val=0xe info=2
+Symbol: name='.L0 ' shndx=1 val=0xe info=0
+Symbol: name='$d' shndx=1 val=0xe info=0
+Symbol: name='balance__IMPORT_METADATA' shndx=18 val=0x13 info=1
+Symbol: name='$x' shndx=1 val=0x1a info=0
+Symbol: name='balance_of' shndx=1 val=0x1c info=2
+Symbol: name='.L0 ' shndx=1 val=0x1c info=0
+Symbol: name='$d' shndx=1 val=0x1c info=0
+Symbol: name='balance_of__IMPORT_METADATA' shndx=18 val=0x26 info=1
+Symbol: name='$x' shndx=1 val=0x28 info=0
+Symbol: name='base_fee' shndx=1 val=0x2a info=2
+Symbol: name='.L0 ' shndx=1 val=0x2a info=0
+Symbol: name='$d' shndx=1 val=0x2a info=0
+Symbol: name='base_fee__IMPORT_METADATA' shndx=18 val=0x39 info=1
+Symbol: name='$x' shndx=1 val=0x36 info=0
+Symbol: name='block_author' shndx=1 val=0x38 info=2
+Symbol: name='.L0 ' shndx=1 val=0x38 info=0
+Symbol: name='$d' shndx=1 val=0x38 info=0
+Symbol: name='block_author__IMPORT_METADATA' shndx=18 val=0x4c info=1
+Symbol: name='$x' shndx=1 val=0x44 info=0
+Symbol: name='block_hash' shndx=1 val=0x46 info=2
+Symbol: name='.L0 ' shndx=1 val=0x46 info=0
+Symbol: name='$d' shndx=1 val=0x46 info=0
+Symbol: name='block_hash__IMPORT_METADATA' shndx=18 val=0x5f info=1
+Symbol: name='$x' shndx=1 val=0x52 info=0
+Symbol: name='block_number' shndx=1 val=0x54 info=2
+Symbol: name='.L0 ' shndx=1 val=0x54 info=0
+Symbol: name='$d' shndx=1 val=0x54 info=0
+Symbol: name='block_number__IMPORT_METADATA' shndx=18 val=0x72 info=1
+Symbol: name='$x' shndx=1 val=0x60 info=0
+Symbol: name='call_data_copy' shndx=1 val=0x62 info=2
+Symbol: name='.L0 ' shndx=1 val=0x62 info=0
+Symbol: name='$d' shndx=1 val=0x62 info=0
+Symbol: name='call_data_copy__IMPORT_METADATA' shndx=18 val=0x98 info=1
+Symbol: name='$x' shndx=1 val=0x6e info=0
+Symbol: name='call_data_load' shndx=1 val=0x70 info=2
+Symbol: name='.L0 ' shndx=1 val=0x70 info=0
+Symbol: name='$d' shndx=1 val=0x70 info=0
+Symbol: name='call_data_load__IMPORT_METADATA' shndx=18 val=0xab info=1
+Symbol: name='$x' shndx=1 val=0x7c info=0
+Symbol: name='call_data_size' shndx=1 val=0x7e info=2
+Symbol: name='.L0 ' shndx=1 val=0x7e info=0
+Symbol: name='$d' shndx=1 val=0x7e info=0
+Symbol: name='call_data_size__IMPORT_METADATA' shndx=18 val=0xbe info=1
+Symbol: name='$x' shndx=1 val=0x8a info=0
+Symbol: name='call_evm' shndx=1 val=0x8c info=2
+Symbol: name='.L0 ' shndx=1 val=0x8c info=0
+Symbol: name='$d' shndx=1 val=0x8c info=0
+Symbol: name='call_evm__IMPORT_METADATA' shndx=18 val=0x85 info=1
+Symbol: name='$x' shndx=1 val=0x98 info=0
+Symbol: name='caller' shndx=1 val=0x9a info=2
+Symbol: name='.L0 ' shndx=1 val=0x9a info=0
+Symbol: name='$d' shndx=1 val=0x9a info=0
+Symbol: name='caller__IMPORT_METADATA' shndx=18 val=0xd1 info=1
+Symbol: name='$x' shndx=1 val=0xa6 info=0
+Symbol: name='chain_id' shndx=1 val=0xa8 info=2
+Symbol: name='.L0 ' shndx=1 val=0xa8 info=0
+Symbol: name='$d' shndx=1 val=0xa8 info=0
+Symbol: name='chain_id__IMPORT_METADATA' shndx=18 val=0xe4 info=1
+Symbol: name='$x' shndx=1 val=0xb4 info=0
+Symbol: name='code_hash' shndx=1 val=0xb6 info=2
+Symbol: name='.L0 ' shndx=1 val=0xb6 info=0
+Symbol: name='$d' shndx=1 val=0xb6 info=0
+Symbol: name='code_hash__IMPORT_METADATA' shndx=18 val=0x10a info=1
+Symbol: name='$x' shndx=1 val=0xc2 info=0
+Symbol: name='code_size' shndx=1 val=0xc4 info=2
+Symbol: name='.L0 ' shndx=1 val=0xc4 info=0
+Symbol: name='$d' shndx=1 val=0xc4 info=0
+Symbol: name='code_size__IMPORT_METADATA' shndx=18 val=0xf7 info=1
+Symbol: name='$x' shndx=1 val=0xd0 info=0
+Symbol: name='consume_all_gas' shndx=1 val=0xd2 info=2
+Symbol: name='.L0 ' shndx=1 val=0xd2 info=0
+Symbol: name='$d' shndx=1 val=0xd2 info=0
+Symbol: name='consume_all_gas__IMPORT_METADATA' shndx=18 val=0x11d info=1
+Symbol: name='$x' shndx=1 val=0xde info=0
+Symbol: name='delegate_call_evm' shndx=1 val=0xe0 info=2
+Symbol: name='.L0 ' shndx=1 val=0xe0 info=0
+Symbol: name='$d' shndx=1 val=0xe0 info=0
+Symbol: name='delegate_call_evm__IMPORT_METADATA' shndx=18 val=0x130 info=1
+Symbol: name='$x' shndx=1 val=0xec info=0
+Symbol: name='deposit_event' shndx=1 val=0xee info=2
+Symbol: name='.L0 ' shndx=1 val=0xee info=0
+Symbol: name='$d' shndx=1 val=0xee info=0
+Symbol: name='deposit_event__IMPORT_METADATA' shndx=18 val=0x143 info=1
+Symbol: name='$x' shndx=1 val=0xfa info=0
+Symbol: name='gas_limit' shndx=1 val=0xfc info=2
+Symbol: name='.L0 ' shndx=1 val=0xfc info=0
+Symbol: name='$d' shndx=1 val=0xfc info=0
+Symbol: name='gas_limit__IMPORT_METADATA' shndx=18 val=0x156 info=1
+Symbol: name='$x' shndx=1 val=0x108 info=0
+Symbol: name='gas_price' shndx=1 val=0x10a info=2
+Symbol: name='.L0 ' shndx=1 val=0x10a info=0
+Symbol: name='$d' shndx=1 val=0x10a info=0
+Symbol: name='gas_price__IMPORT_METADATA' shndx=18 val=0x169 info=1
+Symbol: name='$x' shndx=1 val=0x116 info=0
+Symbol: name='get_immutable_data' shndx=1 val=0x118 info=2
+Symbol: name='.L0 ' shndx=1 val=0x118 info=0
+Symbol: name='$d' shndx=1 val=0x118 info=0
+Symbol: name='get_immutable_data__IMPORT_METADATA' shndx=18 val=0x17c info=1
+Symbol: name='$x' shndx=1 val=0x124 info=0
+Symbol: name='get_storage_or_zero' shndx=1 val=0x126 info=2
+Symbol: name='.L0 ' shndx=1 val=0x126 info=0
+Symbol: name='$d' shndx=1 val=0x126 info=0
+Symbol: name='get_storage_or_zero__IMPORT_METADATA' shndx=18 val=0x18f info=1
+Symbol: name='$x' shndx=1 val=0x132 info=0
+Symbol: name='hash_keccak_256' shndx=1 val=0x134 info=2
+Symbol: name='.L0 ' shndx=1 val=0x134 info=0
+Symbol: name='$d' shndx=1 val=0x134 info=0
+Symbol: name='hash_keccak_256__IMPORT_METADATA' shndx=18 val=0x1a2 info=1
+Symbol: name='$x' shndx=1 val=0x140 info=0
+Symbol: name='instantiate' shndx=1 val=0x142 info=2
+Symbol: name='.L0 ' shndx=1 val=0x142 info=0
+Symbol: name='$d' shndx=1 val=0x142 info=0
+Symbol: name='instantiate__IMPORT_METADATA' shndx=18 val=0x1b5 info=1
+Symbol: name='$x' shndx=1 val=0x14e info=0
+Symbol: name='now' shndx=1 val=0x150 info=2
+Symbol: name='.L0 ' shndx=1 val=0x150 info=0
+Symbol: name='$d' shndx=1 val=0x150 info=0
+Symbol: name='now__IMPORT_METADATA' shndx=18 val=0x1c8 info=1
+Symbol: name='$x' shndx=1 val=0x15c info=0
+Symbol: name='origin' shndx=1 val=0x15e info=2
+Symbol: name='.L0 ' shndx=1 val=0x15e info=0
+Symbol: name='$d' shndx=1 val=0x15e info=0
+Symbol: name='origin__IMPORT_METADATA' shndx=18 val=0x1db info=1
+Symbol: name='$x' shndx=1 val=0x16a info=0
+Symbol: name='ref_time_left' shndx=1 val=0x16c info=2
+Symbol: name='.L0 ' shndx=1 val=0x16c info=0
+Symbol: name='$d' shndx=1 val=0x16c info=0
+Symbol: name='ref_time_left__IMPORT_METADATA' shndx=18 val=0x201 info=1
+Symbol: name='$x' shndx=1 val=0x178 info=0
+Symbol: name='return_data_copy' shndx=1 val=0x17a info=2
+Symbol: name='.L0 ' shndx=1 val=0x17a info=0
+Symbol: name='$d' shndx=1 val=0x17a info=0
+Symbol: name='return_data_copy__IMPORT_METADATA' shndx=18 val=0x214 info=1
+Symbol: name='$x' shndx=1 val=0x186 info=0
+Symbol: name='return_data_size' shndx=1 val=0x188 info=2
+Symbol: name='.L0 ' shndx=1 val=0x188 info=0
+Symbol: name='$d' shndx=1 val=0x188 info=0
+Symbol: name='return_data_size__IMPORT_METADATA' shndx=18 val=0x227 info=1
+Symbol: name='$x' shndx=1 val=0x194 info=0
+Symbol: name='seal_return' shndx=1 val=0x196 info=2
+Symbol: name='.L0 ' shndx=1 val=0x196 info=0
+Symbol: name='$d' shndx=1 val=0x196 info=0
+Symbol: name='seal_return__IMPORT_METADATA' shndx=18 val=0x1ee info=1
+Symbol: name='$x' shndx=1 val=0x1a2 info=0
+Symbol: name='set_immutable_data' shndx=1 val=0x1a4 info=2
+Symbol: name='.L0 ' shndx=1 val=0x1a4 info=0
+Symbol: name='$d' shndx=1 val=0x1a4 info=0
+Symbol: name='set_immutable_data__IMPORT_METADATA' shndx=18 val=0x23a info=1
+Symbol: name='$x' shndx=1 val=0x1b0 info=0
+Symbol: name='set_storage_or_clear' shndx=1 val=0x1b2 info=2
+Symbol: name='.L0 ' shndx=1 val=0x1b2 info=0
+Symbol: name='$d' shndx=1 val=0x1b2 info=0
+Symbol: name='set_storage_or_clear__IMPORT_METADATA' shndx=18 val=0x24d info=1
+Symbol: name='$x' shndx=1 val=0x1be info=0
+Symbol: name='terminate' shndx=1 val=0x1c0 info=2
+Symbol: name='.L0 ' shndx=1 val=0x1c0 info=0
+Symbol: name='$d' shndx=1 val=0x1c0 info=0
+Symbol: name='terminate__IMPORT_METADATA' shndx=18 val=0x260 info=1
+Symbol: name='$x' shndx=1 val=0x1cc info=0
+Symbol: name='value_transferred' shndx=1 val=0x1ce info=2
+Symbol: name='.L0 ' shndx=1 val=0x1ce info=0
+Symbol: name='$d' shndx=1 val=0x1ce info=0
+Symbol: name='value_transferred__IMPORT_METADATA' shndx=18 val=0x273 info=1
+Symbol: name='$x' shndx=1 val=0x1da info=0
+Symbol: name='.L0 ' shndx=1 val=0x1dc info=0
+Symbol: name='.L0 ' shndx=1 val=0x1f8 info=0
+Symbol: name='.L0 ' shndx=1 val=0x272 info=0
+Symbol: name='__revive_store_immutable_data_comdat' shndx=4 val=0x0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ae info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ae info=0
+Symbol: name='.Lpcrel_hi0' shndx=1 val=0x7ae info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ae info=0
+Symbol: name='$x' shndx=1 val=0x7ae info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ae info=0
+Symbol: name='.L0 ' shndx=1 val=0x7cc info=0
+Symbol: name='.Lpcrel_hi1' shndx=1 val=0x7ba info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ce info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ce info=0
+Symbol: name='__revive_load_heap_word_comdat' shndx=6 val=0x0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ce info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ce info=0
+Symbol: name='$x' shndx=1 val=0x7ce info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ce info=0
+Symbol: name='.L0 ' shndx=1 val=0x7d8 info=0
+Symbol: name='.L0 ' shndx=1 val=0x7da info=0
+Symbol: name='.L0 ' shndx=1 val=0x7dc info=0
+Symbol: name='.L0 ' shndx=1 val=0x93a info=0
+Symbol: name='.L0 ' shndx=1 val=0x940 info=0
+Symbol: name='.L0 ' shndx=1 val=0x940 info=0
+Symbol: name='__revive_store_heap_word_comdat' shndx=8 val=0x0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x940 info=0
+Symbol: name='.L0 ' shndx=1 val=0x940 info=0
+Symbol: name='$x' shndx=1 val=0x940 info=0
+Symbol: name='.L0 ' shndx=1 val=0x940 info=0
+Symbol: name='.L0 ' shndx=1 val=0x94a info=0
+Symbol: name='.L0 ' shndx=1 val=0x94a info=0
+Symbol: name='.L0 ' shndx=1 val=0x956 info=0
+Symbol: name='.L0 ' shndx=1 val=0xa6c info=0
+Symbol: name='.L0 ' shndx=1 val=0xa72 info=0
+Symbol: name='.L0 ' shndx=1 val=0xa72 info=0
+Symbol: name='__revive_load_storage_word_comdat' shndx=10 val=0x0 info=0
+Symbol: name='.L0 ' shndx=1 val=0xa72 info=0
+Symbol: name='.L0 ' shndx=1 val=0xa72 info=0
+Symbol: name='$x' shndx=1 val=0xa72 info=0
+Symbol: name='.L0 ' shndx=1 val=0xa72 info=0
+Symbol: name='.L0 ' shndx=1 val=0xa7c info=0
+Symbol: name='.L0 ' shndx=1 val=0xa82 info=0
+Symbol: name='.L0 ' shndx=1 val=0xad8 info=0
+Symbol: name='.L0 ' shndx=1 val=0xae2 info=0
+Symbol: name='.L0 ' shndx=1 val=0xae2 info=0
+Symbol: name='__revive_store_storage_word_comdat' shndx=12 val=0x0 info=0
+Symbol: name='.L0 ' shndx=1 val=0xae2 info=0
+Symbol: name='.L0 ' shndx=1 val=0xae2 info=0
+Symbol: name='$x' shndx=1 val=0xae2 info=0
+Symbol: name='.L0 ' shndx=1 val=0xae2 info=0
+Symbol: name='.L0 ' shndx=1 val=0xaea info=0
+Symbol: name='.L0 ' shndx=1 val=0xaee info=0
+Symbol: name='.L0 ' shndx=1 val=0xb48 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb50 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb50 info=0
+Symbol: name='__sbrk_internal_comdat' shndx=14 val=0x0 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb50 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb50 info=0
+Symbol: name='$x' shndx=1 val=0xb50 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb50 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb88 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb54 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb96 info=0
+Symbol: name='.Lpcrel_hi3' shndx=1 val=0xb78 info=0
+Symbol: name='.L_MergedGlobals' shndx=21 val=0x20010 info=1
+Symbol: name='.Lpcrel_hi2' shndx=1 val=0xb8a info=0
+Symbol: name='__heap_memory' shndx=21 val=0x0 info=1
+Symbol: name='.L0 ' shndx=1 val=0xb98 info=0
+Symbol: name='.L0 ' shndx=1 val=0xb98 info=0
+Symbol: name='.L0 ' shndx=1 val=0x288 info=0
+Symbol: name='.L0 ' shndx=1 val=0x288 info=0
+Symbol: name='.L0 ' shndx=1 val=0x288 info=0
+Symbol: name='.L0 ' shndx=1 val=0x28e info=0
+Symbol: name='.L0 ' shndx=1 val=0x292 info=0
+Symbol: name='.Lpcrel_hi4' shndx=1 val=0x29a info=0
+Symbol: name='.L0 ' shndx=1 val=0x2ac info=0
+Symbol: name='.L__deploy' shndx=1 val=0x2b4 info=2
+Symbol: name='.L__runtime' shndx=1 val=0x464 info=2
+Symbol: name='.L0 ' shndx=1 val=0x2b4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2b4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2b4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2b4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2b4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2c4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2f4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2ea info=0
+Symbol: name='.Lpcrel_hi5' shndx=1 val=0x2ea info=0
+Symbol: name='.L0 ' shndx=1 val=0x2ea info=0
+Symbol: name='.L0 ' shndx=1 val=0x390 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2f4 info=0
+Symbol: name='.Lpcrel_hi6' shndx=1 val=0x2f4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x2f4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x302 info=0
+Symbol: name='.L0 ' shndx=1 val=0x304 info=0
+Symbol: name='.L0 ' shndx=1 val=0x306 info=0
+Symbol: name='.L0 ' shndx=1 val=0x30e info=0
+Symbol: name='.L0 ' shndx=1 val=0x310 info=0
+Symbol: name='.L0 ' shndx=1 val=0x314 info=0
+Symbol: name='.L0 ' shndx=1 val=0x32c info=0
+Symbol: name='.L0 ' shndx=1 val=0x35a info=0
+Symbol: name='.L0 ' shndx=1 val=0x34c info=0
+Symbol: name='.Lpcrel_hi7' shndx=1 val=0x350 info=0
+Symbol: name='.L0 ' shndx=1 val=0x350 info=0
+Symbol: name='.L0 ' shndx=1 val=0x350 info=0
+Symbol: name='.L0 ' shndx=1 val=0x35a info=0
+Symbol: name='.L0 ' shndx=1 val=0x35a info=0
+Symbol: name='.L0 ' shndx=1 val=0x372 info=0
+Symbol: name='.L0 ' shndx=1 val=0x3a0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x386 info=0
+Symbol: name='.Lpcrel_hi8' shndx=1 val=0x388 info=0
+Symbol: name='.L0 ' shndx=1 val=0x388 info=0
+Symbol: name='.L0 ' shndx=1 val=0x388 info=0
+Symbol: name='.L0 ' shndx=1 val=0x390 info=0
+Symbol: name='.L0 ' shndx=1 val=0x396 info=0
+Symbol: name='.L0 ' shndx=1 val=0x3a0 info=0
+Symbol: name='OUTLINED_FUNCTION_0' shndx=1 val=0x77e info=2
+Symbol: name='.L0 ' shndx=1 val=0x3b0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x3ca info=0
+Symbol: name='.L0 ' shndx=1 val=0x3d0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x3fe info=0
+Symbol: name='.L0 ' shndx=1 val=0x416 info=0
+Symbol: name='.L0 ' shndx=1 val=0x416 info=0
+Symbol: name='.L0 ' shndx=1 val=0x45c info=0
+Symbol: name='.L0 ' shndx=1 val=0x428 info=0
+Symbol: name='.Lpcrel_hi9' shndx=1 val=0x428 info=0
+Symbol: name='.L0 ' shndx=1 val=0x432 info=0
+Symbol: name='.L0 ' shndx=1 val=0x432 info=0
+Symbol: name='.L0 ' shndx=1 val=0x440 info=0
+Symbol: name='.L0 ' shndx=1 val=0x44a info=0
+Symbol: name='.L0 ' shndx=1 val=0x44a info=0
+Symbol: name='.L0 ' shndx=1 val=0x45c info=0
+Symbol: name='.L0 ' shndx=1 val=0x464 info=0
+Symbol: name='.L0 ' shndx=1 val=0x464 info=0
+Symbol: name='.L0 ' shndx=1 val=0x464 info=0
+Symbol: name='.L0 ' shndx=1 val=0x464 info=0
+Symbol: name='.L0 ' shndx=1 val=0x464 info=0
+Symbol: name='.L0 ' shndx=1 val=0x464 info=0
+Symbol: name='.L0 ' shndx=1 val=0x478 info=0
+Symbol: name='.Lpcrel_hi10' shndx=1 val=0x492 info=0
+Symbol: name='.L0 ' shndx=1 val=0x492 info=0
+Symbol: name='.L0 ' shndx=1 val=0x692 info=0
+Symbol: name='.L0 ' shndx=1 val=0x4a0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x4a4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x64c info=0
+Symbol: name='.L0 ' shndx=1 val=0x4c6 info=0
+Symbol: name='.L0 ' shndx=1 val=0x4ca info=0
+Symbol: name='.L0 ' shndx=1 val=0x69c info=0
+Symbol: name='.L0 ' shndx=1 val=0x4d0 info=0
+Symbol: name='.L0 ' shndx=1 val=0x4d4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x4dc info=0
+Symbol: name='.L0 ' shndx=1 val=0x4f4 info=0
+Symbol: name='OUTLINED_FUNCTION_1' shndx=1 val=0x798 info=2
+Symbol: name='.L0 ' shndx=1 val=0x516 info=0
+Symbol: name='.L0 ' shndx=1 val=0x528 info=0
+Symbol: name='.L0 ' shndx=1 val=0x550 info=0
+Symbol: name='.Lpcrel_hi16' shndx=1 val=0x59e info=0
+Symbol: name='.L0 ' shndx=1 val=0x6ac info=0
+Symbol: name='.L0 ' shndx=1 val=0x5c2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x5c4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x5e4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x5f2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x5f2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6e2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x606 info=0
+Symbol: name='.L0 ' shndx=1 val=0x608 info=0
+Symbol: name='.L0 ' shndx=1 val=0x608 info=0
+Symbol: name='.L0 ' shndx=1 val=0x612 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6b8 info=0
+Symbol: name='.L0 ' shndx=1 val=0x64c info=0
+Symbol: name='.L0 ' shndx=1 val=0x654 info=0
+Symbol: name='.L0 ' shndx=1 val=0x658 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6ea info=0
+Symbol: name='.L0 ' shndx=1 val=0x688 info=0
+Symbol: name='.Lpcrel_hi12' shndx=1 val=0x688 info=0
+Symbol: name='.L0 ' shndx=1 val=0x688 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6a4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x692 info=0
+Symbol: name='.Lpcrel_hi11' shndx=1 val=0x692 info=0
+Symbol: name='.L0 ' shndx=1 val=0x69c info=0
+Symbol: name='.Lpcrel_hi15' shndx=1 val=0x69c info=0
+Symbol: name='.L0 ' shndx=1 val=0x6a4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6ac info=0
+Symbol: name='.L0 ' shndx=1 val=0x6ae info=0
+Symbol: name='.L0 ' shndx=1 val=0x6b8 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6b8 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6c2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6c2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6e2 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6ec info=0
+Symbol: name='.L0 ' shndx=1 val=0x6fe info=0
+Symbol: name='.L0 ' shndx=1 val=0x6f0 info=0
+Symbol: name='.Lpcrel_hi13' shndx=1 val=0x6f4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6f4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6f4 info=0
+Symbol: name='.L0 ' shndx=1 val=0x6fe info=0
+Symbol: name='.L0 ' shndx=1 val=0x706 info=0
+Symbol: name='.L0 ' shndx=1 val=0x71a info=0
+Symbol: name='.L0 ' shndx=1 val=0x736 info=0
+Symbol: name='.L0 ' shndx=1 val=0x736 info=0
+Symbol: name='.Lpcrel_hi14' shndx=1 val=0x748 info=0
+Symbol: name='.L0 ' shndx=1 val=0x762 info=0
+Symbol: name='.L0 ' shndx=1 val=0x762 info=0
+Symbol: name='.L0 ' shndx=1 val=0x762 info=0
+Symbol: name='polkavm_export_dummy0' shndx=1 val=0x762 info=2
+Symbol: name='.L0 ' shndx=1 val=0x762 info=0
+Symbol: name='$d' shndx=16 val=0x0 info=0
+Symbol: name='deploy__EXPORT_METADATA' shndx=18 val=0x286 info=1
+Symbol: name='deploy' shndx=1 val=0x770 info=2
+Symbol: name='polkavm_export_dummy1' shndx=1 val=0x762 info=2
+Symbol: name='.L0 ' shndx=1 val=0x762 info=0
+Symbol: name='$d' shndx=16 val=0x11 info=0
+Symbol: name='call__EXPORT_METADATA' shndx=18 val=0x299 info=1
+Symbol: name='call' shndx=1 val=0x762 info=2
+Symbol: name='.L0 ' shndx=1 val=0x762 info=0
+Symbol: name='$x' shndx=1 val=0x762 info=0
+Symbol: name='.L0 ' shndx=1 val=0x770 info=0
+Symbol: name='.L0 ' shndx=1 val=0x770 info=0
+Symbol: name='.L0 ' shndx=1 val=0x77e info=0
+Symbol: name='.L0 ' shndx=1 val=0x77e info=0
+Symbol: name='.L0 ' shndx=1 val=0x77e info=0
+Symbol: name='.L0 ' shndx=1 val=0x77e info=0
+Symbol: name='.L0 ' shndx=1 val=0x798 info=0
+Symbol: name='.L0 ' shndx=1 val=0x798 info=0
+Symbol: name='.L0 ' shndx=1 val=0x798 info=0
+Symbol: name='.L0 ' shndx=1 val=0x7ae info=0
+Symbol: name='$d' shndx=18 val=0x0 info=0
+Symbol: name='.L.str' shndx=20 val=0x1b0 info=1
+Symbol: name='.L.str.1' shndx=20 val=0x37 info=1
+Symbol: name='.L.str.2' shndx=20 val=0x3f info=1
+Symbol: name='.L.str.3' shndx=20 val=0x1b8 info=1
+Symbol: name='.L.str.4' shndx=20 val=0x18 info=1
+Symbol: name='.L.str.5' shndx=20 val=0xb5 info=1
+Symbol: name='.L.str.6' shndx=20 val=0x14f info=1
+Symbol: name='.L.str.7' shndx=20 val=0x59 info=1
+Symbol: name='.L.str.8' shndx=20 val=0x4a info=1
+Symbol: name='.L.str.9' shndx=20 val=0x15c info=1
+Symbol: name='.L.str.10' shndx=20 val=0x16b info=1
+Symbol: name='.L.str.11' shndx=20 val=0xc0 info=1
+Symbol: name='.L.str.12' shndx=20 val=0x111 info=1
+Symbol: name='.L.str.13' shndx=20 val=0x8b info=1
+Symbol: name='.L.str.14' shndx=20 val=0x62 info=1
+Symbol: name='.L.str.15' shndx=20 val=0xa1 info=1
+Symbol: name='.L.str.16' shndx=20 val=0xff info=1
+Symbol: name='.L.str.17' shndx=20 val=0x6c info=1
+Symbol: name='.L.str.18' shndx=20 val=0x0 info=1
+Symbol: name='.L.str.19' shndx=20 val=0x13e info=1
+Symbol: name='.L.str.20' shndx=20 val=0x12b info=1
+Symbol: name='.L.str.21' shndx=20 val=0xe4 info=1
+Symbol: name='.L.str.22' shndx=20 val=0x18b info=1
+Symbol: name='.L.str.23' shndx=20 val=0x95 info=1
+Symbol: name='.L.str.24' shndx=20 val=0xb1 info=1
+Symbol: name='.L.str.25' shndx=20 val=0xf8 info=1
+Symbol: name='.L.str.26' shndx=20 val=0x11f info=1
+Symbol: name='.L.str.27' shndx=20 val=0xa info=1
+Symbol: name='.L.str.28' shndx=20 val=0x7a info=1
+Symbol: name='.L.str.29' shndx=20 val=0x17a info=1
+Symbol: name='.L.str.30' shndx=20 val=0xc7 info=1
+Symbol: name='.L.str.31' shndx=20 val=0x19b info=1
+Symbol: name='.L.str.32' shndx=20 val=0xda info=1
+Symbol: name='.L.str.33' shndx=20 val=0x25 info=1
+Symbol: name='$d' shndx=20 val=0x1b0 info=0
+Symbol: name='$d' shndx=21 val=0x0 info=0
+Symbol: name='.L.str.34' shndx=20 val=0x148 info=1
+Symbol: name='.L.str.1.2' shndx=20 val=0x11a info=1
+Symbol: name='calldatasize' shndx=21 val=0x20010 info=1
+Symbol: name='__heap_size' shndx=21 val=0x20014 info=1
+Symbol: name='address_spill_buffer' shndx=21 val=0x20020 info=1
+Symbol: name='$d' shndx=22 val=0x0 info=0
+Symbol: name='.L0 ' shndx=23 val=0x0 info=0
+Symbol: name='$d' shndx=23 val=0x0 info=0
+Symbol: name='.Lline_table_start0' shndx=34 val=0x0 info=0
+Symbol: name='.L0 ' shndx=25 val=0x60 info=0
+Symbol: name='.L0 ' shndx=25 val=0x0 info=0
+Symbol: name='.L0 ' shndx=25 val=0x30 info=0
+Symbol: name='$d' shndx=25 val=0x0 info=0
+Symbol: name='$d' shndx=27 val=0x5d info=0
+Symbol: name='$d' shndx=28 val=0x0 info=0
+Symbol: name='$d' shndx=30 val=0x0 info=0
+Symbol: name='$d' shndx=32 val=0x0 info=0
+Symbol: name='$d' shndx=32 val=0x1 info=0
+Symbol: name='$d' shndx=65521 val=0x0 info=0
+Symbol: name='$d' shndx=34 val=0x0 info=0
+Symbol: name='' shndx=1 val=0x0 info=3
+Symbol: name='' shndx=3 val=0x0 info=3
+Symbol: name='' shndx=4 val=0x0 info=3
+Symbol: name='' shndx=6 val=0x0 info=3
+Symbol: name='' shndx=8 val=0x0 info=3
+Symbol: name='' shndx=10 val=0x0 info=3
+Symbol: name='' shndx=12 val=0x0 info=3
+Symbol: name='' shndx=14 val=0x0 info=3
+Symbol: name='' shndx=16 val=0x0 info=3
+Symbol: name='' shndx=18 val=0x0 info=3
+Symbol: name='' shndx=21 val=0x0 info=3
+Symbol: name='' shndx=22 val=0x0 info=3
+Symbol: name='' shndx=23 val=0x0 info=3
+Symbol: name='' shndx=25 val=0x0 info=3
+Symbol: name='' shndx=28 val=0x0 info=3
+Symbol: name='' shndx=30 val=0x0 info=3
+Symbol: name='' shndx=34 val=0x0 info=3
+Symbol: name='symbols' shndx=65521 val=0x0 info=4
+Symbol: name='$d' shndx=65521 val=0x0 info=0
+Symbol: name='' shndx=20 val=0x0 info=3
+Symbol: name='' shndx=27 val=0x0 info=3
+Symbol: name='' shndx=32 val=0x0 info=3
+Symbol: name='memcpy' shndx=1 val=0x1dc info=18
+Symbol: name='memmove' shndx=1 val=0x1f8 info=18
+Symbol: name='memset' shndx=1 val=0x272 info=18
+Symbol: name='__revive_store_immutable_data' shndx=1 val=0x7ae info=34
+Symbol: name='__immutable_data_size' shndx=21 val=0x20000 info=17
+Symbol: name='__immutable_data_ptr' shndx=21 val=0x20000 info=17
+Symbol: name='__revive_load_heap_word' shndx=1 val=0x7ce info=34
+Symbol: name='__sbrk_internal' shndx=1 val=0xb50 info=34
+Symbol: name='__revive_store_heap_word' shndx=1 val=0x940 info=34
+Symbol: name='__revive_load_storage_word' shndx=1 val=0xa72 info=34
+Symbol: name='__revive_store_storage_word' shndx=1 val=0xae2 info=34
+Symbol: name='__entry' shndx=1 val=0x288 info=18
+revive-transfer-example status: .returned, faultPc: 0x0, faultReason: none
+DEBUG reviveCallEvm: called, callee=0000000000000000000000007777777777777777777777777777777777777777, value=1010101010101010101010101010101010101010101010101010101010101010, input len=8, gas=2000
+DEBUG reviveCallEvm: callFn returned success=true, returnData len=15
+DEBUG Counter.elf hex bytes: 50 56 4d 00 00 72 0a 00 00 00 00 00 00 01 07 00 c2 0c 00 c2 00 00 04 80 b3 09 00 00 00 00 0e 00 00 00 1c 00 00 00 2a 00 00 00 39 00 00 00 4c 00 00 00 57 00 00 00 69 00 00 00 7d 00 00 00 63 61 
+DEBUG PVM is_deploy: true, exports count: 2, code len: 2093, entry_pc: 1083, stack_size: 131072, ro_data_size: 0, rw_data_size: 131084
+  export: name=call, pc=1071
+  export: name=deploy, pc=1083
+PVM STEP: pc=0x043b, opcode=149, skip=2, args={ 17, 248 }
+PVM STEP: pc=0x043e, opcode=123, skip=1, args={ 16 }
+PVM STEP: pc=0x0440, opcode=51, skip=2, args={ 7, 1 }
+PVM STEP: pc=0x0443, opcode=80, skip=4, args={ 16, 84, 189, 251 }
+PVM STEP: pc=0x0000, opcode=149, skip=2, args={ 17, 240 }
+PVM STEP: pc=0x0003, opcode=123, skip=2, args={ 16, 8 }
+PVM STEP: pc=0x0006, opcode=123, skip=1, args={ 21 }
+PVM STEP: pc=0x0008, opcode=132, skip=2, args={ 117, 1 }
+PVM STEP: pc=0x000b, opcode=10, skip=1, args={ 2 }
+DEBUG ecalli: index=2, name=call_data_size
+PVM STEP: pc=0x000d, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x000e, opcode=61, skip=4, args={ 7, 4, 0, 4 }
+PVM STEP: pc=0x0013, opcode=81, skip=2, args={ 5, 7 }
+PVM STEP: pc=0x0016, opcode=80, skip=3, args={ 16, 2, 9 }
+PVM STEP: pc=0x001f, opcode=149, skip=3, args={ 17, 96, 255 }
+PVM STEP: pc=0x0023, opcode=123, skip=3, args={ 16, 152, 0 }
+PVM STEP: pc=0x0027, opcode=123, skip=3, args={ 21, 144, 0 }
+PVM STEP: pc=0x002b, opcode=123, skip=3, args={ 22, 136, 0 }
+PVM STEP: pc=0x002f, opcode=149, skip=3, args={ 21, 160, 0 }
+PVM STEP: pc=0x0033, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x0036, opcode=100, skip=1, args={ 22 }
+PVM STEP: pc=0x0038, opcode=51, skip=2, args={ 7, 64 }
+PVM STEP: pc=0x003b, opcode=200, skip=2, args={ 118, 8 }
+PVM STEP: pc=0x003e, opcode=73, skip=4, args={ 22, 64, 128, 0 }
+PVM STEP: pc=0x0043, opcode=73, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x0046, opcode=73, skip=2, args={ 22, 80 }
+PVM STEP: pc=0x0049, opcode=73, skip=2, args={ 22, 88 }
+PVM STEP: pc=0x004c, opcode=80, skip=4, args={ 16, 6, 227, 5 }
+PVM STEP: pc=0x062f, opcode=149, skip=2, args={ 17, 216 }
+PVM STEP: pc=0x0632, opcode=123, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x0635, opcode=123, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x0638, opcode=123, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x063b, opcode=130, skip=1, args={ 137 }
+PVM STEP: pc=0x063d, opcode=123, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x0640, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x0643, opcode=123, skip=1, args={ 25 }
+PVM STEP: pc=0x0645, opcode=130, skip=2, args={ 133, 16 }
+PVM STEP: pc=0x0648, opcode=130, skip=2, args={ 134, 24 }
+PVM STEP: pc=0x064b, opcode=80, skip=4, args={ 16, 88, 167, 1 }
+PVM STEP: pc=0x07f2, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x07f5, opcode=82, skip=2, args={ 10, 55 }
+PVM STEP: pc=0x07f8, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x07fd, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x07fe, opcode=149, skip=2, args={ 120, 32 }
+PVM STEP: pc=0x0801, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x0804, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x0809, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x080c, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x0812, opcode=57, skip=4, args={ 10, 8, 0, 4 }
+PVM STEP: pc=0x0817, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x081a, opcode=61, skip=4, args={ 8, 8, 0, 4 }
+PVM STEP: pc=0x081f, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x0820, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x0822, opcode=51, skip=4, args={ 8, 0, 0, 2 }
+PVM STEP: pc=0x0827, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x082a, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0650, opcode=111, skip=1, args={ 104 }
+PVM STEP: pc=0x0652, opcode=111, skip=1, args={ 89 }
+PVM STEP: pc=0x0654, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x0656, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x0658, opcode=130, skip=2, args={ 27, 8 }
+PVM STEP: pc=0x065b, opcode=111, skip=1, args={ 187 }
+PVM STEP: pc=0x065d, opcode=152, skip=2, args={ 179, 8 }
+PVM STEP: pc=0x0660, opcode=120, skip=2, args={ 123, 24 }
+PVM STEP: pc=0x0663, opcode=152, skip=2, args={ 172, 8 }
+PVM STEP: pc=0x0666, opcode=123, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x0669, opcode=120, skip=2, args={ 122, 16 }
+PVM STEP: pc=0x066c, opcode=152, skip=2, args={ 180, 56 }
+PVM STEP: pc=0x066f, opcode=152, skip=2, args={ 181, 48 }
+PVM STEP: pc=0x0672, opcode=152, skip=2, args={ 188, 40 }
+PVM STEP: pc=0x0675, opcode=152, skip=2, args={ 182, 32 }
+PVM STEP: pc=0x0678, opcode=152, skip=2, args={ 176, 24 }
+PVM STEP: pc=0x067b, opcode=152, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x067e, opcode=120, skip=2, args={ 118, 28 }
+PVM STEP: pc=0x0681, opcode=152, skip=2, args={ 166, 56 }
+PVM STEP: pc=0x0684, opcode=120, skip=2, args={ 124, 29 }
+PVM STEP: pc=0x0687, opcode=152, skip=2, args={ 162, 48 }
+PVM STEP: pc=0x068a, opcode=120, skip=2, args={ 117, 30 }
+PVM STEP: pc=0x068d, opcode=152, skip=2, args={ 172, 40 }
+PVM STEP: pc=0x0690, opcode=120, skip=2, args={ 116, 31 }
+PVM STEP: pc=0x0693, opcode=152, skip=2, args={ 164, 32 }
+PVM STEP: pc=0x0696, opcode=120, skip=2, args={ 115, 25 }
+PVM STEP: pc=0x0699, opcode=152, skip=2, args={ 165, 24 }
+PVM STEP: pc=0x069c, opcode=152, skip=2, args={ 170, 16 }
+PVM STEP: pc=0x069f, opcode=120, skip=2, args={ 123, 26 }
+PVM STEP: pc=0x06a2, opcode=152, skip=2, args={ 147, 56 }
+PVM STEP: pc=0x06a5, opcode=120, skip=2, args={ 112, 27 }
+PVM STEP: pc=0x06a8, opcode=152, skip=2, args={ 144, 48 }
+PVM STEP: pc=0x06ab, opcode=120, skip=2, args={ 116, 20 }
+PVM STEP: pc=0x06ae, opcode=152, skip=2, args={ 155, 40 }
+PVM STEP: pc=0x06b1, opcode=120, skip=2, args={ 124, 21 }
+PVM STEP: pc=0x06b4, opcode=152, skip=2, args={ 148, 32 }
+PVM STEP: pc=0x06b7, opcode=120, skip=2, args={ 114, 22 }
+PVM STEP: pc=0x06ba, opcode=152, skip=2, args={ 146, 24 }
+PVM STEP: pc=0x06bd, opcode=120, skip=2, args={ 118, 23 }
+PVM STEP: pc=0x06c0, opcode=152, skip=2, args={ 150, 16 }
+PVM STEP: pc=0x06c3, opcode=130, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x06c6, opcode=120, skip=2, args={ 124, 17 }
+PVM STEP: pc=0x06c9, opcode=152, skip=2, args={ 156, 8 }
+PVM STEP: pc=0x06cc, opcode=120, skip=2, args={ 122, 18 }
+PVM STEP: pc=0x06cf, opcode=152, skip=2, args={ 138, 56 }
+PVM STEP: pc=0x06d2, opcode=120, skip=2, args={ 117, 19 }
+PVM STEP: pc=0x06d5, opcode=152, skip=2, args={ 133, 48 }
+PVM STEP: pc=0x06d8, opcode=120, skip=2, args={ 116, 12 }
+PVM STEP: pc=0x06db, opcode=152, skip=2, args={ 132, 40 }
+PVM STEP: pc=0x06de, opcode=120, skip=2, args={ 123, 13 }
+PVM STEP: pc=0x06e1, opcode=152, skip=2, args={ 139, 32 }
+PVM STEP: pc=0x06e4, opcode=120, skip=2, args={ 112, 14 }
+PVM STEP: pc=0x06e7, opcode=152, skip=2, args={ 128, 24 }
+PVM STEP: pc=0x06ea, opcode=120, skip=2, args={ 115, 15 }
+PVM STEP: pc=0x06ed, opcode=152, skip=2, args={ 131, 16 }
+PVM STEP: pc=0x06f0, opcode=120, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x06f3, opcode=120, skip=2, args={ 124, 9 }
+PVM STEP: pc=0x06f6, opcode=120, skip=2, args={ 118, 10 }
+PVM STEP: pc=0x06f9, opcode=120, skip=2, args={ 114, 11 }
+PVM STEP: pc=0x06fc, opcode=152, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x06ff, opcode=120, skip=2, args={ 123, 4 }
+PVM STEP: pc=0x0702, opcode=120, skip=2, args={ 116, 5 }
+PVM STEP: pc=0x0705, opcode=120, skip=2, args={ 117, 6 }
+PVM STEP: pc=0x0708, opcode=120, skip=2, args={ 122, 7 }
+PVM STEP: pc=0x070b, opcode=120, skip=1, args={ 120 }
+PVM STEP: pc=0x070d, opcode=120, skip=2, args={ 121, 1 }
+PVM STEP: pc=0x0710, opcode=120, skip=2, args={ 115, 2 }
+PVM STEP: pc=0x0713, opcode=120, skip=2, args={ 112, 3 }
+PVM STEP: pc=0x0716, opcode=130, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x0719, opcode=130, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x071c, opcode=130, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x071f, opcode=149, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x0722, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0051, opcode=73, skip=2, args={ 22, 96 }
+PVM STEP: pc=0x0054, opcode=73, skip=2, args={ 22, 104 }
+PVM STEP: pc=0x0057, opcode=73, skip=2, args={ 22, 112 }
+PVM STEP: pc=0x005a, opcode=73, skip=2, args={ 22, 120 }
+PVM STEP: pc=0x005d, opcode=131, skip=2, args={ 103, 96 }
+PVM STEP: pc=0x0060, opcode=51, skip=2, args={ 0, 8 }
+PVM STEP: pc=0x0063, opcode=10, skip=1, args={ 8 }
+DEBUG ecalli: index=8, name=value_transferred
+PVM STEP: pc=0x0065, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x0066, opcode=130, skip=2, args={ 103, 104 }
+PVM STEP: pc=0x0069, opcode=130, skip=2, args={ 104, 112 }
+PVM STEP: pc=0x006c, opcode=130, skip=2, args={ 105, 120 }
+PVM STEP: pc=0x006f, opcode=130, skip=2, args={ 106, 96 }
+PVM STEP: pc=0x0072, opcode=212, skip=2, args={ 151, 7 }
+PVM STEP: pc=0x0075, opcode=212, skip=2, args={ 168, 8 }
+PVM STEP: pc=0x0078, opcode=212, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x007b, opcode=81, skip=2, args={ 7, 26 }
+PVM STEP: pc=0x0095, opcode=80, skip=4, args={ 18, 12, 208, 3 }
+PVM STEP: pc=0x0465, opcode=149, skip=2, args={ 24, 224 }
+PVM STEP: pc=0x0468, opcode=132, skip=2, args={ 136, 224 }
+PVM STEP: pc=0x046b, opcode=100, skip=1, args={ 129 }
+PVM STEP: pc=0x046d, opcode=73, skip=1, args={ 8 }
+PVM STEP: pc=0x046f, opcode=73, skip=2, args={ 24, 8 }
+PVM STEP: pc=0x0472, opcode=73, skip=2, args={ 24, 16 }
+PVM STEP: pc=0x0475, opcode=73, skip=2, args={ 24, 24 }
+PVM STEP: pc=0x0478, opcode=50, skip=1, args={ 2 }
+PVM STEP: pc=0x009a, opcode=149, skip=2, args={ 103, 32 }
+PVM STEP: pc=0x009d, opcode=80, skip=4, args={ 16, 14, 135, 6 }
+PVM STEP: pc=0x0724, opcode=149, skip=2, args={ 17, 160 }
+PVM STEP: pc=0x0727, opcode=123, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x072a, opcode=123, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x072d, opcode=123, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x0730, opcode=149, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x0733, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x0736, opcode=100, skip=1, args={ 118 }
+PVM STEP: pc=0x0738, opcode=130, skip=2, args={ 135, 24 }
+PVM STEP: pc=0x073b, opcode=130, skip=2, args={ 137, 16 }
+PVM STEP: pc=0x073e, opcode=130, skip=2, args={ 138, 8 }
+PVM STEP: pc=0x0741, opcode=130, skip=1, args={ 136 }
+PVM STEP: pc=0x0743, opcode=111, skip=1, args={ 119 }
+PVM STEP: pc=0x0745, opcode=111, skip=1, args={ 153 }
+PVM STEP: pc=0x0747, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x0749, opcode=111, skip=1, args={ 136 }
+PVM STEP: pc=0x074b, opcode=123, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x074e, opcode=123, skip=2, args={ 25, 40 }
+PVM STEP: pc=0x0751, opcode=123, skip=2, args={ 26, 48 }
+PVM STEP: pc=0x0754, opcode=123, skip=2, args={ 24, 56 }
+PVM STEP: pc=0x0757, opcode=131, skip=2, args={ 24, 32 }
+PVM STEP: pc=0x075a, opcode=131, skip=1, args={ 25 }
+PVM STEP: pc=0x075c, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x075e, opcode=10, skip=1, args={ 4 }
+DEBUG ecalli: index=4, name=get_storage_or_zero
+PVM STEP: pc=0x0760, opcode=130, skip=2, args={ 23, 24 }
+PVM STEP: pc=0x0763, opcode=130, skip=2, args={ 24, 16 }
+PVM STEP: pc=0x0766, opcode=130, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x0769, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x076b, opcode=111, skip=1, args={ 119 }
+PVM STEP: pc=0x076d, opcode=111, skip=1, args={ 136 }
+PVM STEP: pc=0x076f, opcode=111, skip=1, args={ 153 }
+PVM STEP: pc=0x0771, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x0773, opcode=123, skip=1, args={ 103 }
+PVM STEP: pc=0x0775, opcode=123, skip=2, args={ 104, 8 }
+PVM STEP: pc=0x0778, opcode=123, skip=2, args={ 105, 16 }
+PVM STEP: pc=0x077b, opcode=123, skip=2, args={ 106, 24 }
+PVM STEP: pc=0x077e, opcode=149, skip=2, args={ 81, 160 }
+PVM STEP: pc=0x0781, opcode=130, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x0784, opcode=130, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x0787, opcode=130, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x078a, opcode=149, skip=2, args={ 17, 96 }
+PVM STEP: pc=0x078d, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x00a2, opcode=130, skip=2, args={ 105, 40 }
+PVM STEP: pc=0x00a5, opcode=130, skip=2, args={ 106, 48 }
+PVM STEP: pc=0x00a8, opcode=130, skip=2, args={ 107, 56 }
+PVM STEP: pc=0x00ab, opcode=80, skip=4, args={ 18, 16, 157, 3 }
+PVM STEP: pc=0x0448, opcode=149, skip=2, args={ 23, 224 }
+PVM STEP: pc=0x044b, opcode=132, skip=2, args={ 119, 224 }
+PVM STEP: pc=0x044e, opcode=100, skip=1, args={ 113 }
+PVM STEP: pc=0x0450, opcode=73, skip=1, args={ 7 }
+PVM STEP: pc=0x0452, opcode=73, skip=2, args={ 23, 8 }
+PVM STEP: pc=0x0455, opcode=73, skip=2, args={ 23, 16 }
+PVM STEP: pc=0x0458, opcode=73, skip=2, args={ 23, 24 }
+PVM STEP: pc=0x045b, opcode=149, skip=2, args={ 24, 224 }
+PVM STEP: pc=0x045e, opcode=132, skip=2, args={ 136, 224 }
+PVM STEP: pc=0x0461, opcode=100, skip=1, args={ 129 }
+PVM STEP: pc=0x0463, opcode=50, skip=1, args={ 2 }
+PVM STEP: pc=0x00b0, opcode=73, skip=2, args={ 8, 3 }
+PVM STEP: pc=0x00b3, opcode=123, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x00b6, opcode=123, skip=2, args={ 138, 16 }
+PVM STEP: pc=0x00b9, opcode=123, skip=2, args={ 139, 24 }
+PVM STEP: pc=0x00bc, opcode=80, skip=4, args={ 16, 18, 211, 6 }
+PVM STEP: pc=0x078f, opcode=149, skip=2, args={ 17, 160 }
+PVM STEP: pc=0x0792, opcode=123, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x0795, opcode=123, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x0798, opcode=149, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x079b, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x079e, opcode=130, skip=1, args={ 114 }
+PVM STEP: pc=0x07a0, opcode=130, skip=2, args={ 122, 8 }
+PVM STEP: pc=0x07a3, opcode=130, skip=2, args={ 123, 16 }
+PVM STEP: pc=0x07a6, opcode=130, skip=2, args={ 119, 24 }
+PVM STEP: pc=0x07a9, opcode=130, skip=1, args={ 131 }
+PVM STEP: pc=0x07ab, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x07ae, opcode=130, skip=2, args={ 140, 16 }
+PVM STEP: pc=0x07b1, opcode=130, skip=2, args={ 136, 24 }
+PVM STEP: pc=0x07b4, opcode=111, skip=1, args={ 119 }
+PVM STEP: pc=0x07b6, opcode=111, skip=1, args={ 187 }
+PVM STEP: pc=0x07b8, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x07ba, opcode=111, skip=1, args={ 34 }
+PVM STEP: pc=0x07bc, opcode=111, skip=1, args={ 136 }
+PVM STEP: pc=0x07be, opcode=111, skip=1, args={ 204 }
+PVM STEP: pc=0x07c0, opcode=111, skip=1, args={ 153 }
+PVM STEP: pc=0x07c2, opcode=111, skip=1, args={ 51 }
+PVM STEP: pc=0x07c4, opcode=123, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x07c7, opcode=123, skip=2, args={ 27, 40 }
+PVM STEP: pc=0x07ca, opcode=123, skip=2, args={ 26, 48 }
+PVM STEP: pc=0x07cd, opcode=123, skip=2, args={ 18, 56 }
+PVM STEP: pc=0x07d0, opcode=123, skip=1, args={ 24 }
+PVM STEP: pc=0x07d2, opcode=123, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x07d5, opcode=123, skip=2, args={ 25, 16 }
+PVM STEP: pc=0x07d8, opcode=123, skip=2, args={ 19, 24 }
+PVM STEP: pc=0x07db, opcode=131, skip=2, args={ 24, 32 }
+PVM STEP: pc=0x07de, opcode=131, skip=1, args={ 25 }
+PVM STEP: pc=0x07e0, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x07e2, opcode=10, skip=1, args={ 7 }
+DEBUG ecalli: index=7, name=set_storage_or_clear
+PVM STEP: pc=0x07e4, opcode=149, skip=2, args={ 81, 160 }
+PVM STEP: pc=0x07e7, opcode=130, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x07ea, opcode=130, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x07ed, opcode=149, skip=2, args={ 17, 96 }
+PVM STEP: pc=0x07f0, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x00c1, opcode=51, skip=4, args={ 7, 0, 0, 2 }
+PVM STEP: pc=0x00c6, opcode=131, skip=3, args={ 119, 128, 0 }
+PVM STEP: pc=0x00ca, opcode=123, skip=2, args={ 103, 24 }
+PVM STEP: pc=0x00cd, opcode=51, skip=1, args={ 8 }
+PVM STEP: pc=0x00cf, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x00d1, opcode=10, skip=0, args={  }
+DEBUG ecalli: index=0, name=call_data_copy
+PVM STEP: pc=0x00d2, opcode=40, skip=2, args={ 221, 3 }
+PVM STEP: pc=0x04af, opcode=57, skip=4, args={ 8, 0, 0, 4 }
+PVM STEP: pc=0x04b4, opcode=81, skip=3, args={ 8, 33, 252 }
+PVM STEP: pc=0x00d5, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x00d7, opcode=130, skip=2, args={ 104, 24 }
+PVM STEP: pc=0x00da, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x00dc, opcode=51, skip=2, args={ 0, 20 }
+PVM STEP: pc=0x00df, opcode=10, skip=1, args={ 5 }
+DEBUG ecalli: index=5, name=seal_return
+Counter deploy result status: .returned, returnData size: 0, faultPc: 0x0, faultReason: none
+DEBUG PVM is_deploy: true, exports count: 2, code len: 3218, entry_pc: 2101, stack_size: 131072, ro_data_size: 0, rw_data_size: 131084
+  export: name=call, pc=2088
+  export: name=deploy, pc=2101
+PVM STEP: pc=0x0835, opcode=149, skip=2, args={ 17, 248 }
+PVM STEP: pc=0x0838, opcode=123, skip=1, args={ 16 }
+PVM STEP: pc=0x083a, opcode=51, skip=2, args={ 7, 1 }
+PVM STEP: pc=0x083d, opcode=80, skip=5, args={ 32, 136, 0, 195, 247 }
+PVM STEP: pc=0x0000, opcode=149, skip=2, args={ 17, 240 }
+PVM STEP: pc=0x0003, opcode=123, skip=2, args={ 16, 8 }
+PVM STEP: pc=0x0006, opcode=123, skip=1, args={ 21 }
+PVM STEP: pc=0x0008, opcode=132, skip=2, args={ 117, 1 }
+PVM STEP: pc=0x000b, opcode=10, skip=1, args={ 2 }
+DEBUG ecalli: index=2, name=call_data_size
+PVM STEP: pc=0x000d, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x000e, opcode=61, skip=4, args={ 7, 4, 0, 4 }
+PVM STEP: pc=0x0013, opcode=81, skip=2, args={ 5, 7 }
+PVM STEP: pc=0x0016, opcode=80, skip=3, args={ 16, 2, 9 }
+PVM STEP: pc=0x001f, opcode=149, skip=2, args={ 17, 160 }
+PVM STEP: pc=0x0022, opcode=123, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x0025, opcode=123, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x0028, opcode=123, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x002b, opcode=149, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x002e, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x0031, opcode=51, skip=2, args={ 7, 64 }
+PVM STEP: pc=0x0034, opcode=100, skip=1, args={ 24 }
+PVM STEP: pc=0x0036, opcode=73, skip=3, args={ 1, 128, 0 }
+PVM STEP: pc=0x003a, opcode=73, skip=2, args={ 17, 8 }
+PVM STEP: pc=0x003d, opcode=73, skip=2, args={ 17, 16 }
+PVM STEP: pc=0x0040, opcode=73, skip=2, args={ 17, 24 }
+PVM STEP: pc=0x0043, opcode=80, skip=4, args={ 16, 6, 80, 10 }
+PVM STEP: pc=0x0a93, opcode=149, skip=2, args={ 17, 216 }
+PVM STEP: pc=0x0a96, opcode=123, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x0a99, opcode=123, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x0a9c, opcode=123, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x0a9f, opcode=130, skip=1, args={ 137 }
+PVM STEP: pc=0x0aa1, opcode=123, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x0aa4, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x0aa7, opcode=123, skip=1, args={ 25 }
+PVM STEP: pc=0x0aa9, opcode=130, skip=2, args={ 133, 16 }
+PVM STEP: pc=0x0aac, opcode=130, skip=2, args={ 134, 24 }
+PVM STEP: pc=0x0aaf, opcode=80, skip=5, args={ 32, 140, 0, 168, 1 }
+PVM STEP: pc=0x0c57, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x0c5a, opcode=82, skip=2, args={ 10, 55 }
+PVM STEP: pc=0x0c5d, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x0c62, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x0c63, opcode=149, skip=2, args={ 120, 32 }
+PVM STEP: pc=0x0c66, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x0c69, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x0c6e, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x0c71, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x0c77, opcode=57, skip=4, args={ 10, 8, 0, 4 }
+PVM STEP: pc=0x0c7c, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x0c7f, opcode=61, skip=4, args={ 8, 8, 0, 4 }
+PVM STEP: pc=0x0c84, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x0c85, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x0c87, opcode=51, skip=4, args={ 8, 0, 0, 2 }
+PVM STEP: pc=0x0c8c, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x0c8f, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0ab5, opcode=111, skip=1, args={ 104 }
+PVM STEP: pc=0x0ab7, opcode=111, skip=1, args={ 89 }
+PVM STEP: pc=0x0ab9, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x0abb, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x0abd, opcode=130, skip=2, args={ 27, 8 }
+PVM STEP: pc=0x0ac0, opcode=111, skip=1, args={ 187 }
+PVM STEP: pc=0x0ac2, opcode=152, skip=2, args={ 179, 8 }
+PVM STEP: pc=0x0ac5, opcode=120, skip=2, args={ 123, 24 }
+PVM STEP: pc=0x0ac8, opcode=152, skip=2, args={ 172, 8 }
+PVM STEP: pc=0x0acb, opcode=123, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x0ace, opcode=120, skip=2, args={ 122, 16 }
+PVM STEP: pc=0x0ad1, opcode=152, skip=2, args={ 180, 56 }
+PVM STEP: pc=0x0ad4, opcode=152, skip=2, args={ 181, 48 }
+PVM STEP: pc=0x0ad7, opcode=152, skip=2, args={ 188, 40 }
+PVM STEP: pc=0x0ada, opcode=152, skip=2, args={ 182, 32 }
+PVM STEP: pc=0x0add, opcode=152, skip=2, args={ 176, 24 }
+PVM STEP: pc=0x0ae0, opcode=152, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x0ae3, opcode=120, skip=2, args={ 118, 28 }
+PVM STEP: pc=0x0ae6, opcode=152, skip=2, args={ 166, 56 }
+PVM STEP: pc=0x0ae9, opcode=120, skip=2, args={ 124, 29 }
+PVM STEP: pc=0x0aec, opcode=152, skip=2, args={ 162, 48 }
+PVM STEP: pc=0x0aef, opcode=120, skip=2, args={ 117, 30 }
+PVM STEP: pc=0x0af2, opcode=152, skip=2, args={ 172, 40 }
+PVM STEP: pc=0x0af5, opcode=120, skip=2, args={ 116, 31 }
+PVM STEP: pc=0x0af8, opcode=152, skip=2, args={ 164, 32 }
+PVM STEP: pc=0x0afb, opcode=120, skip=2, args={ 115, 25 }
+PVM STEP: pc=0x0afe, opcode=152, skip=2, args={ 165, 24 }
+PVM STEP: pc=0x0b01, opcode=152, skip=2, args={ 170, 16 }
+PVM STEP: pc=0x0b04, opcode=120, skip=2, args={ 123, 26 }
+PVM STEP: pc=0x0b07, opcode=152, skip=2, args={ 147, 56 }
+PVM STEP: pc=0x0b0a, opcode=120, skip=2, args={ 112, 27 }
+PVM STEP: pc=0x0b0d, opcode=152, skip=2, args={ 144, 48 }
+PVM STEP: pc=0x0b10, opcode=120, skip=2, args={ 116, 20 }
+PVM STEP: pc=0x0b13, opcode=152, skip=2, args={ 155, 40 }
+PVM STEP: pc=0x0b16, opcode=120, skip=2, args={ 124, 21 }
+PVM STEP: pc=0x0b19, opcode=152, skip=2, args={ 148, 32 }
+PVM STEP: pc=0x0b1c, opcode=120, skip=2, args={ 114, 22 }
+PVM STEP: pc=0x0b1f, opcode=152, skip=2, args={ 146, 24 }
+PVM STEP: pc=0x0b22, opcode=120, skip=2, args={ 118, 23 }
+PVM STEP: pc=0x0b25, opcode=152, skip=2, args={ 150, 16 }
+PVM STEP: pc=0x0b28, opcode=130, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x0b2b, opcode=120, skip=2, args={ 124, 17 }
+PVM STEP: pc=0x0b2e, opcode=152, skip=2, args={ 156, 8 }
+PVM STEP: pc=0x0b31, opcode=120, skip=2, args={ 122, 18 }
+PVM STEP: pc=0x0b34, opcode=152, skip=2, args={ 138, 56 }
+PVM STEP: pc=0x0b37, opcode=120, skip=2, args={ 117, 19 }
+PVM STEP: pc=0x0b3a, opcode=152, skip=2, args={ 133, 48 }
+PVM STEP: pc=0x0b3d, opcode=120, skip=2, args={ 116, 12 }
+PVM STEP: pc=0x0b40, opcode=152, skip=2, args={ 132, 40 }
+PVM STEP: pc=0x0b43, opcode=120, skip=2, args={ 123, 13 }
+PVM STEP: pc=0x0b46, opcode=152, skip=2, args={ 139, 32 }
+PVM STEP: pc=0x0b49, opcode=120, skip=2, args={ 112, 14 }
+PVM STEP: pc=0x0b4c, opcode=152, skip=2, args={ 128, 24 }
+PVM STEP: pc=0x0b4f, opcode=120, skip=2, args={ 115, 15 }
+PVM STEP: pc=0x0b52, opcode=152, skip=2, args={ 131, 16 }
+PVM STEP: pc=0x0b55, opcode=120, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x0b58, opcode=120, skip=2, args={ 124, 9 }
+PVM STEP: pc=0x0b5b, opcode=120, skip=2, args={ 118, 10 }
+PVM STEP: pc=0x0b5e, opcode=120, skip=2, args={ 114, 11 }
+PVM STEP: pc=0x0b61, opcode=152, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x0b64, opcode=120, skip=2, args={ 123, 4 }
+PVM STEP: pc=0x0b67, opcode=120, skip=2, args={ 116, 5 }
+PVM STEP: pc=0x0b6a, opcode=120, skip=2, args={ 117, 6 }
+PVM STEP: pc=0x0b6d, opcode=120, skip=2, args={ 122, 7 }
+PVM STEP: pc=0x0b70, opcode=120, skip=1, args={ 120 }
+PVM STEP: pc=0x0b72, opcode=120, skip=2, args={ 121, 1 }
+PVM STEP: pc=0x0b75, opcode=120, skip=2, args={ 115, 2 }
+PVM STEP: pc=0x0b78, opcode=120, skip=2, args={ 112, 3 }
+PVM STEP: pc=0x0b7b, opcode=130, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x0b7e, opcode=130, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x0b81, opcode=130, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x0b84, opcode=149, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x0b87, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0048, opcode=73, skip=2, args={ 17, 32 }
+PVM STEP: pc=0x004b, opcode=73, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x004e, opcode=73, skip=2, args={ 17, 48 }
+PVM STEP: pc=0x0051, opcode=73, skip=2, args={ 17, 56 }
+PVM STEP: pc=0x0054, opcode=131, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x0057, opcode=10, skip=1, args={ 9 }
+DEBUG ecalli: index=9, name=value_transferred
+PVM STEP: pc=0x0059, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x005a, opcode=130, skip=2, args={ 23, 40 }
+PVM STEP: pc=0x005d, opcode=130, skip=2, args={ 24, 48 }
+PVM STEP: pc=0x0060, opcode=130, skip=2, args={ 25, 56 }
+PVM STEP: pc=0x0063, opcode=130, skip=2, args={ 26, 32 }
+PVM STEP: pc=0x0066, opcode=212, skip=2, args={ 151, 7 }
+PVM STEP: pc=0x0069, opcode=212, skip=2, args={ 168, 8 }
+PVM STEP: pc=0x006c, opcode=212, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x006f, opcode=81, skip=2, args={ 7, 18 }
+PVM STEP: pc=0x0081, opcode=51, skip=4, args={ 7, 0, 0, 2 }
+PVM STEP: pc=0x0086, opcode=131, skip=3, args={ 118, 128, 0 }
+PVM STEP: pc=0x008a, opcode=100, skip=1, args={ 103 }
+PVM STEP: pc=0x008c, opcode=51, skip=1, args={ 8 }
+PVM STEP: pc=0x008e, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x0090, opcode=10, skip=0, args={  }
+DEBUG ecalli: index=0, name=call_data_copy
+PVM STEP: pc=0x0091, opcode=40, skip=2, args={ 130, 8 }
+PVM STEP: pc=0x0913, opcode=57, skip=4, args={ 8, 0, 0, 4 }
+PVM STEP: pc=0x0918, opcode=81, skip=3, args={ 8, 124, 247 }
+PVM STEP: pc=0x0094, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x0096, opcode=100, skip=1, args={ 104 }
+PVM STEP: pc=0x0098, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x009a, opcode=51, skip=2, args={ 0, 8 }
+PVM STEP: pc=0x009d, opcode=10, skip=1, args={ 6 }
+DEBUG ecalli: index=6, name=seal_return
+Storage deploy result status: .returned, returnData size: 0, faultPc: 0x0, faultReason: none
+DEBUG PVM is_deploy: true, exports count: 2, code len: 1511, entry_pc: 805, stack_size: 131072, ro_data_size: 0, rw_data_size: 131092
+  export: name=call, pc=793
+  export: name=deploy, pc=805
+PVM STEP: pc=0x0325, opcode=149, skip=2, args={ 17, 248 }
+PVM STEP: pc=0x0328, opcode=123, skip=1, args={ 16 }
+PVM STEP: pc=0x032a, opcode=51, skip=2, args={ 7, 1 }
+PVM STEP: pc=0x032d, opcode=80, skip=4, args={ 16, 36, 211, 252 }
+PVM STEP: pc=0x0000, opcode=149, skip=2, args={ 17, 240 }
+PVM STEP: pc=0x0003, opcode=123, skip=2, args={ 16, 8 }
+PVM STEP: pc=0x0006, opcode=123, skip=1, args={ 21 }
+PVM STEP: pc=0x0008, opcode=132, skip=2, args={ 117, 1 }
+PVM STEP: pc=0x000b, opcode=10, skip=1, args={ 2 }
+DEBUG ecalli: index=2, name=call_data_size
+PVM STEP: pc=0x000d, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x000e, opcode=61, skip=4, args={ 7, 0, 0, 2 }
+PVM STEP: pc=0x0013, opcode=81, skip=2, args={ 5, 7 }
+PVM STEP: pc=0x0016, opcode=80, skip=3, args={ 16, 2, 9 }
+PVM STEP: pc=0x001f, opcode=149, skip=2, args={ 17, 160 }
+PVM STEP: pc=0x0022, opcode=123, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x0025, opcode=123, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x0028, opcode=123, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x002b, opcode=149, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x002e, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x0031, opcode=51, skip=2, args={ 7, 64 }
+PVM STEP: pc=0x0034, opcode=100, skip=1, args={ 24 }
+PVM STEP: pc=0x0036, opcode=73, skip=3, args={ 1, 128, 0 }
+PVM STEP: pc=0x003a, opcode=73, skip=2, args={ 17, 8 }
+PVM STEP: pc=0x003d, opcode=73, skip=2, args={ 17, 16 }
+PVM STEP: pc=0x0040, opcode=73, skip=2, args={ 17, 24 }
+PVM STEP: pc=0x0043, opcode=80, skip=4, args={ 16, 6, 116, 4 }
+PVM STEP: pc=0x04b7, opcode=149, skip=2, args={ 17, 216 }
+PVM STEP: pc=0x04ba, opcode=123, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x04bd, opcode=123, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x04c0, opcode=123, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x04c3, opcode=130, skip=1, args={ 137 }
+PVM STEP: pc=0x04c5, opcode=123, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x04c8, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x04cb, opcode=123, skip=1, args={ 25 }
+PVM STEP: pc=0x04cd, opcode=130, skip=2, args={ 133, 16 }
+PVM STEP: pc=0x04d0, opcode=130, skip=2, args={ 134, 24 }
+PVM STEP: pc=0x04d3, opcode=80, skip=4, args={ 16, 40, 217, 0 }
+PVM STEP: pc=0x05ac, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x05af, opcode=82, skip=2, args={ 10, 55 }
+PVM STEP: pc=0x05b2, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x05b7, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x05b8, opcode=149, skip=2, args={ 120, 32 }
+PVM STEP: pc=0x05bb, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x05be, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x05c3, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x05c6, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x05cc, opcode=57, skip=4, args={ 10, 4, 0, 2 }
+PVM STEP: pc=0x05d1, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x05d4, opcode=61, skip=4, args={ 8, 4, 0, 2 }
+PVM STEP: pc=0x05d9, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x05da, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x05dc, opcode=51, skip=4, args={ 8, 16, 0, 2 }
+PVM STEP: pc=0x05e1, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x05e4, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x04d8, opcode=111, skip=1, args={ 104 }
+PVM STEP: pc=0x04da, opcode=111, skip=1, args={ 89 }
+PVM STEP: pc=0x04dc, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x04de, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x04e0, opcode=130, skip=2, args={ 27, 8 }
+PVM STEP: pc=0x04e3, opcode=111, skip=1, args={ 187 }
+PVM STEP: pc=0x04e5, opcode=152, skip=2, args={ 179, 8 }
+PVM STEP: pc=0x04e8, opcode=120, skip=2, args={ 123, 24 }
+PVM STEP: pc=0x04eb, opcode=152, skip=2, args={ 172, 8 }
+PVM STEP: pc=0x04ee, opcode=123, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x04f1, opcode=120, skip=2, args={ 122, 16 }
+PVM STEP: pc=0x04f4, opcode=152, skip=2, args={ 180, 56 }
+PVM STEP: pc=0x04f7, opcode=152, skip=2, args={ 181, 48 }
+PVM STEP: pc=0x04fa, opcode=152, skip=2, args={ 188, 40 }
+PVM STEP: pc=0x04fd, opcode=152, skip=2, args={ 182, 32 }
+PVM STEP: pc=0x0500, opcode=152, skip=2, args={ 176, 24 }
+PVM STEP: pc=0x0503, opcode=152, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x0506, opcode=120, skip=2, args={ 118, 28 }
+PVM STEP: pc=0x0509, opcode=152, skip=2, args={ 166, 56 }
+PVM STEP: pc=0x050c, opcode=120, skip=2, args={ 124, 29 }
+PVM STEP: pc=0x050f, opcode=152, skip=2, args={ 162, 48 }
+PVM STEP: pc=0x0512, opcode=120, skip=2, args={ 117, 30 }
+PVM STEP: pc=0x0515, opcode=152, skip=2, args={ 172, 40 }
+PVM STEP: pc=0x0518, opcode=120, skip=2, args={ 116, 31 }
+PVM STEP: pc=0x051b, opcode=152, skip=2, args={ 164, 32 }
+PVM STEP: pc=0x051e, opcode=120, skip=2, args={ 115, 25 }
+PVM STEP: pc=0x0521, opcode=152, skip=2, args={ 165, 24 }
+PVM STEP: pc=0x0524, opcode=152, skip=2, args={ 170, 16 }
+PVM STEP: pc=0x0527, opcode=120, skip=2, args={ 123, 26 }
+PVM STEP: pc=0x052a, opcode=152, skip=2, args={ 147, 56 }
+PVM STEP: pc=0x052d, opcode=120, skip=2, args={ 112, 27 }
+PVM STEP: pc=0x0530, opcode=152, skip=2, args={ 144, 48 }
+PVM STEP: pc=0x0533, opcode=120, skip=2, args={ 116, 20 }
+PVM STEP: pc=0x0536, opcode=152, skip=2, args={ 155, 40 }
+PVM STEP: pc=0x0539, opcode=120, skip=2, args={ 124, 21 }
+PVM STEP: pc=0x053c, opcode=152, skip=2, args={ 148, 32 }
+PVM STEP: pc=0x053f, opcode=120, skip=2, args={ 114, 22 }
+PVM STEP: pc=0x0542, opcode=152, skip=2, args={ 146, 24 }
+PVM STEP: pc=0x0545, opcode=120, skip=2, args={ 118, 23 }
+PVM STEP: pc=0x0548, opcode=152, skip=2, args={ 150, 16 }
+PVM STEP: pc=0x054b, opcode=130, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x054e, opcode=120, skip=2, args={ 124, 17 }
+PVM STEP: pc=0x0551, opcode=152, skip=2, args={ 156, 8 }
+PVM STEP: pc=0x0554, opcode=120, skip=2, args={ 122, 18 }
+PVM STEP: pc=0x0557, opcode=152, skip=2, args={ 138, 56 }
+PVM STEP: pc=0x055a, opcode=120, skip=2, args={ 117, 19 }
+PVM STEP: pc=0x055d, opcode=152, skip=2, args={ 133, 48 }
+PVM STEP: pc=0x0560, opcode=120, skip=2, args={ 116, 12 }
+PVM STEP: pc=0x0563, opcode=152, skip=2, args={ 132, 40 }
+PVM STEP: pc=0x0566, opcode=120, skip=2, args={ 123, 13 }
+PVM STEP: pc=0x0569, opcode=152, skip=2, args={ 139, 32 }
+PVM STEP: pc=0x056c, opcode=120, skip=2, args={ 112, 14 }
+PVM STEP: pc=0x056f, opcode=152, skip=2, args={ 128, 24 }
+PVM STEP: pc=0x0572, opcode=120, skip=2, args={ 115, 15 }
+PVM STEP: pc=0x0575, opcode=152, skip=2, args={ 131, 16 }
+PVM STEP: pc=0x0578, opcode=120, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x057b, opcode=120, skip=2, args={ 124, 9 }
+PVM STEP: pc=0x057e, opcode=120, skip=2, args={ 118, 10 }
+PVM STEP: pc=0x0581, opcode=120, skip=2, args={ 114, 11 }
+PVM STEP: pc=0x0584, opcode=152, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x0587, opcode=120, skip=2, args={ 123, 4 }
+PVM STEP: pc=0x058a, opcode=120, skip=2, args={ 116, 5 }
+PVM STEP: pc=0x058d, opcode=120, skip=2, args={ 117, 6 }
+PVM STEP: pc=0x0590, opcode=120, skip=2, args={ 122, 7 }
+PVM STEP: pc=0x0593, opcode=120, skip=1, args={ 120 }
+PVM STEP: pc=0x0595, opcode=120, skip=2, args={ 121, 1 }
+PVM STEP: pc=0x0598, opcode=120, skip=2, args={ 115, 2 }
+PVM STEP: pc=0x059b, opcode=120, skip=2, args={ 112, 3 }
+PVM STEP: pc=0x059e, opcode=130, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x05a1, opcode=130, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x05a4, opcode=130, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x05a7, opcode=149, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x05aa, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0048, opcode=73, skip=2, args={ 17, 32 }
+PVM STEP: pc=0x004b, opcode=73, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x004e, opcode=73, skip=2, args={ 17, 48 }
+PVM STEP: pc=0x0051, opcode=73, skip=2, args={ 17, 56 }
+PVM STEP: pc=0x0054, opcode=131, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x0057, opcode=10, skip=1, args={ 6 }
+DEBUG ecalli: index=6, name=value_transferred
+PVM STEP: pc=0x0059, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x005a, opcode=130, skip=2, args={ 23, 40 }
+PVM STEP: pc=0x005d, opcode=130, skip=2, args={ 24, 48 }
+PVM STEP: pc=0x0060, opcode=130, skip=2, args={ 25, 56 }
+PVM STEP: pc=0x0063, opcode=130, skip=2, args={ 26, 32 }
+PVM STEP: pc=0x0066, opcode=212, skip=2, args={ 151, 7 }
+PVM STEP: pc=0x0069, opcode=212, skip=2, args={ 168, 8 }
+PVM STEP: pc=0x006c, opcode=212, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x006f, opcode=81, skip=2, args={ 7, 18 }
+PVM STEP: pc=0x0081, opcode=51, skip=4, args={ 7, 16, 0, 2 }
+PVM STEP: pc=0x0086, opcode=131, skip=3, args={ 118, 128, 0 }
+PVM STEP: pc=0x008a, opcode=100, skip=1, args={ 103 }
+PVM STEP: pc=0x008c, opcode=51, skip=1, args={ 8 }
+PVM STEP: pc=0x008e, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x0090, opcode=10, skip=0, args={  }
+DEBUG ecalli: index=0, name=call_data_copy
+PVM STEP: pc=0x0091, opcode=80, skip=4, args={ 16, 8, 161, 2 }
+PVM STEP: pc=0x0332, opcode=51, skip=4, args={ 7, 16, 0, 4 }
+PVM STEP: pc=0x0337, opcode=57, skip=4, args={ 8, 16, 0, 4 }
+PVM STEP: pc=0x033c, opcode=81, skip=2, args={ 8, 14 }
+PVM STEP: pc=0x034a, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0096, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x0098, opcode=100, skip=1, args={ 104 }
+PVM STEP: pc=0x009a, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x009c, opcode=51, skip=2, args={ 0, 10 }
+PVM STEP: pc=0x009f, opcode=10, skip=1, args={ 4 }
+DEBUG ecalli: index=4, name=seal_return
+Fibonacci deploy result status: .returned, returnData size: 0, faultPc: 0x0, faultReason: none
+DEBUG PVM is_deploy: true, exports count: 2, code len: 2263, entry_pc: 1431, stack_size: 131072, ro_data_size: 0, rw_data_size: 131136
+  export: name=call, pc=1419
+  export: name=deploy, pc=1431
+PVM STEP: pc=0x0597, opcode=149, skip=2, args={ 17, 248 }
+PVM STEP: pc=0x059a, opcode=123, skip=1, args={ 16 }
+PVM STEP: pc=0x059c, opcode=51, skip=2, args={ 7, 1 }
+PVM STEP: pc=0x059f, opcode=80, skip=4, args={ 16, 104, 97, 250 }
+PVM STEP: pc=0x0000, opcode=149, skip=2, args={ 17, 240 }
+PVM STEP: pc=0x0003, opcode=123, skip=2, args={ 16, 8 }
+PVM STEP: pc=0x0006, opcode=123, skip=1, args={ 21 }
+PVM STEP: pc=0x0008, opcode=132, skip=2, args={ 117, 1 }
+PVM STEP: pc=0x000b, opcode=10, skip=1, args={ 5 }
+DEBUG ecalli: index=5, name=call_data_size
+PVM STEP: pc=0x000d, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x000e, opcode=61, skip=4, args={ 7, 16, 0, 4 }
+PVM STEP: pc=0x0013, opcode=81, skip=2, args={ 5, 7 }
+PVM STEP: pc=0x0016, opcode=80, skip=3, args={ 16, 2, 9 }
+PVM STEP: pc=0x001f, opcode=149, skip=2, args={ 17, 160 }
+PVM STEP: pc=0x0022, opcode=123, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x0025, opcode=123, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x0028, opcode=123, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x002b, opcode=149, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x002e, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x0031, opcode=51, skip=2, args={ 7, 64 }
+PVM STEP: pc=0x0034, opcode=100, skip=1, args={ 24 }
+PVM STEP: pc=0x0036, opcode=73, skip=3, args={ 1, 128, 0 }
+PVM STEP: pc=0x003a, opcode=73, skip=2, args={ 17, 8 }
+PVM STEP: pc=0x003d, opcode=73, skip=2, args={ 17, 16 }
+PVM STEP: pc=0x0040, opcode=73, skip=2, args={ 17, 24 }
+PVM STEP: pc=0x0043, opcode=80, skip=4, args={ 16, 6, 100, 7 }
+PVM STEP: pc=0x07a7, opcode=149, skip=2, args={ 17, 216 }
+PVM STEP: pc=0x07aa, opcode=123, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x07ad, opcode=123, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x07b0, opcode=123, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x07b3, opcode=130, skip=1, args={ 137 }
+PVM STEP: pc=0x07b5, opcode=123, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x07b8, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x07bb, opcode=123, skip=1, args={ 25 }
+PVM STEP: pc=0x07bd, opcode=130, skip=2, args={ 133, 16 }
+PVM STEP: pc=0x07c0, opcode=130, skip=2, args={ 134, 24 }
+PVM STEP: pc=0x07c3, opcode=80, skip=4, args={ 16, 108, 217, 0 }
+PVM STEP: pc=0x089c, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x089f, opcode=82, skip=2, args={ 10, 55 }
+PVM STEP: pc=0x08a2, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x08a7, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x08a8, opcode=149, skip=2, args={ 120, 32 }
+PVM STEP: pc=0x08ab, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x08ae, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x08b3, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x08b6, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x08bc, opcode=57, skip=4, args={ 10, 20, 0, 4 }
+PVM STEP: pc=0x08c1, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x08c4, opcode=61, skip=4, args={ 8, 20, 0, 4 }
+PVM STEP: pc=0x08c9, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x08ca, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x08cc, opcode=51, skip=4, args={ 8, 0, 0, 2 }
+PVM STEP: pc=0x08d1, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x08d4, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x07c8, opcode=111, skip=1, args={ 104 }
+PVM STEP: pc=0x07ca, opcode=111, skip=1, args={ 89 }
+PVM STEP: pc=0x07cc, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x07ce, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x07d0, opcode=130, skip=2, args={ 27, 8 }
+PVM STEP: pc=0x07d3, opcode=111, skip=1, args={ 187 }
+PVM STEP: pc=0x07d5, opcode=152, skip=2, args={ 179, 8 }
+PVM STEP: pc=0x07d8, opcode=120, skip=2, args={ 123, 24 }
+PVM STEP: pc=0x07db, opcode=152, skip=2, args={ 172, 8 }
+PVM STEP: pc=0x07de, opcode=123, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x07e1, opcode=120, skip=2, args={ 122, 16 }
+PVM STEP: pc=0x07e4, opcode=152, skip=2, args={ 180, 56 }
+PVM STEP: pc=0x07e7, opcode=152, skip=2, args={ 181, 48 }
+PVM STEP: pc=0x07ea, opcode=152, skip=2, args={ 188, 40 }
+PVM STEP: pc=0x07ed, opcode=152, skip=2, args={ 182, 32 }
+PVM STEP: pc=0x07f0, opcode=152, skip=2, args={ 176, 24 }
+PVM STEP: pc=0x07f3, opcode=152, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x07f6, opcode=120, skip=2, args={ 118, 28 }
+PVM STEP: pc=0x07f9, opcode=152, skip=2, args={ 166, 56 }
+PVM STEP: pc=0x07fc, opcode=120, skip=2, args={ 124, 29 }
+PVM STEP: pc=0x07ff, opcode=152, skip=2, args={ 162, 48 }
+PVM STEP: pc=0x0802, opcode=120, skip=2, args={ 117, 30 }
+PVM STEP: pc=0x0805, opcode=152, skip=2, args={ 172, 40 }
+PVM STEP: pc=0x0808, opcode=120, skip=2, args={ 116, 31 }
+PVM STEP: pc=0x080b, opcode=152, skip=2, args={ 164, 32 }
+PVM STEP: pc=0x080e, opcode=120, skip=2, args={ 115, 25 }
+PVM STEP: pc=0x0811, opcode=152, skip=2, args={ 165, 24 }
+PVM STEP: pc=0x0814, opcode=152, skip=2, args={ 170, 16 }
+PVM STEP: pc=0x0817, opcode=120, skip=2, args={ 123, 26 }
+PVM STEP: pc=0x081a, opcode=152, skip=2, args={ 147, 56 }
+PVM STEP: pc=0x081d, opcode=120, skip=2, args={ 112, 27 }
+PVM STEP: pc=0x0820, opcode=152, skip=2, args={ 144, 48 }
+PVM STEP: pc=0x0823, opcode=120, skip=2, args={ 116, 20 }
+PVM STEP: pc=0x0826, opcode=152, skip=2, args={ 155, 40 }
+PVM STEP: pc=0x0829, opcode=120, skip=2, args={ 124, 21 }
+PVM STEP: pc=0x082c, opcode=152, skip=2, args={ 148, 32 }
+PVM STEP: pc=0x082f, opcode=120, skip=2, args={ 114, 22 }
+PVM STEP: pc=0x0832, opcode=152, skip=2, args={ 146, 24 }
+PVM STEP: pc=0x0835, opcode=120, skip=2, args={ 118, 23 }
+PVM STEP: pc=0x0838, opcode=152, skip=2, args={ 150, 16 }
+PVM STEP: pc=0x083b, opcode=130, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x083e, opcode=120, skip=2, args={ 124, 17 }
+PVM STEP: pc=0x0841, opcode=152, skip=2, args={ 156, 8 }
+PVM STEP: pc=0x0844, opcode=120, skip=2, args={ 122, 18 }
+PVM STEP: pc=0x0847, opcode=152, skip=2, args={ 138, 56 }
+PVM STEP: pc=0x084a, opcode=120, skip=2, args={ 117, 19 }
+PVM STEP: pc=0x084d, opcode=152, skip=2, args={ 133, 48 }
+PVM STEP: pc=0x0850, opcode=120, skip=2, args={ 116, 12 }
+PVM STEP: pc=0x0853, opcode=152, skip=2, args={ 132, 40 }
+PVM STEP: pc=0x0856, opcode=120, skip=2, args={ 123, 13 }
+PVM STEP: pc=0x0859, opcode=152, skip=2, args={ 139, 32 }
+PVM STEP: pc=0x085c, opcode=120, skip=2, args={ 112, 14 }
+PVM STEP: pc=0x085f, opcode=152, skip=2, args={ 128, 24 }
+PVM STEP: pc=0x0862, opcode=120, skip=2, args={ 115, 15 }
+PVM STEP: pc=0x0865, opcode=152, skip=2, args={ 131, 16 }
+PVM STEP: pc=0x0868, opcode=120, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x086b, opcode=120, skip=2, args={ 124, 9 }
+PVM STEP: pc=0x086e, opcode=120, skip=2, args={ 118, 10 }
+PVM STEP: pc=0x0871, opcode=120, skip=2, args={ 114, 11 }
+PVM STEP: pc=0x0874, opcode=152, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x0877, opcode=120, skip=2, args={ 123, 4 }
+PVM STEP: pc=0x087a, opcode=120, skip=2, args={ 116, 5 }
+PVM STEP: pc=0x087d, opcode=120, skip=2, args={ 117, 6 }
+PVM STEP: pc=0x0880, opcode=120, skip=2, args={ 122, 7 }
+PVM STEP: pc=0x0883, opcode=120, skip=1, args={ 120 }
+PVM STEP: pc=0x0885, opcode=120, skip=2, args={ 121, 1 }
+PVM STEP: pc=0x0888, opcode=120, skip=2, args={ 115, 2 }
+PVM STEP: pc=0x088b, opcode=120, skip=2, args={ 112, 3 }
+PVM STEP: pc=0x088e, opcode=130, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x0891, opcode=130, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x0894, opcode=130, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x0897, opcode=149, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x089a, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0048, opcode=73, skip=2, args={ 17, 32 }
+PVM STEP: pc=0x004b, opcode=73, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x004e, opcode=73, skip=2, args={ 17, 48 }
+PVM STEP: pc=0x0051, opcode=73, skip=2, args={ 17, 56 }
+PVM STEP: pc=0x0054, opcode=131, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x0057, opcode=10, skip=1, args={ 12 }
+DEBUG ecalli: index=12, name=value_transferred
+PVM STEP: pc=0x0059, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x005a, opcode=130, skip=2, args={ 23, 40 }
+PVM STEP: pc=0x005d, opcode=130, skip=2, args={ 24, 48 }
+PVM STEP: pc=0x0060, opcode=130, skip=2, args={ 25, 56 }
+PVM STEP: pc=0x0063, opcode=130, skip=2, args={ 26, 32 }
+PVM STEP: pc=0x0066, opcode=212, skip=2, args={ 151, 7 }
+PVM STEP: pc=0x0069, opcode=212, skip=2, args={ 168, 8 }
+PVM STEP: pc=0x006c, opcode=212, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x006f, opcode=81, skip=2, args={ 7, 18 }
+PVM STEP: pc=0x0081, opcode=51, skip=4, args={ 7, 0, 0, 2 }
+PVM STEP: pc=0x0086, opcode=131, skip=3, args={ 118, 128, 0 }
+PVM STEP: pc=0x008a, opcode=100, skip=1, args={ 103 }
+PVM STEP: pc=0x008c, opcode=51, skip=1, args={ 8 }
+PVM STEP: pc=0x008e, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x0090, opcode=10, skip=1, args={ 3 }
+DEBUG ecalli: index=3, name=call_data_copy
+PVM STEP: pc=0x0092, opcode=40, skip=2, args={ 126, 5 }
+PVM STEP: pc=0x0610, opcode=57, skip=4, args={ 8, 0, 0, 4 }
+PVM STEP: pc=0x0615, opcode=81, skip=3, args={ 8, 128, 250 }
+PVM STEP: pc=0x0095, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x0097, opcode=100, skip=1, args={ 104 }
+PVM STEP: pc=0x0099, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x009b, opcode=51, skip=2, args={ 0, 8 }
+PVM STEP: pc=0x009e, opcode=10, skip=1, args={ 10 }
+DEBUG ecalli: index=10, name=seal_return
+BlockInfo deploy result status: .returned, returnData size: 0, faultPc: 0x0, faultReason: none
+DEBUG PVM is_deploy: true, exports count: 2, code len: 15113, entry_pc: 13146, stack_size: 131072, ro_data_size: 0, rw_data_size: 131136
+  export: name=call, pc=13133
+  export: name=deploy, pc=13146
+PVM STEP: pc=0x335a, opcode=149, skip=2, args={ 17, 248 }
+PVM STEP: pc=0x335d, opcode=123, skip=1, args={ 16 }
+PVM STEP: pc=0x335f, opcode=51, skip=2, args={ 7, 1 }
+PVM STEP: pc=0x3362, opcode=80, skip=5, args={ 32, 100, 2, 14, 205 }
+PVM STEP: pc=0x0070, opcode=149, skip=2, args={ 17, 240 }
+PVM STEP: pc=0x0073, opcode=123, skip=2, args={ 16, 8 }
+PVM STEP: pc=0x0076, opcode=123, skip=1, args={ 21 }
+PVM STEP: pc=0x0078, opcode=132, skip=2, args={ 117, 1 }
+PVM STEP: pc=0x007b, opcode=10, skip=1, args={ 2 }
+DEBUG ecalli: index=2, name=call_data_size
+PVM STEP: pc=0x007d, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x007e, opcode=61, skip=4, args={ 7, 16, 0, 4 }
+PVM STEP: pc=0x0083, opcode=81, skip=2, args={ 5, 7 }
+PVM STEP: pc=0x0086, opcode=80, skip=3, args={ 16, 2, 9 }
+PVM STEP: pc=0x008f, opcode=149, skip=3, args={ 17, 32, 253 }
+PVM STEP: pc=0x0093, opcode=149, skip=3, args={ 23, 0, 2 }
+PVM STEP: pc=0x0097, opcode=123, skip=3, args={ 112, 216, 0 }
+PVM STEP: pc=0x009b, opcode=123, skip=3, args={ 117, 208, 0 }
+PVM STEP: pc=0x009f, opcode=123, skip=3, args={ 118, 200, 0 }
+PVM STEP: pc=0x00a3, opcode=149, skip=3, args={ 21, 224, 2 }
+PVM STEP: pc=0x00a7, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x00aa, opcode=100, skip=1, args={ 22 }
+PVM STEP: pc=0x00ac, opcode=73, skip=3, args={ 38, 160, 2 }
+PVM STEP: pc=0x00b0, opcode=73, skip=3, args={ 38, 168, 2 }
+PVM STEP: pc=0x00b4, opcode=73, skip=3, args={ 38, 176, 2 }
+PVM STEP: pc=0x00b8, opcode=73, skip=3, args={ 38, 184, 2 }
+PVM STEP: pc=0x00bc, opcode=131, skip=3, args={ 103, 160, 2 }
+PVM STEP: pc=0x00c0, opcode=10, skip=1, args={ 11 }
+DEBUG ecalli: index=11, name=value_transferred
+PVM STEP: pc=0x00c2, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x00c3, opcode=149, skip=3, args={ 107, 0, 2 }
+PVM STEP: pc=0x00c7, opcode=130, skip=3, args={ 183, 168, 0 }
+PVM STEP: pc=0x00cb, opcode=130, skip=3, args={ 184, 176, 0 }
+PVM STEP: pc=0x00cf, opcode=130, skip=3, args={ 185, 184, 0 }
+PVM STEP: pc=0x00d3, opcode=130, skip=3, args={ 186, 160, 0 }
+PVM STEP: pc=0x00d7, opcode=212, skip=2, args={ 151, 7 }
+PVM STEP: pc=0x00da, opcode=212, skip=2, args={ 168, 8 }
+PVM STEP: pc=0x00dd, opcode=212, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x00e0, opcode=81, skip=2, args={ 7, 19 }
+PVM STEP: pc=0x00f3, opcode=51, skip=4, args={ 7, 16, 0, 4 }
+PVM STEP: pc=0x00f8, opcode=123, skip=2, args={ 103, 24 }
+PVM STEP: pc=0x00fb, opcode=57, skip=4, args={ 7, 16, 0, 4 }
+PVM STEP: pc=0x0100, opcode=123, skip=2, args={ 103, 120 }
+PVM STEP: pc=0x0103, opcode=151, skip=2, args={ 119, 32 }
+PVM STEP: pc=0x0106, opcode=152, skip=2, args={ 119, 32 }
+PVM STEP: pc=0x0109, opcode=149, skip=2, args={ 119, 31 }
+PVM STEP: pc=0x010c, opcode=132, skip=2, args={ 119, 224 }
+PVM STEP: pc=0x010f, opcode=149, skip=3, args={ 121, 128, 0 }
+PVM STEP: pc=0x0113, opcode=216, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x0116, opcode=149, skip=3, args={ 106, 0, 2 }
+PVM STEP: pc=0x011a, opcode=123, skip=3, args={ 168, 136, 0 }
+PVM STEP: pc=0x011e, opcode=148, skip=1, args={ 136 }
+PVM STEP: pc=0x0120, opcode=51, skip=2, args={ 7, 64 }
+PVM STEP: pc=0x0123, opcode=123, skip=3, args={ 168, 144, 0 }
+PVM STEP: pc=0x0127, opcode=149, skip=3, args={ 104, 128, 2 }
+PVM STEP: pc=0x012b, opcode=123, skip=3, args={ 169, 128, 0 }
+PVM STEP: pc=0x012f, opcode=73, skip=3, args={ 38, 152, 2 }
+PVM STEP: pc=0x0133, opcode=80, skip=4, args={ 16, 6, 228, 54 }
+PVM STEP: pc=0x3817, opcode=149, skip=2, args={ 17, 216 }
+PVM STEP: pc=0x381a, opcode=123, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x381d, opcode=123, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x3820, opcode=123, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x3823, opcode=130, skip=1, args={ 137 }
+PVM STEP: pc=0x3825, opcode=123, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x3828, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x382b, opcode=123, skip=1, args={ 25 }
+PVM STEP: pc=0x382d, opcode=130, skip=2, args={ 133, 16 }
+PVM STEP: pc=0x3830, opcode=130, skip=2, args={ 134, 24 }
+PVM STEP: pc=0x3833, opcode=51, skip=2, args={ 8, 32 }
+PVM STEP: pc=0x3836, opcode=80, skip=5, args={ 32, 104, 2, 145, 2 }
+PVM STEP: pc=0x3ac7, opcode=131, skip=1, args={ 137 }
+PVM STEP: pc=0x3ac9, opcode=81, skip=2, args={ 9, 51 }
+PVM STEP: pc=0x3acc, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x3acf, opcode=82, skip=2, args={ 10, 57 }
+PVM STEP: pc=0x3ad2, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x3ad7, opcode=174, skip=2, args={ 185, 49 }
+PVM STEP: pc=0x3ada, opcode=200, skip=2, args={ 120, 8 }
+PVM STEP: pc=0x3add, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x3ae0, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x3ae5, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x3ae8, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x3aee, opcode=57, skip=4, args={ 10, 20, 0, 4 }
+PVM STEP: pc=0x3af3, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x3af6, opcode=61, skip=4, args={ 8, 20, 0, 4 }
+PVM STEP: pc=0x3afb, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x3afc, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x3afe, opcode=51, skip=4, args={ 8, 0, 0, 2 }
+PVM STEP: pc=0x3b03, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x3b06, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x383c, opcode=111, skip=1, args={ 104 }
+PVM STEP: pc=0x383e, opcode=111, skip=1, args={ 89 }
+PVM STEP: pc=0x3840, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x3842, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x3844, opcode=130, skip=2, args={ 27, 8 }
+PVM STEP: pc=0x3847, opcode=111, skip=1, args={ 187 }
+PVM STEP: pc=0x3849, opcode=152, skip=2, args={ 179, 8 }
+PVM STEP: pc=0x384c, opcode=120, skip=2, args={ 123, 24 }
+PVM STEP: pc=0x384f, opcode=152, skip=2, args={ 172, 8 }
+PVM STEP: pc=0x3852, opcode=123, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x3855, opcode=120, skip=2, args={ 122, 16 }
+PVM STEP: pc=0x3858, opcode=152, skip=2, args={ 180, 56 }
+PVM STEP: pc=0x385b, opcode=152, skip=2, args={ 181, 48 }
+PVM STEP: pc=0x385e, opcode=152, skip=2, args={ 188, 40 }
+PVM STEP: pc=0x3861, opcode=152, skip=2, args={ 182, 32 }
+PVM STEP: pc=0x3864, opcode=152, skip=2, args={ 176, 24 }
+PVM STEP: pc=0x3867, opcode=152, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x386a, opcode=120, skip=2, args={ 118, 28 }
+PVM STEP: pc=0x386d, opcode=152, skip=2, args={ 166, 56 }
+PVM STEP: pc=0x3870, opcode=120, skip=2, args={ 124, 29 }
+PVM STEP: pc=0x3873, opcode=152, skip=2, args={ 162, 48 }
+PVM STEP: pc=0x3876, opcode=120, skip=2, args={ 117, 30 }
+PVM STEP: pc=0x3879, opcode=152, skip=2, args={ 172, 40 }
+PVM STEP: pc=0x387c, opcode=120, skip=2, args={ 116, 31 }
+PVM STEP: pc=0x387f, opcode=152, skip=2, args={ 164, 32 }
+PVM STEP: pc=0x3882, opcode=120, skip=2, args={ 115, 25 }
+PVM STEP: pc=0x3885, opcode=152, skip=2, args={ 165, 24 }
+PVM STEP: pc=0x3888, opcode=152, skip=2, args={ 170, 16 }
+PVM STEP: pc=0x388b, opcode=120, skip=2, args={ 123, 26 }
+PVM STEP: pc=0x388e, opcode=152, skip=2, args={ 147, 56 }
+PVM STEP: pc=0x3891, opcode=120, skip=2, args={ 112, 27 }
+PVM STEP: pc=0x3894, opcode=152, skip=2, args={ 144, 48 }
+PVM STEP: pc=0x3897, opcode=120, skip=2, args={ 116, 20 }
+PVM STEP: pc=0x389a, opcode=152, skip=2, args={ 155, 40 }
+PVM STEP: pc=0x389d, opcode=120, skip=2, args={ 124, 21 }
+PVM STEP: pc=0x38a0, opcode=152, skip=2, args={ 148, 32 }
+PVM STEP: pc=0x38a3, opcode=120, skip=2, args={ 114, 22 }
+PVM STEP: pc=0x38a6, opcode=152, skip=2, args={ 146, 24 }
+PVM STEP: pc=0x38a9, opcode=120, skip=2, args={ 118, 23 }
+PVM STEP: pc=0x38ac, opcode=152, skip=2, args={ 150, 16 }
+PVM STEP: pc=0x38af, opcode=130, skip=2, args={ 28, 8 }
+PVM STEP: pc=0x38b2, opcode=120, skip=2, args={ 124, 17 }
+PVM STEP: pc=0x38b5, opcode=152, skip=2, args={ 156, 8 }
+PVM STEP: pc=0x38b8, opcode=120, skip=2, args={ 122, 18 }
+PVM STEP: pc=0x38bb, opcode=152, skip=2, args={ 138, 56 }
+PVM STEP: pc=0x38be, opcode=120, skip=2, args={ 117, 19 }
+PVM STEP: pc=0x38c1, opcode=152, skip=2, args={ 133, 48 }
+PVM STEP: pc=0x38c4, opcode=120, skip=2, args={ 116, 12 }
+PVM STEP: pc=0x38c7, opcode=152, skip=2, args={ 132, 40 }
+PVM STEP: pc=0x38ca, opcode=120, skip=2, args={ 123, 13 }
+PVM STEP: pc=0x38cd, opcode=152, skip=2, args={ 139, 32 }
+PVM STEP: pc=0x38d0, opcode=120, skip=2, args={ 112, 14 }
+PVM STEP: pc=0x38d3, opcode=152, skip=2, args={ 128, 24 }
+PVM STEP: pc=0x38d6, opcode=120, skip=2, args={ 115, 15 }
+PVM STEP: pc=0x38d9, opcode=152, skip=2, args={ 131, 16 }
+PVM STEP: pc=0x38dc, opcode=120, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x38df, opcode=120, skip=2, args={ 124, 9 }
+PVM STEP: pc=0x38e2, opcode=120, skip=2, args={ 118, 10 }
+PVM STEP: pc=0x38e5, opcode=120, skip=2, args={ 114, 11 }
+PVM STEP: pc=0x38e8, opcode=152, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x38eb, opcode=120, skip=2, args={ 123, 4 }
+PVM STEP: pc=0x38ee, opcode=120, skip=2, args={ 116, 5 }
+PVM STEP: pc=0x38f1, opcode=120, skip=2, args={ 117, 6 }
+PVM STEP: pc=0x38f4, opcode=120, skip=2, args={ 122, 7 }
+PVM STEP: pc=0x38f7, opcode=120, skip=1, args={ 120 }
+PVM STEP: pc=0x38f9, opcode=120, skip=2, args={ 121, 1 }
+PVM STEP: pc=0x38fc, opcode=120, skip=2, args={ 115, 2 }
+PVM STEP: pc=0x38ff, opcode=120, skip=2, args={ 112, 3 }
+PVM STEP: pc=0x3902, opcode=130, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x3905, opcode=130, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x3908, opcode=130, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x390b, opcode=149, skip=2, args={ 17, 40 }
+PVM STEP: pc=0x390e, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0138, opcode=51, skip=3, args={ 7, 128, 0 }
+PVM STEP: pc=0x013c, opcode=130, skip=2, args={ 104, 120 }
+PVM STEP: pc=0x013f, opcode=80, skip=4, args={ 16, 8, 136, 57 }
+PVM STEP: pc=0x3ac7, opcode=131, skip=1, args={ 137 }
+PVM STEP: pc=0x3ac9, opcode=81, skip=2, args={ 9, 51 }
+PVM STEP: pc=0x3acc, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x3acf, opcode=82, skip=2, args={ 10, 57 }
+PVM STEP: pc=0x3ad2, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x3ad7, opcode=174, skip=2, args={ 185, 49 }
+PVM STEP: pc=0x3ada, opcode=200, skip=2, args={ 120, 8 }
+PVM STEP: pc=0x3add, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x3ae0, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x3ae5, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x3ae8, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x3aee, opcode=57, skip=4, args={ 10, 20, 0, 4 }
+PVM STEP: pc=0x3af3, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x3af6, opcode=61, skip=4, args={ 8, 20, 0, 4 }
+PVM STEP: pc=0x3afb, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x3afc, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x3afe, opcode=51, skip=4, args={ 8, 0, 0, 2 }
+PVM STEP: pc=0x3b03, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x3b06, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x0144, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x0146, opcode=130, skip=2, args={ 104, 120 }
+PVM STEP: pc=0x0149, opcode=51, skip=1, args={ 9 }
+PVM STEP: pc=0x014b, opcode=10, skip=0, args={  }
+DEBUG ecalli: index=0, name=call_data_copy
+PVM STEP: pc=0x014c, opcode=1, skip=0, args={  }
+PVM STEP: pc=0x014d, opcode=130, skip=2, args={ 104, 120 }
+PVM STEP: pc=0x0150, opcode=86, skip=3, args={ 24, 31, 19 }
+PVM STEP: pc=0x0163, opcode=149, skip=2, args={ 23, 224 }
+PVM STEP: pc=0x0166, opcode=132, skip=2, args={ 119, 224 }
+PVM STEP: pc=0x0169, opcode=123, skip=2, args={ 103, 16 }
+PVM STEP: pc=0x016c, opcode=100, skip=1, args={ 113 }
+PVM STEP: pc=0x016e, opcode=149, skip=3, args={ 103, 96, 2 }
+PVM STEP: pc=0x0172, opcode=51, skip=3, args={ 8, 128, 0 }
+PVM STEP: pc=0x0176, opcode=80, skip=4, args={ 16, 10, 26, 53 }
+PVM STEP: pc=0x3690, opcode=149, skip=2, args={ 17, 136 }
+PVM STEP: pc=0x3693, opcode=123, skip=2, args={ 16, 112 }
+PVM STEP: pc=0x3696, opcode=123, skip=2, args={ 21, 104 }
+PVM STEP: pc=0x3699, opcode=123, skip=2, args={ 22, 96 }
+PVM STEP: pc=0x369c, opcode=100, skip=1, args={ 137 }
+PVM STEP: pc=0x369e, opcode=123, skip=2, args={ 23, 88 }
+PVM STEP: pc=0x36a1, opcode=51, skip=2, args={ 8, 32 }
+PVM STEP: pc=0x36a4, opcode=100, skip=1, args={ 151 }
+PVM STEP: pc=0x36a6, opcode=80, skip=5, args={ 32, 102, 2, 33, 4 }
+PVM STEP: pc=0x3ac7, opcode=131, skip=1, args={ 137 }
+PVM STEP: pc=0x3ac9, opcode=81, skip=2, args={ 9, 51 }
+PVM STEP: pc=0x3acc, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x3acf, opcode=82, skip=2, args={ 10, 57 }
+PVM STEP: pc=0x3ad2, opcode=51, skip=4, args={ 11, 1, 0, 2 }
+PVM STEP: pc=0x3ad7, opcode=174, skip=2, args={ 185, 49 }
+PVM STEP: pc=0x3ada, opcode=200, skip=2, args={ 120, 8 }
+PVM STEP: pc=0x3add, opcode=149, skip=2, args={ 136, 31 }
+PVM STEP: pc=0x3ae0, opcode=51, skip=4, args={ 9, 224, 255, 7 }
+PVM STEP: pc=0x3ae5, opcode=210, skip=2, args={ 152, 8 }
+PVM STEP: pc=0x3ae8, opcode=86, skip=5, args={ 56, 0, 0, 2, 32 }
+PVM STEP: pc=0x3aee, opcode=57, skip=4, args={ 10, 20, 0, 4 }
+PVM STEP: pc=0x3af3, opcode=174, skip=2, args={ 138, 9 }
+PVM STEP: pc=0x3afc, opcode=131, skip=1, args={ 119 }
+PVM STEP: pc=0x3afe, opcode=51, skip=4, args={ 8, 0, 0, 2 }
+PVM STEP: pc=0x3b03, opcode=200, skip=2, args={ 135, 7 }
+PVM STEP: pc=0x3b06, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x36ac, opcode=124, skip=1, args={ 121 }
+PVM STEP: pc=0x36ae, opcode=124, skip=2, args={ 122, 1 }
+PVM STEP: pc=0x36b1, opcode=124, skip=2, args={ 123, 2 }
+PVM STEP: pc=0x36b4, opcode=124, skip=2, args={ 124, 3 }
+PVM STEP: pc=0x36b7, opcode=124, skip=2, args={ 114, 4 }
+PVM STEP: pc=0x36ba, opcode=124, skip=2, args={ 115, 5 }
+PVM STEP: pc=0x36bd, opcode=124, skip=2, args={ 120, 6 }
+PVM STEP: pc=0x36c0, opcode=124, skip=2, args={ 118, 7 }
+PVM STEP: pc=0x36c3, opcode=151, skip=2, args={ 170, 8 }
+PVM STEP: pc=0x36c6, opcode=151, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x36c9, opcode=151, skip=2, args={ 204, 24 }
+PVM STEP: pc=0x36cc, opcode=212, skip=2, args={ 169, 9 }
+PVM STEP: pc=0x36cf, opcode=123, skip=2, args={ 25, 80 }
+PVM STEP: pc=0x36d2, opcode=212, skip=2, args={ 203, 11 }
+PVM STEP: pc=0x36d5, opcode=123, skip=2, args={ 27, 72 }
+PVM STEP: pc=0x36d8, opcode=124, skip=2, args={ 121, 8 }
+PVM STEP: pc=0x36db, opcode=124, skip=2, args={ 122, 9 }
+PVM STEP: pc=0x36de, opcode=124, skip=2, args={ 123, 10 }
+PVM STEP: pc=0x36e1, opcode=124, skip=2, args={ 124, 11 }
+PVM STEP: pc=0x36e4, opcode=151, skip=2, args={ 51, 8 }
+PVM STEP: pc=0x36e7, opcode=151, skip=2, args={ 136, 16 }
+PVM STEP: pc=0x36ea, opcode=151, skip=2, args={ 102, 24 }
+PVM STEP: pc=0x36ed, opcode=151, skip=2, args={ 170, 8 }
+PVM STEP: pc=0x36f0, opcode=151, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x36f3, opcode=151, skip=2, args={ 204, 24 }
+PVM STEP: pc=0x36f6, opcode=212, skip=2, args={ 35, 5 }
+PVM STEP: pc=0x36f9, opcode=123, skip=2, args={ 21, 64 }
+PVM STEP: pc=0x36fc, opcode=212, skip=2, args={ 104, 8 }
+PVM STEP: pc=0x36ff, opcode=123, skip=2, args={ 24, 56 }
+PVM STEP: pc=0x3702, opcode=212, skip=2, args={ 169, 9 }
+PVM STEP: pc=0x3705, opcode=123, skip=2, args={ 25, 48 }
+PVM STEP: pc=0x3708, opcode=212, skip=2, args={ 203, 11 }
+PVM STEP: pc=0x370b, opcode=123, skip=2, args={ 27, 40 }
+PVM STEP: pc=0x370e, opcode=124, skip=2, args={ 120, 13 }
+PVM STEP: pc=0x3711, opcode=124, skip=2, args={ 121, 14 }
+PVM STEP: pc=0x3714, opcode=124, skip=2, args={ 122, 15 }
+PVM STEP: pc=0x3717, opcode=124, skip=2, args={ 123, 12 }
+PVM STEP: pc=0x371a, opcode=151, skip=2, args={ 136, 8 }
+PVM STEP: pc=0x371d, opcode=151, skip=2, args={ 153, 16 }
+PVM STEP: pc=0x3720, opcode=151, skip=2, args={ 170, 24 }
+PVM STEP: pc=0x3723, opcode=212, skip=2, args={ 184, 8 }
+PVM STEP: pc=0x3726, opcode=123, skip=2, args={ 24, 32 }
+PVM STEP: pc=0x3729, opcode=212, skip=2, args={ 169, 9 }
+PVM STEP: pc=0x372c, opcode=123, skip=2, args={ 25, 24 }
+PVM STEP: pc=0x372f, opcode=124, skip=2, args={ 118, 17 }
+PVM STEP: pc=0x3732, opcode=124, skip=2, args={ 121, 16 }
+PVM STEP: pc=0x3735, opcode=124, skip=2, args={ 123, 18 }
+PVM STEP: pc=0x3738, opcode=124, skip=2, args={ 120, 19 }
+PVM STEP: pc=0x373b, opcode=151, skip=2, args={ 102, 8 }
+PVM STEP: pc=0x373e, opcode=212, skip=2, args={ 105, 9 }
+PVM STEP: pc=0x3741, opcode=123, skip=2, args={ 25, 16 }
+PVM STEP: pc=0x3744, opcode=151, skip=2, args={ 187, 16 }
+PVM STEP: pc=0x3747, opcode=151, skip=2, args={ 136, 24 }
+PVM STEP: pc=0x374a, opcode=212, skip=2, args={ 184, 8 }
+PVM STEP: pc=0x374d, opcode=123, skip=2, args={ 24, 8 }
+PVM STEP: pc=0x3750, opcode=124, skip=2, args={ 122, 21 }
+PVM STEP: pc=0x3753, opcode=124, skip=2, args={ 123, 20 }
+PVM STEP: pc=0x3756, opcode=124, skip=2, args={ 121, 22 }
+PVM STEP: pc=0x3759, opcode=124, skip=2, args={ 120, 23 }
+PVM STEP: pc=0x375c, opcode=151, skip=2, args={ 170, 8 }
+PVM STEP: pc=0x375f, opcode=212, skip=2, args={ 186, 10 }
+PVM STEP: pc=0x3762, opcode=123, skip=1, args={ 26 }
+PVM STEP: pc=0x3764, opcode=151, skip=2, args={ 153, 16 }
+PVM STEP: pc=0x3767, opcode=151, skip=2, args={ 136, 24 }
+PVM STEP: pc=0x376a, opcode=212, skip=2, args={ 152, 4 }
+PVM STEP: pc=0x376d, opcode=124, skip=2, args={ 122, 25 }
+PVM STEP: pc=0x3770, opcode=124, skip=2, args={ 123, 24 }
+PVM STEP: pc=0x3773, opcode=124, skip=2, args={ 121, 26 }
+PVM STEP: pc=0x3776, opcode=124, skip=2, args={ 120, 27 }
+PVM STEP: pc=0x3779, opcode=151, skip=2, args={ 170, 8 }
+PVM STEP: pc=0x377c, opcode=212, skip=2, args={ 186, 3 }
+PVM STEP: pc=0x377f, opcode=151, skip=2, args={ 153, 16 }
+PVM STEP: pc=0x3782, opcode=151, skip=2, args={ 136, 24 }
+PVM STEP: pc=0x3785, opcode=212, skip=2, args={ 152, 2 }
+PVM STEP: pc=0x3788, opcode=124, skip=2, args={ 121, 29 }
+PVM STEP: pc=0x378b, opcode=124, skip=2, args={ 123, 28 }
+PVM STEP: pc=0x378e, opcode=124, skip=2, args={ 120, 30 }
+PVM STEP: pc=0x3791, opcode=124, skip=2, args={ 119, 31 }
+PVM STEP: pc=0x3794, opcode=151, skip=2, args={ 153, 8 }
+PVM STEP: pc=0x3797, opcode=212, skip=2, args={ 185, 12 }
+PVM STEP: pc=0x379a, opcode=151, skip=2, args={ 136, 16 }
+PVM STEP: pc=0x379d, opcode=151, skip=2, args={ 119, 24 }
+PVM STEP: pc=0x37a0, opcode=212, skip=2, args={ 120, 8 }
+PVM STEP: pc=0x37a3, opcode=130, skip=2, args={ 23, 80 }
+PVM STEP: pc=0x37a6, opcode=130, skip=2, args={ 25, 72 }
+PVM STEP: pc=0x37a9, opcode=212, skip=2, args={ 121, 9 }
+PVM STEP: pc=0x37ac, opcode=130, skip=2, args={ 23, 64 }
+PVM STEP: pc=0x37af, opcode=130, skip=2, args={ 27, 56 }
+PVM STEP: pc=0x37b2, opcode=212, skip=2, args={ 123, 11 }
+PVM STEP: pc=0x37b5, opcode=130, skip=2, args={ 23, 48 }
+PVM STEP: pc=0x37b8, opcode=130, skip=2, args={ 26, 40 }
+PVM STEP: pc=0x37bb, opcode=212, skip=2, args={ 122, 10 }
+PVM STEP: pc=0x37be, opcode=130, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x37c1, opcode=130, skip=2, args={ 16, 24 }
+PVM STEP: pc=0x37c4, opcode=212, skip=2, args={ 112, 7 }
+PVM STEP: pc=0x37c7, opcode=130, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x37ca, opcode=130, skip=2, args={ 21, 8 }
+PVM STEP: pc=0x37cd, opcode=212, skip=2, args={ 101, 0 }
+PVM STEP: pc=0x37d0, opcode=130, skip=1, args={ 21 }
+PVM STEP: pc=0x37d2, opcode=212, skip=2, args={ 84, 5 }
+PVM STEP: pc=0x37d5, opcode=212, skip=2, args={ 50, 6 }
+PVM STEP: pc=0x37d8, opcode=212, skip=2, args={ 200, 8 }
+PVM STEP: pc=0x37db, opcode=151, skip=2, args={ 187, 32 }
+PVM STEP: pc=0x37de, opcode=212, skip=2, args={ 185, 9 }
+PVM STEP: pc=0x37e1, opcode=151, skip=2, args={ 119, 32 }
+PVM STEP: pc=0x37e4, opcode=151, skip=2, args={ 85, 32 }
+PVM STEP: pc=0x37e7, opcode=151, skip=2, args={ 136, 32 }
+PVM STEP: pc=0x37ea, opcode=212, skip=2, args={ 167, 7 }
+PVM STEP: pc=0x37ed, opcode=212, skip=2, args={ 5, 10 }
+PVM STEP: pc=0x37f0, opcode=212, skip=2, args={ 104, 8 }
+PVM STEP: pc=0x37f3, opcode=111, skip=1, args={ 136 }
+PVM STEP: pc=0x37f5, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x37f7, opcode=111, skip=1, args={ 119 }
+PVM STEP: pc=0x37f9, opcode=111, skip=1, args={ 153 }
+PVM STEP: pc=0x37fb, opcode=130, skip=2, args={ 27, 88 }
+PVM STEP: pc=0x37fe, opcode=123, skip=1, args={ 184 }
+PVM STEP: pc=0x3800, opcode=123, skip=2, args={ 186, 8 }
+PVM STEP: pc=0x3803, opcode=123, skip=2, args={ 183, 16 }
+PVM STEP: pc=0x3806, opcode=123, skip=2, args={ 185, 24 }
+PVM STEP: pc=0x3809, opcode=130, skip=2, args={ 16, 112 }
+PVM STEP: pc=0x380c, opcode=130, skip=2, args={ 21, 104 }
+PVM STEP: pc=0x380f, opcode=130, skip=2, args={ 22, 96 }
+PVM STEP: pc=0x3812, opcode=149, skip=2, args={ 17, 120 }
+PVM STEP: pc=0x3815, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x017b, opcode=130, skip=3, args={ 103, 96, 2 }
+PVM STEP: pc=0x017f, opcode=130, skip=3, args={ 104, 104, 2 }
+PVM STEP: pc=0x0183, opcode=130, skip=3, args={ 105, 112, 2 }
+PVM STEP: pc=0x0187, opcode=130, skip=3, args={ 106, 120, 2 }
+PVM STEP: pc=0x018b, opcode=130, skip=2, args={ 107, 16 }
+PVM STEP: pc=0x018e, opcode=123, skip=1, args={ 183 }
+PVM STEP: pc=0x0190, opcode=123, skip=2, args={ 184, 8 }
+PVM STEP: pc=0x0193, opcode=123, skip=2, args={ 185, 16 }
+PVM STEP: pc=0x0196, opcode=123, skip=2, args={ 186, 24 }
+PVM STEP: pc=0x0199, opcode=149, skip=2, args={ 24, 224 }
+PVM STEP: pc=0x019c, opcode=132, skip=2, args={ 136, 224 }
+PVM STEP: pc=0x019f, opcode=100, skip=1, args={ 129 }
+PVM STEP: pc=0x01a1, opcode=73, skip=1, args={ 8 }
+PVM STEP: pc=0x01a3, opcode=73, skip=2, args={ 24, 8 }
+PVM STEP: pc=0x01a6, opcode=73, skip=2, args={ 24, 16 }
+PVM STEP: pc=0x01a9, opcode=73, skip=2, args={ 24, 24 }
+PVM STEP: pc=0x01ac, opcode=149, skip=3, args={ 103, 64, 2 }
+PVM STEP: pc=0x01b0, opcode=80, skip=4, args={ 16, 12, 96, 55 }
+PVM STEP: pc=0x3910, opcode=149, skip=2, args={ 17, 160 }
+PVM STEP: pc=0x3913, opcode=123, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x3916, opcode=123, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x3919, opcode=123, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x391c, opcode=149, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x391f, opcode=132, skip=2, args={ 17, 224 }
+PVM STEP: pc=0x3922, opcode=100, skip=1, args={ 118 }
+PVM STEP: pc=0x3924, opcode=130, skip=2, args={ 135, 24 }
+PVM STEP: pc=0x3927, opcode=130, skip=2, args={ 137, 16 }
+PVM STEP: pc=0x392a, opcode=130, skip=2, args={ 138, 8 }
+PVM STEP: pc=0x392d, opcode=130, skip=1, args={ 136 }
+PVM STEP: pc=0x392f, opcode=111, skip=1, args={ 119 }
+PVM STEP: pc=0x3931, opcode=111, skip=1, args={ 153 }
+PVM STEP: pc=0x3933, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x3935, opcode=111, skip=1, args={ 136 }
+PVM STEP: pc=0x3937, opcode=123, skip=2, args={ 23, 32 }
+PVM STEP: pc=0x393a, opcode=123, skip=2, args={ 25, 40 }
+PVM STEP: pc=0x393d, opcode=123, skip=2, args={ 26, 48 }
+PVM STEP: pc=0x3940, opcode=123, skip=2, args={ 24, 56 }
+PVM STEP: pc=0x3943, opcode=131, skip=2, args={ 24, 32 }
+PVM STEP: pc=0x3946, opcode=131, skip=1, args={ 25 }
+PVM STEP: pc=0x3948, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x394a, opcode=10, skip=1, args={ 6 }
+DEBUG ecalli: index=6, name=get_storage_or_zero
+PVM STEP: pc=0x394c, opcode=130, skip=2, args={ 23, 24 }
+PVM STEP: pc=0x394f, opcode=130, skip=2, args={ 24, 16 }
+PVM STEP: pc=0x3952, opcode=130, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x3955, opcode=130, skip=1, args={ 26 }
+PVM STEP: pc=0x3957, opcode=111, skip=1, args={ 119 }
+PVM STEP: pc=0x3959, opcode=111, skip=1, args={ 136 }
+PVM STEP: pc=0x395b, opcode=111, skip=1, args={ 153 }
+PVM STEP: pc=0x395d, opcode=111, skip=1, args={ 170 }
+PVM STEP: pc=0x395f, opcode=123, skip=1, args={ 103 }
+PVM STEP: pc=0x3961, opcode=123, skip=2, args={ 104, 8 }
+PVM STEP: pc=0x3964, opcode=123, skip=2, args={ 105, 16 }
+PVM STEP: pc=0x3967, opcode=123, skip=2, args={ 106, 24 }
+PVM STEP: pc=0x396a, opcode=149, skip=2, args={ 81, 160 }
+PVM STEP: pc=0x396d, opcode=130, skip=2, args={ 16, 88 }
+PVM STEP: pc=0x3970, opcode=130, skip=2, args={ 21, 80 }
+PVM STEP: pc=0x3973, opcode=130, skip=2, args={ 22, 72 }
+PVM STEP: pc=0x3976, opcode=149, skip=2, args={ 17, 96 }
+PVM STEP: pc=0x3979, opcode=50, skip=1, args={ 0 }
+PVM STEP: pc=0x01b5, opcode=130, skip=3, args={ 104, 64, 2 }
+PVM STEP: pc=0x01b9, opcode=130, skip=3, args={ 105, 72, 2 }
+PVM STEP: pc=0x01bd, opcode=130, skip=3, args={ 106, 80, 2 }
+PVM STEP: pc=0x01c1, opcode=130, skip=3, args={ 107, 88, 2 }
+PVM STEP: pc=0x01c5, opcode=149, skip=3, args={ 103, 32, 2 }
+PVM STEP: pc=0x01c9, opcode=80, skip=4, args={ 16, 14, 94, 42 }
+PVM STEP: pc=0x2c27, opcode=149, skip=2, args={ 17, 144 }
+PVM STEP: pc=0x2c2a, opcode=123, skip=2, args={ 16, 104 }
+PVM STEP: pc=0x2c2d, opcode=123, skip=2, args={ 21, 96 }
+PVM STEP: pc=0x2c30, opcode=123, skip=2, args={ 22, 88 }
+PVM STEP: pc=0x2c33, opcode=149, skip=2, args={ 21, 112 }
+PVM STEP: pc=0x2c36, opcode=132, skip=2, args={ 17, 240 }
+PVM STEP: pc=0x2c39, opcode=100, skip=1, args={ 128 }
+PVM STEP: pc=0x2c3b, opcode=151, skip=2, args={ 162, 63 }
+PVM STEP: pc=0x2c3e, opcode=152, skip=2, args={ 148, 1 }
+PVM STEP: pc=0x2c41, opcode=151, skip=2, args={ 179, 63 }
+PVM STEP: pc=0x2c44, opcode=152, skip=2, args={ 170, 1 }
+PVM STEP: pc=0x2c47, opcode=151, skip=2, args={ 153, 63 }
+PVM STEP: pc=0x2c4a, opcode=152, skip=2, args={ 136, 1 }
+PVM STEP: pc=0x2c4d, opcode=152, skip=2, args={ 187, 1 }
+PVM STEP: pc=0x2c50, opcode=123, skip=2, args={ 27, 8 }
+PVM STEP: pc=0x2c53, opcode=212, skip=2, args={ 36, 2 }
+PVM STEP: pc=0x2c56, opcode=132, skip=2, args={ 6, 1 }
+PVM STEP: pc=0x2c59, opcode=212, skip=2, args={ 58, 12 }
+PVM STEP: pc=0x2c5c, opcode=212, skip=2, args={ 137, 9 }
+PVM STEP: pc=0x2c5f, opcode=154, skip=1, args={ 107 }
+PVM STEP: pc=0x2c61, opcode=132, skip=2, args={ 154, 127 }
+PVM STEP: pc=0x2c64, opcode=210, skip=2, args={ 203, 3 }
+PVM STEP: pc=0x2c67, opcode=210, skip=2, args={ 43, 12 }
+PVM STEP: pc=0x2c6a, opcode=130, skip=2, args={ 24, 8 }
+PVM STEP: pc=0x2c6d, opcode=210, skip=2, args={ 139, 11 }
+PVM STEP: pc=0x2c70, opcode=219, skip=2, args={ 105, 10 }
+PVM STEP: pc=0x2c73, opcode=142, skip=1, args={ 200 }
+PVM STEP: pc=0x2c75, opcode=142, skip=1, args={ 57 }
+PVM STEP: pc=0x2c77, opcode=142, skip=1, args={ 182 }
+PVM STEP: pc=0x2c79, opcode=218, skip=2, args={ 185, 6 }
+PVM STEP: pc=0x2c7c, opcode=136, skip=2, args={ 169, 32 }
+PVM STEP: pc=0x2c7f, opcode=133, skip=2, args={ 153, 255 }
+PVM STEP: pc=0x2c82, opcode=219, skip=2, args={ 200, 9 }
+PVM STEP: pc=0x2c85, opcode=212, skip=2, args={ 179, 8 }
+PVM STEP: pc=0x2c88, opcode=218, skip=2, args={ 137, 6 }
+PVM STEP: pc=0x2c8b, opcode=211, skip=2, args={ 6, 8 }
+PVM STEP: pc=0x2c8e, opcode=132, skip=2, args={ 136, 1 }
+PVM STEP: pc=0x2c91, opcode=82, skip=2, args={ 8, 31 }
+PVM STEP: pc=0x2cb0, opcode=80, skip=5, args={ 34, 30, 2, 55, 9 }
+PVM STEP: pc=0x35e7, opcode=149, skip=2, args={ 24, 48 }
+PVM STEP: pc=0x35ea, opcode=20, skip=9, args={ 7, 0, 0, 0, 0, 113, 123, 72, 78 }
+PVM STEP: pc=0x35f4, opcode=73, skip=2, args={ 17, 48 }
+PVM STEP: pc=0x35f7, opcode=73, skip=2, args={ 17, 56 }
+PVM STEP: pc=0x35fa, opcode=73, skip=2, args={ 17, 64 }
+PVM STEP: pc=0x35fd, opcode=123, skip=2, args={ 23, 72 }
+PVM STEP: pc=0x3600, opcode=51, skip=1, args={ 7 }
+PVM STEP: pc=0x3602, opcode=50, skip=1, args={ 2 }
+PVM STEP: pc=0x2cb6, opcode=80, skip=5, args={ 32, 32, 2, 97, 11 }
+PVM STEP: pc=0x3817, opcode=149, skip=2, args={ 17, 216 }
+PVM STEP: pc=0x381a, opcode=123, skip=2, args={ 16, 32 }
+PVM STEP: pc=0x381d, opcode=123, skip=2, args={ 21, 24 }
+PVM STEP: pc=0x3820, opcode=123, skip=2, args={ 22, 16 }
+PVM STEP: pc=0x3823, opcode=130, skip=1, args={ 137 }
+PVM STEP: pc=0x3825, opcode=123, skip=2, args={ 25, 8 }
+PVM STEP: pc=0x3828, opcode=130, skip=2, args={ 137, 8 }
+PVM STEP: pc=0x382b, opcode=123, skip=1, args={ 25 }
+PVM STEP: pc=0x382d, opcode=130, skip=2, args={ 133, 16 }
+PVM STEP: pc=0x3830, opcode=130, skip=2, args={ 134, 24 }
+PVM STEP: pc=0x3833, opcode=51, skip=2, args={ 8, 32 }
+PVM STEP: pc=0x3836, opcode=80, skip=5, args={ 32, 104, 2, 145, 2 }
+PVM STEP: pc=0x3ac7, opcode=131, skip=1, args={ 137 }
+PVM STEP: pc=0x3ac9, opcode=81, skip=2, args={ 9, 51 }
+PVM STEP: pc=0x3acc, opcode=139, skip=2, args={ 122, 17 }
+PVM STEP: pc=0x3acf, opcode=82, skip=2, args={ 10, 57 }
+PVM STEP: pc=0x3b08, opcode=0, skip=0, args={  }
+DEBUG PvmExecutor fault at PC=0x3b08, reason: Executed trap instruction
+  Registers: RA=0x268, SP=0x6fc28, T0=0x21e, T1=0x0, T2=0x0, S0=0x0, S1=0x4e487b7100000000, A0=0x0, A1=0x20, A2=0x20, A3=0x1, A4=0x0, A5=0x0
+SimpleToken deploy result status: .fault, returnData size: 0, faultPc: 0x3b08, faultReason: Executed trap instruction
+/opt/homebrew/Cellar/zig@0.15/0.15.2/lib/zig/std/testing.zig:607:14: 0x10305bbe7 in expect (test)
+    if (!ok) return error.TestUnexpectedResult;
+             ^
+/Users/karan/sol2zig/vm/polkavm/vm.zig:1276:5: 0x10309c5eb in test.PolkaVM Contract: Execute resolc compiled SimpleToken.elf (test)
+    try testing.expect(result.status != .fault);
+    ^
+error: while executing test 'compiler.aot.test.AOT compiler: TokenTest.fozbin AOT vs Interpreter compatibility', the following test command failed:
+./.zig-cache/o/c34731eca02a3fbffb5210d42860b4ff/test --cache-dir=./.zig-cache --seed=0xbb52c712 --listen=-
+
+Build Summary: 23/25 steps succeeded; 1 failed; 369/370 tests passed; 1 failed
+test transitive failure
++- run test 141/142 passed, 1 failed
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/a8fe2f7d709567b7257d7d030a0c18c6/build /opt/homebrew/Cellar/zig@0.15/0.15.2/bin/zig /opt/homebrew/Cellar/zig@0.15/0.15.2/lib/zig /Users/karan/sol2zig .zig-cache /Users/karan/.cache/zig --seed 0xbb52c712 -Z8877080ab9e9fde3 test

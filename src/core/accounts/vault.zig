@@ -12,7 +12,7 @@
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 pub const VaultAccount = struct {
     header: AccountHeader,
@@ -47,9 +47,9 @@ pub const VaultAccount = struct {
 
 // ── Key Derivation ──────────────────────────────────────────────────────
 
-/// Vault key for a contract: keccak256("vault" || contract_address)
+/// Vault key for a contract: blake3("vault" || contract_address)
 pub fn vaultKey(contract: types.Address) [32]u8 {
-    var hasher = Keccak256.init(.{});
+    var hasher = Blake3.init(.{});
     hasher.update("vault");
     hasher.update(&contract.bytes);
     var hash: [32]u8 = undefined;

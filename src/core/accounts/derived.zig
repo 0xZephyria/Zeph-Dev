@@ -27,7 +27,7 @@
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 pub const DerivedStateAccount = struct {
     header: AccountHeader,
@@ -49,52 +49,50 @@ pub const DerivedStateAccount = struct {
 // ── Key Derivation ──────────────────────────────────────────────────────
 
 /// Derive deterministic account address for a user's state within a contract.
-/// Address = keccak256(user || contract)[12..32]
+/// Address = blake3(user || contract)
 pub fn deriveAddress(user: types.Address, contract: types.Address) types.Address {
-    var hasher = Keccak256.init(.{});
-    hasher.update(&user.bytes);
-    hasher.update(&contract.bytes);
-    var hash: [32]u8 = undefined;
-    hasher.final(&hash);
+    var createInput: [64]u8 = undefined;
+    @memcpy(createInput[0..32], &user.bytes);
+    @memcpy(createInput[32..64], &contract.bytes);
     var addr: types.Address = undefined;
-    @memcpy(&addr.bytes, hash[12..32]);
+    Blake3.hash(&createInput, &addr.bytes, .{});
     return addr;
 }
 
-/// Per-user storage key: keccak256(user || contract || slot)
+/// Per-user storage key: blake3(user || contract || slot)
 /// Replaces the legacy storage_key(contract, slot) for per-user slots.
 /// Two different users writing the SAME logical slot get DIFFERENT trie keys.
 pub fn derivedStorageKey(user: types.Address, contract: types.Address, slot: [32]u8) [32]u8 {
-    var hasher = Keccak256.init(.{});
-    hasher.update(&user.bytes);
-    hasher.update(&contract.bytes);
-    hasher.update(&slot);
+    var createInput: [96]u8 = undefined;
+    @memcpy(createInput[0..32], &user.bytes);
+    @memcpy(createInput[32..64], &contract.bytes);
+    @memcpy(createInput[64..96], &slot);
     var hash: [32]u8 = undefined;
-    hasher.final(&hash);
+    Blake3.hash(&createInput, &hash, .{});
     return hash;
 }
 
-/// Global accumulator storage key: keccak256(contract || "global" || slot)
+/// Global accumulator storage key: blake3(contract || "global" || slot)
 /// Used for commutative state like totalSupply, pool reserves.
 /// All transactions writing this key produce AccumulatorDeltas that merge.
 pub fn globalStorageKey(contract: types.Address, slot: [32]u8) [32]u8 {
-    var hasher = Keccak256.init(.{});
-    hasher.update(&contract.bytes);
-    hasher.update("global");
-    hasher.update(&slot);
+    var createInput: [70]u8 = undefined;
+    @memcpy(createInput[0..32], &contract.bytes);
+    @memcpy(createInput[32..38], "global");
+    @memcpy(createInput[38..70], &slot);
     var hash: [32]u8 = undefined;
-    hasher.final(&hash);
+    Blake3.hash(&createInput, &hash, .{});
     return hash;
 }
 
-/// Legacy-compatible storage key: keccak256(contract || slot)
+/// Legacy-compatible storage key: blake3(contract || slot)
 /// Used for contracts that haven't been classified yet by the transpiler.
 pub fn legacyStorageKey(addr: types.Address, slot: [32]u8) [32]u8 {
-    var input: [52]u8 = undefined;
-    @memcpy(input[0..20], &addr.bytes);
-    @memcpy(input[20..52], &slot);
+    var input: [64]u8 = undefined;
+    @memcpy(input[0..32], &addr.bytes);
+    @memcpy(input[32..64], &slot);
     var hash: [32]u8 = undefined;
-    Keccak256.hash(&input, &hash, .{});
+    Blake3.hash(&input, &hash, .{});
     return hash;
 }
 

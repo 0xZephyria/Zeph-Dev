@@ -171,6 +171,8 @@ pub const Blockchain = struct {
             std.mem.writeInt(u64, key[2..10], block.header.number, .big);
             try self.db.write(&key, &blkHash.bytes);
         }
+
+        try self.db.sync();
     }
 
     fn storeBlock(self: *Blockchain, block: *types.Block) !void {

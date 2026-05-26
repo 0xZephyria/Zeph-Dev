@@ -24,6 +24,56 @@ pub fn decode(allocator: std.mem.Allocator, comptime T: type, data: []const u8) 
     return result;
 }
 
+fn maxSerializedSize(comptime T: type) usize {
+    const info = @typeInfo(T);
+    switch (info) {
+        .int => |int| {
+            const bytes = (int.bits + 7) / 8;
+            return 1 + bytes;
+        },
+        .comptime_int => return 9,
+        .bool => return 1,
+        .optional => |opt| return maxSerializedSize(opt.child),
+        .pointer => |ptr| {
+            if (ptr.size == .slice) return 1024 * 1024;
+            return maxSerializedSize(ptr.child);
+        },
+        .array => |arr| {
+            if (arr.child == u8) {
+                return if (arr.len < 56) 1 + arr.len else 9 + arr.len;
+            } else {
+                const elem_size = maxSerializedSize(arr.child);
+                const total_elems = arr.len * elem_size;
+                return if (total_elems < 56) 1 + total_elems else 9 + total_elems;
+            }
+        },
+        .@"struct" => |s| {
+            if (@hasDecl(T, "encodeToRLP")) {
+                return 1024 * 1024;
+            }
+            if (@hasDecl(T, "bytes") and s.fields.len == 1 and s.fields[0].name.len == 5 and std.mem.eql(u8, s.fields[0].name, "bytes")) {
+                inline for (s.fields) |field| {
+                    if (std.mem.eql(u8, field.name, "bytes")) {
+                        return maxSerializedSize(field.type);
+                    }
+                }
+            }
+            if (T == std.ArrayListUnmanaged(u8) or T == std.ArrayList(u8)) {
+                return 1024 * 1024;
+            }
+            var sum: usize = 0;
+            inline for (s.fields) |field| {
+                sum += maxSerializedSize(field.type);
+            }
+            return if (sum < 56) 1 + sum else 9 + sum;
+        },
+        .@"enum" => |en| {
+            return maxSerializedSize(en.tag_type);
+        },
+        else => return 1024 * 1024,
+    }
+}
+
 /// Serialize a value into an RLP-encoded byte list.
 pub fn serialize(comptime T: type, allocator: std.mem.Allocator, value: T, list: *std.ArrayListUnmanaged(u8)) !void {
     const info = @typeInfo(T);
@@ -67,13 +117,24 @@ pub fn serialize(comptime T: type, allocator: std.mem.Allocator, value: T, list:
             if (arr.child == u8) {
                 try encodeString(allocator, &value, list);
             } else {
-                var inner = std.ArrayListUnmanaged(u8){};
-                defer inner.deinit(allocator);
-                for (value) |item| {
-                    try serialize(arr.child, allocator, item, &inner);
+                const max_size = comptime maxSerializedSize(T);
+                if (max_size <= 2048) {
+                    var buf: [max_size]u8 = undefined;
+                    var inner = std.ArrayList(u8).initBuffer(&buf);
+                    for (value) |item| {
+                        try serialize(arr.child, allocator, item, &inner);
+                    }
+                    try encodeListHeader(allocator, inner.items.len, list);
+                    try list.appendSlice(allocator, inner.items);
+                } else {
+                    var inner = std.ArrayListUnmanaged(u8){};
+                    defer inner.deinit(allocator);
+                    for (value) |item| {
+                        try serialize(arr.child, allocator, item, &inner);
+                    }
+                    try encodeListHeader(allocator, inner.items.len, list);
+                    try list.appendSlice(allocator, inner.items);
                 }
-                try encodeListHeader(allocator, inner.items.len, list);
-                try list.appendSlice(allocator, inner.items);
             }
         },
         .@"struct" => |s| {
@@ -81,17 +142,27 @@ pub fn serialize(comptime T: type, allocator: std.mem.Allocator, value: T, list:
                 try value.encodeToRLP(allocator, list);
             } else if (@hasDecl(T, "bytes") and s.fields.len == 1 and s.fields[0].name.len == 5 and std.mem.eql(u8, s.fields[0].name, "bytes")) {
                 try encodeString(allocator, &value.bytes, list);
-            } else if (T == @import("std").ArrayListUnmanaged(u8)) {
+            } else if (T == std.ArrayListUnmanaged(u8) or T == std.ArrayList(u8)) {
                 try encodeString(allocator, value.items, list);
             } else {
-                // Encode struct as RLP list
-                var inner = std.ArrayListUnmanaged(u8){};
-                defer inner.deinit(allocator);
-                inline for (s.fields) |field| {
-                    try serialize(field.type, allocator, @field(value, field.name), &inner);
+                const max_size = comptime maxSerializedSize(T);
+                if (max_size <= 2048) {
+                    var buf: [max_size]u8 = undefined;
+                    var inner = std.ArrayList(u8).initBuffer(&buf);
+                    inline for (s.fields) |field| {
+                        try serialize(field.type, allocator, @field(value, field.name), &inner);
+                    }
+                    try encodeListHeader(allocator, inner.items.len, list);
+                    try list.appendSlice(allocator, inner.items);
+                } else {
+                    var inner = std.ArrayListUnmanaged(u8){};
+                    defer inner.deinit(allocator);
+                    inline for (s.fields) |field| {
+                        try serialize(field.type, allocator, @field(value, field.name), &inner);
+                    }
+                    try encodeListHeader(allocator, inner.items.len, list);
+                    try list.appendSlice(allocator, inner.items);
                 }
-                try encodeListHeader(allocator, inner.items.len, list);
-                try list.appendSlice(allocator, inner.items);
             }
         },
         .@"enum" => {
@@ -170,35 +241,77 @@ pub fn deserialize(comptime T: type, allocator: std.mem.Allocator, data: []const
                     }
                     return 1 + len;
                 }
-            }
-            return error.InvalidArrayDecode;
-        },
-        .pointer => |ptr| {
-            if (ptr.size == .slice and ptr.child == u8) {
-                if (prefix < 0x80) {
-                    const slice = try allocator.alloc(u8, 1);
-                    slice[0] = prefix;
-                    result.* = slice;
-                    return 1;
-                }
-                if (prefix <= 0xb7) {
-                    const len = @as(usize, prefix - 0x80);
-                    if (1 + len > data.len) return error.Truncated;
-                    const slice = try allocator.alloc(u8, len);
-                    @memcpy(slice, data[1 .. 1 + len]);
-                    result.* = slice;
-                    return 1 + len;
-                }
                 if (prefix <= 0xbf) {
                     const ll = @as(usize, prefix - 0xb7);
                     if (1 + ll > data.len) return error.Truncated;
                     var len: usize = 0;
                     for (data[1 .. 1 + ll]) |b| len = (len << 8) | b;
                     if (1 + ll + len > data.len) return error.Truncated;
-                    const slice = try allocator.alloc(u8, len);
-                    @memcpy(slice, data[1 + ll .. 1 + ll + len]);
-                    result.* = slice;
+                    if (len <= arr.len) {
+                        @memset(result, 0);
+                        @memcpy(result.*[arr.len - len ..], data[1 + ll .. 1 + ll + len]);
+                    }
                     return 1 + ll + len;
+                }
+            }
+            return error.InvalidArrayDecode;
+        },
+        .pointer => |ptr| {
+            if (ptr.size == .slice) {
+                if (ptr.child == u8) {
+                    if (prefix < 0x80) {
+                        const slice = try allocator.alloc(u8, 1);
+                        slice[0] = prefix;
+                        result.* = slice;
+                        return 1;
+                    }
+                    if (prefix <= 0xb7) {
+                        const len = @as(usize, prefix - 0x80);
+                        if (1 + len > data.len) return error.Truncated;
+                        const slice = try allocator.alloc(u8, len);
+                        @memcpy(slice, data[1 .. 1 + len]);
+                        result.* = slice;
+                        return 1 + len;
+                    }
+                    if (prefix <= 0xbf) {
+                        const ll = @as(usize, prefix - 0xb7);
+                        if (1 + ll > data.len) return error.Truncated;
+                        var len: usize = 0;
+                        for (data[1 .. 1 + ll]) |b| len = (len << 8) | b;
+                        if (1 + ll + len > data.len) return error.Truncated;
+                        const slice = try allocator.alloc(u8, len);
+                        @memcpy(slice, data[1 + ll .. 1 + ll + len]);
+                        result.* = slice;
+                        return 1 + ll + len;
+                    }
+                } else {
+                    var offset: usize = 0;
+                    var payload_len: usize = 0;
+                    if (prefix >= 0xc0 and prefix <= 0xf7) {
+                        payload_len = prefix - 0xc0;
+                        offset = 1;
+                    } else if (prefix >= 0xf8) {
+                        const ll = @as(usize, prefix - 0xf7);
+                        offset = 1 + ll;
+                        if (1 + ll > data.len) return error.Truncated;
+                        for (data[1 .. 1 + ll]) |b| payload_len = (payload_len << 8) | b;
+                    } else {
+                        return error.ExpectedList;
+                    }
+                    if (offset + payload_len > data.len) return error.Truncated;
+                    const list_data = data[offset .. offset + payload_len];
+                    var items = std.ArrayListUnmanaged(ptr.child){};
+                    errdefer items.deinit(allocator);
+
+                    var list_offset: usize = 0;
+                    while (list_offset < list_data.len) {
+                        var item: ptr.child = undefined;
+                        const consumed = try deserialize(ptr.child, allocator, list_data[list_offset..], &item);
+                        try items.append(allocator, item);
+                        list_offset += consumed;
+                    }
+                    result.* = try items.toOwnedSlice(allocator);
+                    return offset + payload_len;
                 }
             }
             return error.UnsupportedPointerDecode;

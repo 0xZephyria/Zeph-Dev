@@ -187,7 +187,7 @@ pub const BlockProducer = struct {
 };
 
 fn computeTxRoot(txs: []const types.Transaction) types.Hash {
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+    var hasher = std.crypto.hash.Blake3.init(.{});
     for (txs) |*tx| {
         const tx_hash = tx.hash();
         hasher.update(&tx_hash.bytes);

@@ -18,7 +18,7 @@ const Address = types.Address;
 const Hash = types.Hash;
 
 // ── Version Info ─────────────────────────────────────────────────────────
-const VERSION = "1.0.0";
+const VERSION = "0.2.0";
 const BUILD_TARGET = "native";
 const VM_BACKEND = "RISC-V RV64IM";
 const STORAGE_ENGINE = "ZephyrDB";
@@ -47,6 +47,7 @@ const C_GLW = "\x1b[38;5;51m";
 const C_BOX = "\x1b[38;5;240m";
 
 // ── Entry Point ──────────────────────────────────────────────────────────
+
 
 /// Main entry point for the Zephyria blockchain node.
 /// Parses CLI commands and dispatches to the appropriate handlers.
@@ -119,6 +120,7 @@ fn printUsage() void {
         "    " ++ C_YEL ++ "--http.port" ++ RST ++ " " ++ C_DIM ++ "<p>   JSON-RPC HTTP port        (default: 8545)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--datadir" ++ RST ++ " " ++ C_DIM ++ "<path>  Data directory             (default: ./node_data)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--network" ++ RST ++ " " ++ C_DIM ++ "<name>  Network: devnet|testnet   (default: devnet)" ++ RST ++ "\n" ++
+        "    " ++ C_YEL ++ "--bootstrap" ++ RST ++ " " ++ C_DIM ++ "<ip:port> Bootstrap node address(es)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--mine" ++ RST ++ "            " ++ C_DIM ++ "Enable block production" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--miner.key" ++ RST ++ " " ++ C_DIM ++ "<hex> Validator private key (hex)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--keystore" ++ RST ++ " " ++ C_DIM ++ "<path> Keystore file for validator" ++ RST ++ "\n" ++
@@ -282,6 +284,8 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var minerKeyHex: ?[]const u8 = null;
     var minerKeystorePath: ?[]const u8 = null;
     var password: []const u8 = "password";
+    var bootstrapAddrs = std.ArrayListUnmanaged([]const u8){};
+    defer bootstrapAddrs.deinit(allocator);
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -322,6 +326,11 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
                 password = args[i + 1];
                 i += 1;
             }
+        } else if (std.mem.eql(u8, args[i], "--bootstrap")) {
+            if (i + 1 < args.len) {
+                try bootstrapAddrs.append(allocator, args[i + 1]);
+                i += 1;
+            }
         } else if (std.mem.eql(u8, args[i], "--log-level")) {
             if (i + 1 < args.len) {
                 if (log.Level.fromString(args[i + 1])) |level| {
@@ -352,42 +361,16 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.posix.sigaction(std.posix.SIG.INT, &act, null);
     std.posix.sigaction(std.posix.SIG.TERM, &act, null);
 
-    // 1. Storage (Arena-backed FlatTable — Flat KV, no per-block state root)
+    // 1. Storage (ZephyrDB High-Performance Hybrid Storage Engine)
     try std.fs.cwd().makePath(dataDir);
-    var arena = try storage.zephyrdb.Arena.initForTesting(allocator, 512 * 1024 * 1024);
-    errdefer arena.deinit();
-    var flat_kv = try storage.zephyrdb.FlatTable.init(&arena, null);
-    errdefer {
-        flat_kv.deinit();
-        arena.deinit();
-    }
-    const db_adapter = storage.DB{
-        .ptr = &flat_kv,
-        .writeFn = struct {
-            fn write(ptr: *anyopaque, key: []const u8, value: []const u8) !void {
-                const ft: *storage.zephyrdb.FlatTable = @ptrCast(@alignCast(ptr));
-                var key32: [32]u8 = [_]u8{0} ** 32;
-                @memcpy(key32[0..@min(key.len, @as(usize, 32))], key);
-                try ft.put(key32, value);
-            }
-        }.write,
-        .readFn = struct {
-            fn read(ptr: *anyopaque, key: []const u8) ?[]const u8 {
-                const ft: *storage.zephyrdb.FlatTable = @ptrCast(@alignCast(ptr));
-                var key32: [32]u8 = [_]u8{0} ** 32;
-                @memcpy(key32[0..@min(key.len, @as(usize, 32))], key);
-                return ft.get(key32);
-            }
-        }.read,
-        .deleteFn = null,
-    };
+    var db = try storage.open(allocator, dataDir);
+    defer db.close();
+
+    const db_adapter = db.asAbstractDB();
+
     var worldState = core.state.State.init(allocator, db_adapter);
-    defer {
-        worldState.deinit();
-        flat_kv.deinit();
-        arena.deinit();
-    }
-    printComponentLine("├─", "Storage       ", "Arena + FlatTable (FlatKV)");
+    defer worldState.deinit();
+    printComponentLine("├─", "Storage       ", "ZephyrDB FlatTable + Persistent LSM");
 
     // 2. Network config + Genesis
     const network = core.genesis.getNetworkConfig(networkName);
@@ -415,12 +398,10 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         log.warn("Keystore decryption not implemented, using random key", .{});
         std.crypto.random.bytes(&minerPrivKey);
         validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
-    } else if (shouldMine) {
+    } else {
+        // Generate a random identity key (for either mining or standby mode)
         std.crypto.random.bytes(&minerPrivKey);
         validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
-    } else {
-        log.err("Mining requested but no key provided. Use --miner.key <hex> or --keystore <path>", .{});
-        return error.MinerKeyRequired;
     }
 
     // 3. Blockchain
@@ -439,8 +420,8 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             .alloc = &alloc,
             .systemContracts = &sysContracts,
         };
-        const genesisBlock = core.genesis.applyGenesis(allocator, db_adapter, genesis) catch {
-            log.err("Failed to create genesis block", .{});
+        const genesisBlock = core.genesis.applyGenesis(allocator, db_adapter, genesis) catch |err| {
+            log.err("Failed to create genesis block: {}", .{err});
             return;
         };
         try chain.addBlock(genesisBlock);
@@ -453,7 +434,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         .address = validatorAddr,
         .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
         .status = .Active,
-        .blsPubKey = [_]u8{0} ** 48,
+        .blsPubKey = consensus.zelius.deriveBlsPubKey(minerPrivKey),
         .commission = 500, // 5%
         .activationBlock = 0,
         .slashCount = 0,
@@ -628,6 +609,42 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     p2pServer.setThreadAttestPool(&threadAttestPool);
     p2pServer.setSnowballEngine(&snowball);
 
+    // Register bootstrap nodes
+    for (bootstrapAddrs.items) |addr_str| {
+        var ip_part = addr_str;
+        var port_part: u16 = 30303;
+        if (std.mem.indexOfScalar(u8, addr_str, ':')) |colon_idx| {
+            ip_part = addr_str[0..colon_idx];
+            port_part = std.fmt.parseInt(u16, addr_str[colon_idx + 1 ..], 10) catch |err| {
+                log.err("Invalid bootstrap port in '{s}': {}", .{ addr_str, err });
+                return err;
+            };
+        }
+        const address = std.net.Address.parseIp4(ip_part, port_part) catch |err| {
+            log.err("Invalid bootstrap IP/port '{s}': {}", .{ addr_str, err });
+            return err;
+        };
+
+        var mock_id: [64]u8 = [_]u8{0} ** 64;
+        std.crypto.random.bytes(mock_id[0..32]); // Generate a bootstrap peer ID
+        var mock_hash: [32]u8 = undefined;
+        std.crypto.hash.Blake3.hash(&mock_id, &mock_hash, .{});
+
+        const node_entry = p2p.discovery.Node{
+            .id = mock_id,
+            .hash = mock_hash,
+            .address = address,
+            .lastSeen = std.time.milliTimestamp(),
+            .lastPing = 0,
+            .pingFailures = 0,
+            .peerRole = .Validator,
+            .validatorAddress = core.types.Address.zero(),
+            .subscribedSubnets = [_]u8{0} ** 8,
+            .stakeAmount = 0,
+        };
+        try p2pServer.discovery.addBootstrapNode(node_entry);
+    }
+
     // P2: Shred Signature Verifier — Ed25519 + 10% sampling
     var shredVerifier = p2p.shred_verifier.ShredVerifier.init(allocator, .{
         .sampleRate = 0.10,
@@ -657,7 +674,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     printComponentFmt("└─", "JSON-RPC      ", "Port {d}", httpPort);
 
     // ── Node Dashboard ──
-    var addr_buf: [42]u8 = undefined;
+    var addr_buf: [66]u8 = undefined;
     const addr_hex = try @import("utils").hex.encodeBuffer(&addr_buf, &validatorAddr.bytes);
 
     // Top border

@@ -22,7 +22,6 @@
 const std = @import("std");
 const core = @import("core");
 const types = @import("types.zig");
-const registry = @import("registry.zig");
 const vdf = @import("vdf.zig");
 const vrf = @import("vrf.zig");
 const staking_mod = @import("staking.zig");
@@ -281,7 +280,7 @@ pub const ZeliusEngine = struct {
                 @memcpy(evidence[0..32], &existing.blockHash.bytes);
                 @memcpy(evidence[32..64], &blockHash.bytes);
                 var evidenceHash: core.types.Hash = undefined;
-                std.crypto.hash.sha3.Keccak256.hash(&evidence, &evidenceHash.bytes, .{});
+                std.crypto.hash.Blake3.hash(&evidence, &evidenceHash.bytes, .{});
 
                 const event = SlashEvent{
                     .validator = proposer,
@@ -490,7 +489,8 @@ pub const ZeliusEngine = struct {
         const header = &block.header;
 
         // VDF computation
-        const vdf_size = 32;
+        const expected_checkpoints = self.vdfIterations / self.vdfCheckpointInterval;
+        const vdf_size = expected_checkpoints * 32;
         const total_size = vdf_size + 48 + 96;
 
         var preserved_data = try self.allocator.alloc(u8, total_size);
@@ -499,20 +499,35 @@ pub const ZeliusEngine = struct {
         // VDF
         var vdf_input: [32]u8 = undefined;
         @memcpy(&vdf_input, &header.parentHash.bytes);
-        const result_vdf = try vdf.VDF.compute(self.allocator, &vdf_input, self.vdfIterations);
-        defer self.allocator.free(result_vdf);
-        @memcpy(preserved_data[0..32], result_vdf[0..32]);
+        
+        const checkpoints = try vdf.VDF.compute_checkpoints(
+            self.allocator, 
+            &vdf_input, 
+            self.vdfIterations, 
+            self.vdfCheckpointInterval
+        );
+        defer {
+            for (checkpoints) |c_slice| {
+                self.allocator.free(c_slice);
+            }
+            self.allocator.free(checkpoints);
+        }
+
+        for (checkpoints, 0..) |c_slice, idx| {
+            @memcpy(preserved_data[idx * 32 ..][0..32], c_slice[0..32]);
+        }
 
         // VRF proof
         var vrf_input: [40]u8 = undefined;
         @memcpy(vrf_input[0..32], &self.epochSeed);
         std.mem.writeInt(u64, vrf_input[32..40], header.number, .big);
         const proof = try vrf.VRF.prove(&self.blsPrivKey.?, &vrf_input);
-        @memcpy(preserved_data[32 .. 32 + 48], &proof);
+        @memcpy(preserved_data[vdf_size .. vdf_size + 48], &proof);
 
         // BLS signature over block hash
+        const sig_offset = vdf_size + 48;
         const original_extra = header.extraData;
-        header.extraData = preserved_data;
+        header.extraData = preserved_data[0..sig_offset];
         const h_bytes = block.hash();
         header.extraData = original_extra;
 
@@ -560,7 +575,7 @@ pub const ZeliusEngine = struct {
 
         // 2. Verify VDF
         var vdf_input: [32]u8 = undefined;
-        @memcpy(&vdf_input, &parent.parentHash.bytes);
+        @memcpy(&vdf_input, &block.header.parentHash.bytes);
         const checkpoints = block.header.extraData[0..vdf_size];
         const vdf_valid = try vdf.VDF.verify_parallel(self.allocator, &vdf_input, checkpoints, self.vdfCheckpointInterval);
         if (!vdf_valid) return error.InvalidVDF;
@@ -569,9 +584,45 @@ pub const ZeliusEngine = struct {
         const sig_offset = vdf_size + 48;
         const sig_bytes = block.header.extraData[sig_offset..][0..96];
 
-        const signed_extra = try self.allocator.alloc(u8, sig_offset);
-        defer self.allocator.free(signed_extra);
-        @memcpy(signed_extra, block.header.extraData[0..sig_offset]);
+        var proposer_pk: ?[48]u8 = null;
+        for (self.activeValidators) |v| {
+            if (std.mem.eql(u8, &v.address.bytes, &block.header.coinbase.bytes)) {
+                proposer_pk = v.blsPubKey;
+                break;
+            }
+        }
+        const pk_bytes = proposer_pk orelse return error.ValidatorNotFound;
+
+        const original_extra = block.header.extraData;
+        block.header.extraData = original_extra[0..sig_offset];
+        const h_bytes = block.hash();
+        block.header.extraData = original_extra;
+
+        var p2: c.blst_p2 = undefined;
+        c.blst_hash_to_g2(&p2, &h_bytes.bytes, h_bytes.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
+        var msg_affine: c.blst_p2_affine = undefined;
+        c.blst_p2_to_affine(&msg_affine, &p2);
+
+        var sig_affine: c.blst_p2_affine = undefined;
+        const sig_rc = c.blst_p2_uncompress(&sig_affine, sig_bytes.ptr);
+        if (sig_rc != c.BLST_SUCCESS) return error.InvalidSignature;
+
+        var pk_affine: c.blst_p1_affine = undefined;
+        const pk_rc = c.blst_p1_uncompress(&pk_affine, &pk_bytes);
+        if (pk_rc != c.BLST_SUCCESS) return error.InvalidPublicKey;
+
+        const result = c.blst_core_verify_pk_in_g1(
+            &pk_affine,
+            &sig_affine,
+            true,
+            &h_bytes.bytes,
+            h_bytes.bytes.len,
+            BLS_DST.ptr,
+            BLS_DST.len,
+            null,
+            0,
+        );
+        if (result != c.BLST_SUCCESS) return error.InvalidSignature;
 
         // 4. Double-signing check
         const blockHash = block.hash();
@@ -593,8 +644,6 @@ pub const ZeliusEngine = struct {
         }
 
         self.blocksVerified += 1;
-
-        _ = sig_bytes;
     }
 
     // ── DAG Block Validation ────────────────────────────────────────
@@ -689,18 +738,14 @@ pub const ZeliusEngine = struct {
     }
 
     fn computeHeaderHash(header: *core.types.Header) core.types.Hash {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-        hasher.update(&header.parentHash.bytes);
-        var num_buf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &num_buf, header.number, .big);
-        hasher.update(&num_buf);
-        std.mem.writeInt(u64, &num_buf, header.time, .big);
-        hasher.update(&num_buf);
-        hasher.update(&header.coinbase.bytes);
-        hasher.update(&header.verkleRoot.bytes);
-        var h: core.types.Hash = undefined;
-        hasher.final(&h.bytes);
-        return h;
+        var h_res = core.types.Hash.zero();
+        const ally = std.heap.page_allocator;
+        const encoded = header.rlpEncode(ally) catch return h_res;
+        defer ally.free(encoded);
+        var hasher = std.crypto.hash.Blake3.init(.{});
+        hasher.update(encoded);
+        hasher.final(&h_res.bytes);
+        return h_res;
     }
 
     /// Get engine statistics.
@@ -728,3 +773,13 @@ pub const ZeliusEngine = struct {
         };
     }
 };
+
+pub fn deriveBlsPubKey(seed: [32]u8) [48]u8 {
+    var pk: c.blst_p1 = undefined;
+    var sk: c.blst_scalar = undefined;
+    c.blst_scalar_from_bendian(&sk, &seed);
+    c.blst_sk_to_pk_in_g1(&pk, &sk);
+    var pk_compressed: [48]u8 = undefined;
+    c.blst_p1_compress(&pk_compressed, &pk);
+    return pk_compressed;
+}

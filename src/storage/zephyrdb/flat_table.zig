@@ -94,6 +94,10 @@ pub const FlatTable = struct {
     /// Get a value by 32-byte key. Returns null if not found.
     /// Returned slice points into Arena memory — valid until Arena reset.
     pub fn get(self: *Self, key: [32]u8) ?[]const u8 {
+        const stripe = hashKey(key) % STRIPE_COUNT;
+        self.stripe_locks[stripe].lock();
+        defer self.stripe_locks[stripe].unlock();
+
         var idx = hashKey(key) & self.mask;
         var probes: u32 = 0;
 
@@ -246,7 +250,7 @@ test "FlatTable basic put/get" {
     var arena = try Arena.initForTesting(std.testing.allocator, 1024 * 1024);
     defer arena.deinit();
 
-    var table = try FlatTable.init(&arena, null);
+    var table = try FlatTable.initWithCapacity(&arena, null, 1000);
     defer table.deinit();
 
     const key = [_]u8{0xAA} ** 32;
@@ -261,7 +265,7 @@ test "FlatTable overwrite" {
     var arena = try Arena.initForTesting(std.testing.allocator, 1024 * 1024);
     defer arena.deinit();
 
-    var table = try FlatTable.init(&arena, null);
+    var table = try FlatTable.initWithCapacity(&arena, null, 1000);
     defer table.deinit();
 
     const key = [_]u8{0xBB} ** 32;
@@ -277,7 +281,7 @@ test "FlatTable delete" {
     var arena = try Arena.initForTesting(std.testing.allocator, 1024 * 1024);
     defer arena.deinit();
 
-    var table = try FlatTable.init(&arena, null);
+    var table = try FlatTable.initWithCapacity(&arena, null, 1000);
     defer table.deinit();
 
     const key = [_]u8{0xCC} ** 32;

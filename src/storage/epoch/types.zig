@@ -253,7 +253,7 @@ pub const BlockSummary = struct {
     pub fn fromHeader(header: anytype) BlockSummary {
         // Compute header hash from verkleRoot (approximation without full RLP encoding)
         var header_hash: Hash = [_]u8{0} ** 32;
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{}); // wait, used Sha256 earlier, wait, let's see
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(&header.verkleRoot.bytes);
         hasher.update(std.mem.asBytes(&header.number));
         hasher.update(std.mem.asBytes(&header.time));

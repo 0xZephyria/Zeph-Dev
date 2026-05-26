@@ -138,9 +138,9 @@ const TestResult = struct {
 // ============================================================================
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.heap.c_allocator;
+    defer vm.contractLoader.deinitAotCache(allocator);
+
 
     var stdout_wrapper = std.fs.File.stdout().writer(&.{});
     const stdout = &stdout_wrapper.interface;

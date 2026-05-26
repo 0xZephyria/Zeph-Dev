@@ -39,10 +39,15 @@ pub const ExecutionPlan = struct {
     totalGas: u64,
     threadAssignments: []ThreadAssignment,
     allocator: std.mem.Allocator,
+    all_txs: ?[]types.Transaction = null,
 
     pub fn deinit(self: *ExecutionPlan) void {
-        for (self.lanes) |*lane| {
-            self.allocator.free(lane.txs);
+        if (self.all_txs) |txs| {
+            self.allocator.free(txs);
+        } else {
+            for (self.lanes) |*lane| {
+                self.allocator.free(lane.txs);
+            }
         }
         self.allocator.free(self.lanes);
         for (self.threadAssignments) |*ta| {
@@ -236,6 +241,10 @@ pub fn scheduleFromTxs(
     var total_txs: u32 = 0;
     var total_gas: u64 = 0;
 
+    const all_txs_contig = try allocator.alloc(types.Transaction, transactions.len);
+    errdefer allocator.free(all_txs_contig);
+    var current_tx_offset: usize = 0;
+
     var it2 = sender_txs.iterator();
     while (it2.next()) |entry| {
         const txs_list = entry.value_ptr.items;
@@ -248,12 +257,14 @@ pub fn scheduleFromTxs(
             lane_gas += tx.gasLimit;
         }
 
-        const txs = try allocator.alloc(types.Transaction, txs_list.len);
-        @memcpy(txs, txs_list);
+        const start_offset = current_tx_offset;
+        const end_offset = start_offset + txs_list.len;
+        @memcpy(all_txs_contig[start_offset..end_offset], txs_list);
+        current_tx_offset = end_offset;
 
         try exec_lanes.append(allocator, ExecutionLane{
             .sender = entry.key_ptr.*,
-            .txs = txs,
+            .txs = all_txs_contig[start_offset..end_offset],
             .baseNonce = txs_list[0].nonce,
             .totalGas = lane_gas,
             .priority = max_price,
@@ -282,6 +293,7 @@ pub fn scheduleFromTxs(
         .totalGas = total_gas,
         .threadAssignments = assignments,
         .allocator = allocator,
+        .all_txs = all_txs_contig,
     };
 }
 
@@ -390,7 +402,7 @@ pub fn validatePlan(plan: *const ExecutionPlan) !void {
 /// Compute the DAG root hash for a plan (included in block header).
 /// Validators use this to verify DAG structure.
 pub fn computeDAGRoot(plan: *const ExecutionPlan) types.Hash {
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+    var hasher = std.crypto.hash.Blake3.init(.{});
 
     for (plan.lanes) |*lane| {
         hasher.update(&lane.sender.bytes);

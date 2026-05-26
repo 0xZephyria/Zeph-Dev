@@ -705,28 +705,6 @@ fn revertExecution(vm: *ForgeVM) void {
     vm.returnDataLen = @truncate(dataLen);
 }
 
-/// Syscall HASH_KECCAK256 (if wired) — a0 = syscallId, a1 = data ptr, a2 = data len, a3 = result ptr (32 bytes)
-fn keccak256(vm: *ForgeVM) SyscallError!void {
-    const dataPtr = vm.regs[11]; // a1
-    const dataLen = vm.regs[12]; // a2
-    const resultPtr = vm.regs[13]; // a3
-
-    // Gas: base + per word
-    const words = (dataLen + 31) / 32;
-    const gasCost = gasTable.SyscallGas.KECCAK256_BASE + gasTable.SyscallGas.KECCAK256_PER_WORD * @as(u64, words);
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
-
-    const data = vm.memory.getSlice(dataPtr, dataLen) catch return SyscallError.SegFault;
-
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-    hasher.update(data);
-    var hash: [32]u8 = undefined;
-    hasher.final(&hash);
-
-    const result_slice = vm.memory.getSliceMut(resultPtr, 32) catch return SyscallError.SegFault;
-    @memcpy(result_slice, &hash);
-}
-
 /// Syscall 0x0C: get_balance (EIP-2929 warm/cold) — a0 = ptr to 32-byte address, writes 32-byte balance to a1
 fn getBalance(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const addrPtr: u32 = @truncate(vm.regs[11]);
@@ -1736,9 +1714,7 @@ test "syscall: revert sets status to reverted" {
     try testing.expectEqual(executor.ExecutionStatus.reverted, ctx.vm.status);
 }
 
-test "syscall: keccak256" {
-    // Note: KECCAK256 is not a dispatched syscall in ForgeVM (FORGE uses BLAKE3).
-    // This test verifies the hash computation helper via direct HostEnv inspection.
+test "syscall: blake3" {
     var env = HostEnv.init(testing.allocator);
     defer env.deinit();
 
@@ -1753,19 +1729,26 @@ test "syscall: keccak256" {
         try ctx.mem.storeByte(data_start + @as(u32, @intCast(idx)), b);
     }
 
-    // Compute expected keccak256("hello") and verify it manually
-    var expected: [32]u8 = undefined;
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
-    hasher.update("hello");
-    hasher.final(&expected);
+    // Set up syscall args: a0 = SyscallId.HASH_BLAKE3, a1 = data_start, a2 = data.len, a3 = outPtr
+    const out_ptr = data_start + 32;
+    ctx.vm.regs[10] = SyscallId.HASH_BLAKE3;
+    ctx.vm.regs[11] = data_start;
+    ctx.vm.regs[12] = data.len;
+    ctx.vm.regs[13] = out_ptr;
 
-    // Verify the expected hash is non-zero (sanity check)
-    var all_zero = true;
-    for (expected) |b| if (b != 0) {
-        all_zero = false;
-        break;
-    };
-    try testing.expect(!all_zero);
+    try handleBlake3(&ctx.vm, &env);
+
+    // Read result
+    var result: [32]u8 = undefined;
+    for (0..32) |idx| {
+        result[idx] = ctx.mem.loadByte(out_ptr + @as(u32, @intCast(idx))) catch unreachable;
+    }
+
+    // Compute expected blake3("hello")
+    var expected: [32]u8 = undefined;
+    std.crypto.hash.Blake3.hash("hello", &expected, .{});
+
+    try testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "syscall: storage_load and storage_store round-trip" {
@@ -1880,8 +1863,7 @@ test "syscall: tload returns zero for unset key" {
 
 test "syscall: create2 deterministic address derivation" {
     // Verify the CREATE2 address derivation formula:
-    // address = keccak256(0xFF || sender || salt || keccak256(initcode))[12..32]
-    // This test checks the math matches the EIP-1014 spec.
+    // address = blake3(0x02 || sender || salt || blake3(initcode))
     var env = HostEnv.init(testing.allocator);
     defer env.deinit();
 
@@ -1895,22 +1877,18 @@ test "syscall: create2 deterministic address derivation" {
     var salt: [32]u8 = [_]u8{0} ** 32;
     salt[31] = 0x42; // salt = 42
 
-    // keccak256(initcode)
+    // blake3(initcode)
     var initcode_hash: [32]u8 = undefined;
-    var h1 = std.crypto.hash.sha3.Keccak256.init(.{});
-    h1.update(initcode);
-    h1.final(&initcode_hash);
+    std.crypto.hash.Blake3.hash(initcode, &initcode_hash, .{});
 
-    // keccak256(0xFF || sender || salt || initcode_hash)
-    var h2 = std.crypto.hash.sha3.Keccak256.init(.{});
-    h2.update(&[_]u8{0xFF});
-    h2.update(&sender);
-    h2.update(&salt);
-    h2.update(&initcode_hash);
-    var expected_hash: [32]u8 = undefined;
-    h2.final(&expected_hash);
+    // blake3(0x02 || sender || salt || initcode_hash)
+    var create2Input: [97]u8 = undefined;
+    create2Input[0] = 0x02;
+    @memcpy(create2Input[1..33], &sender);
+    @memcpy(create2Input[33..65], &salt);
+    @memcpy(create2Input[65..97], &initcode_hash);
     var expected_addr: [32]u8 = undefined;
-    @memcpy(&expected_addr, expected_hash[12..32]);
+    std.crypto.hash.Blake3.hash(&create2Input, &expected_addr, .{});
 
     // Verify the computed address is non-zero and deterministic
     var all_zero = true;
@@ -1923,15 +1901,8 @@ test "syscall: create2 deterministic address derivation" {
     try testing.expect(!all_zero); // Address should not be all zeros
 
     // Verify that computing the same inputs again produces the same address (deterministic)
-    var h3 = std.crypto.hash.sha3.Keccak256.init(.{});
-    h3.update(&[_]u8{0xFF});
-    h3.update(&sender);
-    h3.update(&salt);
-    h3.update(&initcode_hash);
-    var hash2: [32]u8 = undefined;
-    h3.final(&hash2);
     var addr2: [32]u8 = undefined;
-    @memcpy(&addr2, hash2[12..32]);
+    std.crypto.hash.Blake3.hash(&create2Input, &addr2, .{});
 
     try testing.expectEqualSlices(u8, &expected_addr, &addr2);
 }

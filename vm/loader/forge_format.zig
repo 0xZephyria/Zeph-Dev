@@ -167,7 +167,7 @@ pub fn build(
     }
 
     var code_hash: [32]u8 = undefined;
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+    var hasher = std.crypto.hash.Blake3.init(.{});
     hasher.update(bytecode);
     hasher.final(&code_hash);
 
@@ -242,7 +242,7 @@ test "code hash is correct" {
     const parsed = try parse(pkg);
 
     var expected_hash: [32]u8 = undefined;
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+    var hasher = std.crypto.hash.Blake3.init(.{});
     hasher.update(bytecode);
     hasher.final(&expected_hash);
 

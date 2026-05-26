@@ -346,7 +346,7 @@ test "Discovery - add and find nodes" {
         var id: [64]u8 = [_]u8{0} ** 64;
         id[0] = @intCast(i + 2);
         var hash: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&id, &hash, .{});
+        std.crypto.hash.Blake3.hash(&id, &hash, .{});
 
         const node = discovery.Node{
             .id = id,
@@ -381,7 +381,7 @@ test "Discovery - subnet-aware search" {
     var id: [64]u8 = [_]u8{0} ** 64;
     id[0] = 99;
     var hash: [32]u8 = undefined;
-    std.crypto.hash.sha3.Keccak256.hash(&id, &hash, .{});
+    std.crypto.hash.Blake3.hash(&id, &hash, .{});
 
     var subnets: [8]u8 = [_]u8{0} ** 8;
     types.setSubnetBit(&subnets, 10);
@@ -407,22 +407,23 @@ test "Discovery - subnet-aware search" {
     try testing.expect(found[0].isInSubnet(10));
 }
 
-test "Discovery - ENR serialize/deserialize roundtrip" {
+test "Discovery - ZNR serialize/deserialize roundtrip" {
     const pubkey = [_]u8{0xAA} ** 33;
-    var enr = discovery.EnrRecord.init(pubkey, [4]u8{ 192, 168, 1, 1 }, 30303);
-    enr.seq = 42;
-    enr.stake = 1000000;
+    var znr = discovery.ZnrRecord.init(pubkey, [4]u8{ 192, 168, 1, 1 }, 30303);
+    znr.seq = 42;
+    znr.stake = 1000000;
 
     var buf: [128]u8 = undefined;
-    const len = enr.serialize(&buf);
+    const len = znr.serialize(&buf);
     try testing.expect(len > 0);
 
-    const decoded = discovery.EnrRecord.deserialize(buf[0..len]);
+    const decoded = discovery.ZnrRecord.deserialize(buf[0..len]);
     try testing.expect(decoded != null);
     try testing.expectEqual(@as(u64, 42), decoded.?.seq);
     try testing.expectEqualSlices(u8, &pubkey, &decoded.?.pubkey);
     try testing.expectEqual(@as(u16, 30303), decoded.?.udpPort);
     try testing.expectEqual(@as(u64, 1000000), decoded.?.stake);
+    try testing.expectEqualSlices(u8, "znr1", &decoded.?.id);
 }
 
 test "Discovery - stats" {

@@ -122,7 +122,7 @@ pub const MMR = struct {
 
     /// Hash two child hashes to produce parent hash
     fn hashChildren(left: Hash, right: Hash) Hash {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(&left);
         hasher.update(&right);
         var result: Hash = undefined;

@@ -707,7 +707,7 @@ test "threaded: gas tracking" {
     defer ctx.deinit();
     const result = executeThreaded(&ctx.vm, ctx.decoded, null);
     try testing.expectEqual(ExecutionStatus.breakpoint, result.status);
-    try testing.expect(result.gas_used > 0);
+    try testing.expect(result.gasUsed > 0);
     try testing.expectEqual(@as(u64, 3), ctx.vm.regs[1]);
 }
 
@@ -721,7 +721,7 @@ test "threaded: out of gas" {
     ctx.fixMemPtr();
     defer ctx.deinit();
     const result = executeThreaded(&ctx.vm, ctx.decoded, null);
-    try testing.expectEqual(ExecutionStatus.out_of_gas, result.status);
+    try testing.expectEqual(ExecutionStatus.outOfGas, result.status);
 }
 
 test "threaded: with basic block analysis" {

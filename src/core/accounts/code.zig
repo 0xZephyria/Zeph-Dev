@@ -9,7 +9,7 @@
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 pub const CodeAccount = struct {
     header: AccountHeader,
@@ -18,7 +18,7 @@ pub const CodeAccount = struct {
 
     pub fn init(contract_addr: types.Address, code: []const u8) CodeAccount {
         var code_hash: types.Hash = undefined;
-        Keccak256.hash(code, &code_hash.bytes, .{});
+        Blake3.hash(code, &code_hash.bytes, .{});
         return .{
             .header = .{
                 .account_type = .Code,
@@ -31,13 +31,13 @@ pub const CodeAccount = struct {
         };
     }
 
-    /// Empty code hash (keccak256 of empty bytes)
+    /// Empty code hash (blake3 of empty bytes)
     pub const EMPTY_CODE_HASH = types.Hash{
         .bytes = .{
-            0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c,
-            0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
-            0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b,
-            0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+            0xaf, 0x13, 0x49, 0xb9, 0xf5, 0xf9, 0xa1, 0xa6,
+            0xa0, 0x40, 0x4d, 0xea, 0x36, 0xdc, 0xc9, 0x49,
+            0x9b, 0xcb, 0x25, 0xc9, 0xad, 0xc1, 0x12, 0xb7,
+            0xcc, 0x9a, 0x93, 0xca, 0xe4, 0x1f, 0x32, 0x62,
         },
     };
 
@@ -50,9 +50,9 @@ pub const CodeAccount = struct {
     }
 };
 
-/// Compute keccak256 hash of code bytes
+/// Compute blake3 hash of code bytes
 pub fn hashCode(code: []const u8) types.Hash {
     var h: types.Hash = undefined;
-    Keccak256.hash(code, &h.bytes, .{});
+    Blake3.hash(code, &h.bytes, .{});
     return h;
 }

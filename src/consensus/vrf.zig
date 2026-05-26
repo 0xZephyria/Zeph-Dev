@@ -62,7 +62,7 @@ pub const VRF = struct {
 
         // Hash proof to scalar for threshold comparison
         var hash_buf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&proof, &hash_buf, .{});
+        std.crypto.hash.Blake3.hash(&proof, &hash_buf, .{});
         const val_u256 = std.mem.readInt(u256, &hash_buf, .big);
 
         // limit = (2^256 - 1) * stake / total_stake
@@ -77,9 +77,9 @@ pub const VRF = struct {
 
     // ── Domain-Separated Sortition Functions ─────────────────────────
 
-    /// Build a domain-separated VRF input: Keccak256(domain ‖ seed ‖ slot [‖ extra])
+    /// Build a domain-separated VRF input: Blake3(domain ‖ seed ‖ slot [‖ extra])
     fn buildSortitionInput(domain: []const u8, seed: [32]u8, slot: u64, extra: ?[]const u8) [32]u8 {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(domain);
         hasher.update(&seed);
         var buf8: [8]u8 = undefined;
@@ -96,7 +96,7 @@ pub const VRF = struct {
     /// Hash a VRF proof to a u256 for threshold comparison.
     fn proofToScalar(proof: [48]u8) u256 {
         var hash_buf: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&proof, &hash_buf, .{});
+        std.crypto.hash.Blake3.hash(&proof, &hash_buf, .{});
         return std.mem.readInt(u256, &hash_buf, .big);
     }
 
@@ -127,7 +127,7 @@ pub const VRF = struct {
         const input = buildSortitionInput(DOMAIN_PROPOSER, seed, slot, null);
         const proof = try prove(&sk_bytes, &input);
         var vrf_hash: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&proof, &vrf_hash, .{});
+        std.crypto.hash.Blake3.hash(&proof, &vrf_hash, .{});
         const scalar = std.mem.readInt(u256, &vrf_hash, .big);
         const eligible = isEligible(scalar, stake, total_stake, expected_proposers);
         return .{ .eligible = eligible, .proof = proof, .vrf_hash = vrf_hash };

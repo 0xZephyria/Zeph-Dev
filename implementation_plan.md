@@ -1,173 +1,234 @@
-# Architectural Roadmap — Phase 1 Implementation Plan
+# Implementation Plan — Codebase Cleanup and Alignment
 
-> Optimize the sol2zig codebase for high throughput per the [architectural_roadmap.md](file:///Users/karan/sol2zig/reports/architectural_roadmap.md), without breaking existing functionality or deleting correct code.
+This plan identifies and removes unrequired research-phase files and duplicate implementations across the Zephyria node and ForgeVM. Cleaning these files ensures that future optimizations (e.g. progressive rehashing, intrusive LRU caching) target the correct active production candidates.
 
-## Guiding Principles
+## User Review Required
 
-- **No deletion of correct code.** Every existing function, test, and API stays intact.
-- **Additive-first.** New optimized code paths are added alongside existing ones. Existing callers opt in via config flags or new method names.
-- **80–100 line edit chunks.** Each step is a single, self-contained edit of ≤100 lines.
-- **Build-verify after each chunk.** We compile after every major change to catch regressions early.
+We have conducted a recursive dependency analysis of all subsystems to map out what is active and what is dead code. Overwriting the existing plan with this clean-up strategy is necessary before executing any code changes.
 
----
-
-## Overview of Changes (Ordered by Impact & Safety)
-
-| # | Subsystem | File | Optimization | Risk |
-|---|-----------|------|-------------|------|
-| 1 | VM | [sandbox.zig](file:///Users/karan/sol2zig/vm/memory/sandbox.zig) | Dirty-slice write-log reset (replace 384KB memset with tracked dirty ranges) | Low |
-| 2 | Consensus | [zelius.zig](file:///Users/karan/sol2zig/src/consensus/zelius.zig) | O(N²) → O(S log S) write-set independence via sorting | Low |
-| 3 | Storage | [store.zig](file:///Users/karan/sol2zig/src/storage/codestore/store.zig) | O(N) `orderedRemove` → O(1) intrusive doubly-linked LRU list | Low |
-| 4 | Core | [delta_merge.zig](file:///Users/karan/sol2zig/src/core/delta_merge.zig) | Fork-join parallel merge using thread pool | Medium |
-| 5 | Storage | [account_table.zig](file:///Users/karan/sol2zig/src/storage/zephyrdb/account_table.zig) | Progressive rehashing (incremental resize instead of `TableFull`) | Medium |
-| 6 | Consensus | [vdf.zig](file:///Users/karan/sol2zig/src/consensus/vdf.zig) | True parallel VDF checkpoint verification with threads | Low |
+> [!WARNING]
+> This plan involves deleting multiple unused subdirectories (`src/storage/verkle`, `src/storage/lsm`, `src/storage/flatkv`, `src/storage/mmr`, `src/storage/codestore`, `src/p2p/grpc`, `src/rpc/grpc.zig`, `src/rpc/websocket.zig`, and several unused files under `src/consensus/`). 
+> 
+> All core production functionalities (DAG mempool, parallel executor, ZephyrDB, Loom adaptive PoS consensus, HTTP JSON-RPC, UDP P2P) will remain untouched and verified.
 
 ---
 
-## 1. Dirty-Slice VM Reset — [sandbox.zig](file:///Users/karan/sol2zig/vm/memory/sandbox.zig)
+## 1. Graph of Used vs. Unused Components
 
-**Current:** `reset()` calls `@memset(0)` on ~384KB (Heap+Stack+Calldata+Return+Scratch) every transaction.
+Below is the recursive dependency graph showing what is active in the production node (`src/main.zig`) and what is dead code leftover from research/experimentation.
 
-**Target:** Track which memory ranges were actually written, and only zero those on reset. Typical TX touches a few KB → 100x reduction in memset.
+```mermaid
+graph TD
+    %% Active Components
+    subgraph Active Production Pipeline
+        Main[src/main.zig] --> VMBridge[src/vm_bridge.zig]
+        Main --> Core[src/core/mod.zig]
+        Main --> Consensus[src/consensus/mod.zig]
+        Main --> P2P[src/p2p/mod.zig]
+        Main --> RPC[src/rpc/mod.zig]
+        Main --> Node[src/node/mod.zig]
 
-### Chunk 1A — Add DirtyTracker struct (~80 lines)
-Add a new `DirtyTracker` struct at the top of `sandbox.zig` that maintains a fixed-size array of dirty ranges (start, len). When the array is full, it falls back to a "fully dirty" flag that triggers the original full memset.
+        %% VM dependencies
+        VMBridge --> RISC_V_Bridge[src/vm/riscv/mod.zig]
+        RISC_V_Bridge --> ForgeVM_API[vm/vm.zig]
+        ForgeVM_API --> ThreadedExecutor[vm/core/threaded_executor.zig]
+        ForgeVM_API --> SwitchExecutor[vm/core/executor.zig]
+        ForgeVM_API --> SandboxMemory[vm/memory/sandbox.zig]
+        ForgeVM_API --> ContractLoader[vm/loader/contract_loader.zig]
 
-### Chunk 1B — Integrate tracker into SandboxMemory stores (~60 lines)
-Modify `storeByte`, `storeWord`, `storeHalfword`, `storeDoubleword`, and `getSliceMut` to call `self.dirty_tracker.markDirty(addr, size)` after a successful write.
+        %% Core dependencies
+        Core --> DAGExecutor[src/core/dag_executor.zig]
+        Core --> DAGMempool[src/core/dag_mempool.zig]
+        Core --> DAGScheduler[src/core/dag_scheduler.zig]
+        Core --> State[src/core/state.zig]
+        Core --> AsyncRoot[src/core/async_state_root.zig]
+        Core --> DeltaMerge[src/core/delta_merge.zig]
 
-### Chunk 1C — Add `resetTracked()` method + update `reset()` (~50 lines)
-Add `resetTracked()` that only zeros dirty ranges. Leave the original `reset()` completely unchanged for backward compatibility. Add a `use_dirty_tracking: bool` config field — when true, `reset()` delegates to `resetTracked()`.
+        %% Consensus dependencies
+        Consensus --> Zelius[src/consensus/zelius.zig]
+        Consensus --> Adaptive[src/consensus/adaptive.zig]
+        Consensus --> Committees[src/consensus/committees.zig]
+        Consensus --> Snowball[src/consensus/snowball.zig]
+        Consensus --> VotePool[src/consensus/votepool.zig]
 
-### Chunk 1D — Tests (~60 lines)
-Add tests that verify dirty tracking correctly zeros only written regions and that `resetTracked()` produces identical results to `reset()`.
+        %% P2P dependencies
+        P2P --> UDPServer[src/p2p/server.zig]
+        P2P --> Peer[src/p2p/peer.zig]
+        P2P --> Turbine[src/p2p/turbine.zig]
+        P2P --> GulfStream[src/p2p/gulf_stream.zig]
+        P2P --> ShredVerifier[src/p2p/shred_verifier.zig]
+        P2P --> QUICPacket[src/p2p/quic/transport/packet.zig]
 
----
+        %% RPC dependencies
+        RPC --> HTTPServer[src/rpc/http_server.zig]
+        RPC --> Methods[src/rpc/methods.zig]
 
-## 2. O(S log S) Write-Set Independence — [zelius.zig](file:///Users/karan/sol2zig/src/consensus/zelius.zig)
+        %% Storage dependencies
+        Node --> EpochIntegration[src/node/epoch_integration.zig]
+        EpochIntegration --> ZephyrDB[src/storage/zephyrdb/mod.zig]
+        EpochIntegration --> EpochStorage[src/storage/epoch/mod.zig]
+        State --> ZephyrDB
+        State --> EpochStorage
+    end
 
-**Current:** `validateBlockDAG()` at [L656](file:///Users/karan/sol2zig/src/consensus/zelius.zig#L656) uses nested loops → O(N²) comparisons.
+    %% Dead Components
+    subgraph Unused / Research Remnants (To Be Deleted)
+        DeadStorage[Unused Storage]
+        DeadStorage --> LSM[src/storage/lsm/*]
+        DeadStorage --> Verkle[src/storage/verkle/*]
+        DeadStorage --> FlatKV[src/storage/flatkv/*]
+        DeadStorage --> MMR[src/storage/mmr/*]
+        DeadStorage --> CodeStore[src/storage/codestore/*]
 
-**Target:** Sort the key arrays and use a single linear scan for duplicates → O(S log S).
+        DeadConsensus[Unused Consensus]
+        DeadConsensus --> Deferred[src/consensus/deferred_executor.zig]
+        DeadConsensus --> Fraud[src/consensus/fraud_proof.zig]
+        DeadConsensus --> Registry[src/consensus/registry.zig]
 
-### Chunk 2A — Replace nested loop with sort+scan (~70 lines)
-Replace the nested `for` loops at lines 656–671 with:
-1. Collect all nonce keys and balance keys into a single flat array of `[32]u8`.
-2. Sort the array (`std.mem.sortUnstable`).
-3. Linear scan for adjacent duplicates.
+        DeadP2P[Unused P2P Protocols]
+        DeadP2P --> P2P_gRPC[src/p2p/grpc/*]
+        DeadP2P --> QUIC_Full[src/p2p/quic/transport/congestion.zig, recovery.zig, stream.zig, socket.zig, migration.zig, http3.zig, lib.zig, quic.zig]
 
-This preserves the same error types (`NonceKeyCollision`, `BalanceKeyCollision`) and the same function signature.
+        DeadRPC[Unused RPC Server Types]
+        DeadRPC --> RPC_gRPC[src/rpc/grpc.zig]
+        DeadRPC --> RPC_WS[src/rpc/websocket.zig]
 
----
+        DeadTests[Dead Tests]
+        DeadTests --> VerkleIsolate[tests/verkle_isolate.zig]
+    end
 
-## 3. O(1) Intrusive LRU for CodeCache — [store.zig](file:///Users/karan/sol2zig/src/storage/codestore/store.zig)
-
-**Current:** `CodeCache.put()` calls `self.access_order.orderedRemove(0)` → O(N) shift of the entire ArrayList.
-
-**Target:** Replace `access_order: ArrayList` with an intrusive doubly-linked list for O(1) eviction.
-
-### Chunk 3A — Add LRU linked list node + list struct (~90 lines)
-Add `LruNode` (prev/next pointers + hash key) and `LruList` (head/tail + count) structs at the bottom of `store.zig`. Include `moveToBack`, `pushBack`, `remove`, and `popFront` methods.
-
-### Chunk 3B — Rewire CodeCache to use LruList (~80 lines)
-- Replace `access_order: std.ArrayList(CodeHash)` with `lru_list: LruList`.
-- Update `CacheEntry` to include an `lru_node: *LruNode` field.
-- Modify `get()` to call `lru_list.moveToBack(entry.lru_node)`.
-- Modify `put()` to call `lru_list.popFront()` for eviction and `lru_list.pushBack()` for new entries.
-- Update `deinit()` to free LRU nodes.
-
-### Chunk 3C — Tests (~40 lines)
-Add test for LRU eviction order verification.
-
----
-
-## 4. Fork-Join Parallel Delta Merge — [delta_merge.zig](file:///Users/karan/sol2zig/src/core/delta_merge.zig)
-
-**Current:** `mergeBuffers()` is a sequential single-threaded loop.
-
-**Target:** Binary tree reduction — divide buffers into pairs, merge each pair in parallel, then merge results.
-
-### Chunk 4A — Add `ParallelDeltaMerger` struct (~90 lines)
-New struct wrapping `DeltaMerger` with a `mergeParallel()` method that:
-1. Splits input buffers into pairs.
-2. Spawns threads to merge each pair into intermediate `AutoHashMap` results.
-3. Merges intermediate results in a final sequential pass.
-Falls back to `mergeBuffers()` for ≤2 buffers.
-
-### Chunk 4B — Thread worker function + merge-two helper (~70 lines)
-Add `mergeTwoBuffers()` that merges exactly two `DeltaBuffer`s into a `AutoHashMap`, and a worker wrapper for `std.Thread.spawn`.
-
-### Chunk 4C — Tests (~50 lines)
-Test that `mergeParallel()` produces identical results to `mergeBuffers()` across 4 lanes.
-
----
-
-## 5. Progressive Rehashing — [account_table.zig](file:///Users/karan/sol2zig/src/storage/zephyrdb/account_table.zig)
-
-**Current:** `getOrCreate()` returns `error.TableFull` when load factor exceeds 70%.
-
-**Target:** Instead of erroring, begin incremental migration to a new table that is 2× the size. Migrate 64 buckets per write operation until complete.
-
-### Chunk 5A — Add resize state fields + new table pointer (~60 lines)
-Add `resize_target: ?[]AccountEntry`, `resize_capacity: u32`, `resize_progress: u32`, `is_resizing: bool` fields to `AccountTable`.
-
-### Chunk 5B — `beginResize()` + `migrateChunk()` methods (~90 lines)
-- `beginResize()` allocates a new entries slice at 2× capacity from the arena.
-- `migrateChunk(batch_size)` re-inserts `batch_size` entries from the old table into the new one. Called during `getOrCreate()`.
-
-### Chunk 5C — Rewire `getOrCreate()` and `get()` for dual-table lookup (~70 lines)
-- `get()` checks both old and new table during resize.
-- `getOrCreate()` calls `migrateChunk(64)` on every insert if resizing, and inserts into the new table.
-- When migration completes, swap the tables.
-
-### Chunk 5D — Tests (~50 lines)
-Test that progressive resize doesn't lose entries and lookups work throughout migration.
-
----
-
-## 6. Parallel VDF Verification — [vdf.zig](file:///Users/karan/sol2zig/src/consensus/vdf.zig)
-
-**Current:** `verify_parallel()` is sequential despite its name.
-
-**Target:** Actually spawn threads to verify each checkpoint segment in parallel.
-
-### Chunk 6A — True parallel verification (~80 lines)
-Replace the sequential loop in `verify_parallel()` with thread-per-segment verification:
-1. Spawn one thread per checkpoint segment (capped at 8).
-2. Each thread calls `verify_step()` on its segment.
-3. Collect results via a shared atomic error flag.
-4. Join all threads and return combined result.
-
----
-
-## Verification Plan
-
-### Build Check
-After each chunk group (1A-1D, 2A, 3A-3C, etc.), run:
-```bash
-cd /Users/karan/sol2zig && zig build 2>&1 | head -30
+    classDef active fill:#28a745,stroke:#333,stroke-width:2px,color:#fff;
+    classDef dead fill:#dc3545,stroke:#333,stroke-width:2px,color:#fff;
+    class Main,VMBridge,Core,Consensus,P2P,RPC,Node,RISC_V_Bridge,ForgeVM_API,ThreadedExecutor,SwitchExecutor,SandboxMemory,ContractLoader,DAGExecutor,DAGMempool,DAGScheduler,State,AsyncRoot,DeltaMerge,Zelius,Adaptive,Committees,Snowball,VotePool,UDPServer,Peer,Turbine,GulfStream,ShredVerifier,QUICPacket,HTTPServer,Methods,EpochIntegration,ZephyrDB,EpochStorage active;
+    class DeadStorage,LSM,Verkle,FlatKV,MMR,CodeStore,DeadConsensus,Deferred,Fraud,Registry,DeadP2P,P2P_gRPC,QUIC_Full,DeadRPC,RPC_gRPC,RPC_WS,VerkleIsolate dead;
 ```
 
-### Unit Tests
-After completing each subsystem, run existing tests to verify no regressions:
+---
+
+## 2. Comparative Analysis: Active vs. Dead Candidates
+
+### A. Storage Engines: ZephyrDB vs. LSM vs. FlatKV vs. Verkle
+* **Active (ZephyrDB + Epoch Storage)**: ZephyrDB implements a TigerBeetle-inspired, arena-backed in-memory state engine designed for 1M+ TPS with lock-free/low-contention indexing. Epoch Storage provides state delta tracking, transaction indexing, and background pruning.
+* **Dead (LSM, FlatKV, Verkle)**: 
+  * **LSM**: Hand-rolled LSM tree. Slower than ZephyrDB's sharded flat-table setup due to compaction spikes and write amplification. Unused in production.
+  * **FlatKV**: Sharded HashMap in RAM with optional WAL. Superceded by ZephyrDB which provides higher robustness, a ring-buffer WAL, and custom memory management.
+  * **Verkle**: An experimental Verkle Trie with IPA commitments. Completely disabled in the node (`computeRoot = false` always). The cryptographic overhead of IPA commitments on every block execution is a massive bottleneck.
+  * **MMR**: Merkle Mountain Range. Unused by ledger or consensus validation.
+  * **CodeStore**: A simple LRU bytecode caching struct. Standalone/unused because the VM bridge implements its own caching via `vm_pool.VMPool` and `contractLoader`.
+* **Verdict**: **ZephyrDB + Epoch Storage** are the correct, robust, and highly performant choices. The other engines are research remnants and must be pruned to avoid wrong optimization focus.
+
+### B. Consensus: Zelius/Loom vs. Deferred vs. Fraud Proofs vs. Registry
+* **Active (Zelius Adaptive consensus)**: The Loom PoS engine is a direct implementation of Loom consensus, running pipeline verification, VRF/VDF, committees, snowball query, and attestation certificates.
+* **Dead (Deferred, Fraud Proofs, Registry)**:
+  * **DeferredExecutor**: Monad-inspired execution lagging 2 blocks behind consensus. Replaced by the native block producer and parallel DAG execution which executes transactions inline with negligible overhead.
+  * **FraudProofManager**: Optimistic rollups style fraud proof validator. Unused in Loom Adaptive PoS.
+  * **ValidatorRegistry**: A state-based validator database wrapper. Unused because the validator set is managed in-memory via `consensus.Staking`.
+* **Verdict**: Keep **Zelius/Loom** consensus files. Remove the three unused helpers.
+
+### C. P2P Transport: UDP Server vs. gRPC P2P vs. Full QUIC
+* **Active (UDP Server + Turbine + Gulf Stream)**: The production network layer uses UDP socket batching (`socket_utils.sendBatch`), Turbine block shredding, and Gulf Stream transaction forwarding. Packets are simple UDP payloads wrapped in a minimal header.
+* **Dead (gRPC P2P, Full QUIC)**:
+  * **gRPC P2P**: A research gRPC wrapper over HTTP/2. Unused.
+  * **Full QUIC**: High-overhead congestion control, stream buffers, connection state, migration, recovery, and HTTP/3. Unused for networking; only the mock packet encoder/decoder (`src/p2p/quic/transport/packet.zig`) is used as a packet structure.
+* **Verdict**: Retain UDP Server and Turbine/Gulf Stream. Delete `src/p2p/grpc` and keep only `src/p2p/quic/transport/packet.zig` (deleting all other files in `src/p2p/quic/`).
+
+### D. RPC Server: HTTP JSON-RPC vs. gRPC RPC vs. WebSocket RPC
+* **Active (HTTP Server)**: Standard JSON-RPC server over HTTP (`src/rpc/http_server.zig`).
+* **Dead (gRPC RPC, WebSocket RPC)**:
+  * **gRPC RPC**: Standalone gRPC listener. Unused.
+  * **WebSocket RPC**: Unreferenced WebSocket dispatcher. Unused.
+* **Verdict**: Retain HTTP JSON-RPC. Delete `grpc.zig` and `websocket.zig` in `src/rpc/`.
+
+---
+
+## 3. Proposed Changes
+
+We will systematically delete dead files and update module roots to remove exports of deleted files.
+
+### [Component: Storage]
+
+#### [DELETE] [lsm](file:///Users/karan/sol2zig/src/storage/lsm)
+#### [DELETE] [verkle](file:///Users/karan/sol2zig/src/storage/verkle)
+#### [DELETE] [flatkv](file:///Users/karan/sol2zig/src/storage/flatkv)
+#### [DELETE] [mmr](file:///Users/karan/sol2zig/src/storage/mmr)
+#### [DELETE] [codestore](file:///Users/karan/sol2zig/src/storage/codestore)
+#### [DELETE] [verkle_isolate.zig](file:///Users/karan/sol2zig/tests/verkle_isolate.zig)
+
+#### [MODIFY] [mod.zig](file:///Users/karan/sol2zig/src/storage/mod.zig)
+Remove imports/re-exports of `lsm`, `verkle`, `flatkv`, `mmr`, and `codestore`. Remove obsolete `test` blocks referring to them.
+
+---
+
+### [Component: Consensus]
+
+#### [DELETE] [deferred_executor.zig](file:///Users/karan/sol2zig/src/consensus/deferred_executor.zig)
+#### [DELETE] [fraud_proof.zig](file:///Users/karan/sol2zig/src/consensus/fraud_proof.zig)
+#### [DELETE] [registry.zig](file:///Users/karan/sol2zig/src/consensus/registry.zig)
+
+#### [MODIFY] [mod.zig](file:///Users/karan/sol2zig/src/consensus/mod.zig)
+Remove imports and re-exports of `DeferredExecutor`, `FraudProofManager`, and `ValidatorRegistry`.
+
+---
+
+### [Component: P2P]
+
+#### [DELETE] [grpc](file:///Users/karan/sol2zig/src/p2p/grpc)
+#### [DELETE] [congestion.zig](file:///Users/karan/sol2zig/src/p2p/quic/transport/congestion.zig)
+#### [DELETE] [connection.zig](file:///Users/karan/sol2zig/src/p2p/quic/transport/connection.zig)
+#### [DELETE] [migration.zig](file:///Users/karan/sol2zig/src/p2p/quic/transport/migration.zig)
+#### [DELETE] [recovery.zig](file:///Users/karan/sol2zig/src/p2p/quic/transport/recovery.zig)
+#### [DELETE] [socket.zig](file:///Users/karan/sol2zig/src/p2p/quic/transport/socket.zig)
+#### [DELETE] [stream.zig](file:///Users/karan/sol2zig/src/p2p/quic/transport/stream.zig)
+#### [DELETE] [crypto](file:///Users/karan/sol2zig/src/p2p/quic/crypto)
+#### [DELETE] [utils](file:///Users/karan/sol2zig/src/p2p/quic/utils)
+#### [DELETE] [http3.zig](file:///Users/karan/sol2zig/src/p2p/quic/http3.zig)
+#### [DELETE] [lib.zig](file:///Users/karan/sol2zig/src/p2p/quic/lib.zig)
+#### [DELETE] [quic.zig](file:///Users/karan/sol2zig/src/p2p/quic/quic.zig)
+
+#### [MODIFY] [peer.zig](file:///Users/karan/sol2zig/src/p2p/peer.zig)
+Update the `Peer` struct to remove the mock `quicConn` and `quicStream` fields. Update `send` and `sendRaw` to directly enqueue UDP packets onto the server's UDP socket via `server.enqueueSend` instead of writing to a mock in-memory stream buffer. (This corrects the simulated transmit behavior and fixes a memory buildup issue!)
+
+#### [MODIFY] [server.zig](file:///Users/karan/sol2zig/src/p2p/server.zig)
+Update `handlePacket` to decode incoming packets using `zquic.transport.packet.Packet.decode` but attach raw UDP properties to the `Peer` without creating mock `Connection` and stream objects. Remove unused fields.
+
+#### [MODIFY] [root.zig](file:///Users/karan/sol2zig/src/p2p/quic/root.zig)
+Only re-export `transport.packet` (delete re-exports of `congestion`, `connection`, `stream`, `quic`, `http3`).
+
+#### [MODIFY] [mod.zig](file:///Users/karan/sol2zig/src/p2p/mod.zig)
+Remove gRPC re-export.
+
+---
+
+### [Component: RPC]
+
+#### [DELETE] [grpc.zig](file:///Users/karan/sol2zig/src/rpc/grpc.zig)
+#### [DELETE] [websocket.zig](file:///Users/karan/sol2zig/src/rpc/websocket.zig)
+#### [DELETE] [proto](file:///Users/karan/sol2zig/src/rpc/proto)
+
+#### [MODIFY] [mod.zig](file:///Users/karan/sol2zig/src/rpc/mod.zig)
+Remove `GrpcServer` imports and re-exports.
+
+---
+
+## 4. Verification Plan
+
+### Automated Verification
+Run compile check:
 ```bash
-cd /Users/karan/sol2zig && zig build test 2>&1 | tail -20
+zig build
 ```
 
-### Specific File Tests
-For files with inline tests (sandbox.zig, vm_pool.zig, delta_merge.zig, account_table.zig), verify:
+Run test suite:
 ```bash
-zig test vm/memory/sandbox.zig
-zig test src/core/delta_merge.zig
+zig build test
 ```
 
-> [!IMPORTANT]
-> All existing tests and APIs must pass unchanged. The optimizations are strictly additive — new methods, new structs, new config options — never modifying the existing function signatures or removing working code.
-
-## Open Questions
-
-1. **Thread count for parallel delta merge**: Should we hardcode 4 threads (matching the roadmap's Core 2-5 allocation) or make it configurable? I'm leaning toward a configurable `merge_workers: u32 = 4` field.
-
-2. **Dirty tracker capacity**: For the VM dirty-slice tracker, how many dirty ranges should we track before falling back to full memset? I'm proposing 256 entries (covers most realistic TX patterns). Higher values consume more memory per VM sandbox.
-
-3. **Progressive rehash batch size**: The roadmap suggests 64 buckets per operation. Should we also support a bulk `finishResize()` for epoch boundaries where a brief pause is acceptable?
+### Manual Verification
+Ensure that the node starts correctly in mining mode:
+```bash
+./zig-out/bin/zephyria start --network devnet --mine
+```
+Check that the simulated blockchain workflow benchmark executes correctly:
+```bash
+./zig-out/bin/blockchain_benchmark
+```

@@ -98,12 +98,16 @@ pub fn build(b: *std.Build) void {
     // RISC-V VM module
     const vm_mod = b.addModule("vm", .{ .root_source_file = b.path("vm/vm.zig") });
 
+    // PolkaVM compatibility module
+    const polkavm_mod = b.addModule("polkavm", .{ .root_source_file = b.path("vm/polkavm/vm.zig") });
+
     // VM Bridge module (connects RISC-V VM to executor)
     const vm_bridge_mod = b.addModule("vm_bridge", .{
         .root_source_file = b.path("src/vm_bridge.zig"),
     });
     vm_bridge_mod.addImport("core", core_mod);
     vm_bridge_mod.addImport("vm", vm_mod);
+    vm_bridge_mod.addImport("polkavm", polkavm_mod);
 
     // State Bridge (connects VM syscalls to State overlay)
     const state_bridge_mod = b.addModule("state_bridge", .{
@@ -130,8 +134,8 @@ pub fn build(b: *std.Build) void {
     node_exe.root_module.addImport("node", node_mod);
     node_exe.root_module.addImport("utils", utils_mod);
     node_exe.root_module.addImport("vm_bridge", vm_bridge_mod);
-    node_exe.linkLibC();
-    node_exe.linkSystemLibrary("z");
+    node_exe.root_module.link_libc = true;
+    node_exe.root_module.linkSystemLibrary("z", .{});
     b.installArtifact(node_exe);
 
     const run_node_cmd = b.addRunArtifact(node_exe);
@@ -195,6 +199,18 @@ pub fn build(b: *std.Build) void {
     scheduler_test.root_module.addImport("utils", utils_mod);
     scheduler_test.root_module.addImport("crypto", crypto_mod);
     node_test_step.dependOn(&b.addRunArtifact(scheduler_test).step);
+
+    // Signature tests
+    const signature_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/core/signature_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    signature_test.root_module.addImport("crypto", crypto_mod);
+    signature_test.root_module.link_libc = true;
+    node_test_step.dependOn(&b.addRunArtifact(signature_test).step);
 
     // Blockchain tests
     const blockchain_test = b.addTest(.{
@@ -278,9 +294,20 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    vm_test.root_module.link_libc = true;
     node_test_step.dependOn(&b.addRunArtifact(vm_test).step);
 
-    // ---- Forge VM Test Suite ----
+    // PolkaVM tests
+    const polkavm_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("vm/polkavm/vm.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    polkavm_test.root_module.link_libc = true;
+    node_test_step.dependOn(&b.addRunArtifact(polkavm_test).step);
+
     const forge_test_suite = b.addExecutable(.{
         .name = "forge_test_suite",
         .root_module = b.createModule(.{
@@ -290,7 +317,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     forge_test_suite.root_module.addImport("vm", vm_mod);
+    forge_test_suite.root_module.link_libc = true;
     b.installArtifact(forge_test_suite);
+
 
     const run_forge_test_suite_cmd = b.addRunArtifact(forge_test_suite);
     run_forge_test_suite_cmd.step.dependOn(b.getInstallStep());
@@ -317,8 +346,9 @@ pub fn build(b: *std.Build) void {
     blockchain_benchmark.root_module.addImport("rlp", rlp_mod);
     blockchain_benchmark.root_module.addImport("encoding", encoding_mod);
     blockchain_benchmark.root_module.addImport("vm", vm_mod);
-    blockchain_benchmark.linkLibC();
-    blockchain_benchmark.linkSystemLibrary("z");
+    blockchain_benchmark.root_module.addImport("polkavm", polkavm_mod);
+    blockchain_benchmark.root_module.link_libc = true;
+    blockchain_benchmark.root_module.linkSystemLibrary("z", .{});
     b.installArtifact(blockchain_benchmark);
 
     const run_blockchain_benchmark_cmd = b.addRunArtifact(blockchain_benchmark);

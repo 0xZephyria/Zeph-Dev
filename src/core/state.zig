@@ -17,11 +17,21 @@ pub const State = struct {
 
     // ── Key Derivation ──────────────────────────────────────────
 
+    threadlocal var last_addr_bytes: ?[32]u8 = null;
+    threadlocal var last_stem: [31]u8 = undefined;
+
     pub fn accountStem(addr: types.Address) [31]u8 {
+        if (last_addr_bytes) |lab| {
+            if (std.mem.eql(u8, &lab, &addr.bytes)) {
+                return last_stem;
+            }
+        }
         var h: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&addr.bytes, &h, .{});
+        std.crypto.hash.Blake3.hash(&addr.bytes, &h, .{});
         var stem: [31]u8 = undefined;
         @memcpy(&stem, h[0..31]);
+        last_addr_bytes = addr.bytes;
+        last_stem = stem;
         return stem;
     }
 
@@ -104,6 +114,7 @@ pub const State = struct {
     pub fn getCode(self: *State, addr: types.Address) ![]const u8 {
         const key = codeKey(addr);
         const data = self.db.read(&key);
+        std.debug.print("GETCODE: addr={x}, key={x}, found_len={d}\n", .{ addr.bytes, key, if (data) |d| d.len else 0 });
         return if (data) |d| try self.allocator.dupe(u8, d) else &[_]u8{};
     }
 
@@ -111,7 +122,7 @@ pub const State = struct {
         const key = codeKey(addr);
         try self.db.write(&key, code);
         var hash: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(code, &hash, .{});
+        std.crypto.hash.Blake3.hash(code, &hash, .{});
         try self.db.write(&codeHashKey(addr), &hash);
     }
 
@@ -154,36 +165,119 @@ pub const State = struct {
     }
 };
 
-// ── Overlay (Per-Transaction State) ─────────────────────────────
+const ChunkHeader = struct {
+    next: ?*ChunkHeader,
+    size: usize,
+};
 
-/// Per-overlay arena: a pre-allocated 128KB buffer with bump allocation.
-/// Frees are no-ops; deinit resets. The backing pointer never moves.
-const OVERLAY_ARENA_SIZE = 128 * 1024;
+const OVERLAY_ARENA_SIZE = 16 * 1024; // 16 KB
 
 const OverlayArena = struct {
     buf: [OVERLAY_ARENA_SIZE]u8 align(16) = undefined,
     offset: usize = 0,
+    backing_allocator: std.mem.Allocator,
+    first_chunk: ?*ChunkHeader = null,
+    current_chunk: ?*ChunkHeader = null,
+    chunk_offset: usize = 0,
+
+    pub fn init(backing_allocator: std.mem.Allocator) OverlayArena {
+        return .{
+            .backing_allocator = backing_allocator,
+            .first_chunk = null,
+            .current_chunk = null,
+            .chunk_offset = 0,
+        };
+    }
+
+    pub fn deinit(self: *OverlayArena) void {
+        var current = self.first_chunk;
+        while (current) |chunk| {
+            const next = chunk.next;
+            self.backing_allocator.rawFree(
+                @as([*]u8, @ptrCast(chunk))[0..chunk.size],
+                std.mem.Alignment.fromByteUnits(16),
+                @returnAddress(),
+            );
+            current = next;
+        }
+        self.first_chunk = null;
+        self.current_chunk = null;
+        self.chunk_offset = 0;
+        self.offset = 0;
+    }
 
     pub fn allocator(self: *OverlayArena) std.mem.Allocator {
         const S = struct {
-            fn allocFn(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+            fn allocFn(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
                 const arena: *OverlayArena = @ptrCast(@alignCast(ctx));
                 const align_bits = alignment.toByteUnits();
+                
+                // Try allocating from inline buffer first
                 const aligned = std.mem.alignForward(usize, arena.offset, align_bits);
                 const new_end = aligned + len;
-                if (new_end > OVERLAY_ARENA_SIZE) return null;
-                arena.offset = new_end;
-                return @ptrCast(&arena.buf[aligned]);
+                if (new_end <= OVERLAY_ARENA_SIZE) {
+                    arena.offset = new_end;
+                    return @ptrCast(&arena.buf[aligned]);
+                }
+                
+                // Try allocating from current chunk if it exists
+                if (arena.current_chunk) |chunk| {
+                    const chunk_start = @intFromPtr(chunk) + @sizeOf(ChunkHeader);
+                    const current_ptr = chunk_start + arena.chunk_offset;
+                    const aligned_ptr = std.mem.alignForward(usize, current_ptr, align_bits);
+                    const new_end_ptr = aligned_ptr + len;
+                    const chunk_end = @intFromPtr(chunk) + chunk.size;
+                    if (new_end_ptr <= chunk_end) {
+                        arena.chunk_offset = new_end_ptr - chunk_start;
+                        return @ptrFromInt(aligned_ptr);
+                    }
+                }
+                
+                // Allocate a new chunk.
+                // We want to allocate a chunk size that is at least 16KB to avoid frequent allocations.
+                // It should also accommodate the requested length plus some extra space for alignment padding.
+                const min_needed = @sizeOf(ChunkHeader) + align_bits - 1 + len;
+                const chunk_size = @max(min_needed, 16 * 1024);
+                
+                const raw = arena.backing_allocator.rawAlloc(chunk_size, std.mem.Alignment.fromByteUnits(16), ret_addr) orelse return null;
+                const new_chunk: *ChunkHeader = @ptrCast(@alignCast(raw));
+                new_chunk.next = null;
+                new_chunk.size = chunk_size;
+                
+                if (arena.current_chunk) |chunk| {
+                    chunk.next = new_chunk;
+                } else {
+                    arena.first_chunk = new_chunk;
+                }
+                arena.current_chunk = new_chunk;
+                
+                const chunk_start = @intFromPtr(new_chunk) + @sizeOf(ChunkHeader);
+                const aligned_ptr = std.mem.alignForward(usize, chunk_start, align_bits);
+                arena.chunk_offset = (aligned_ptr + len) - chunk_start;
+                return @ptrFromInt(aligned_ptr);
             }
-            fn freeFn(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {}
-            fn resizeFn(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
-                return new_len <= buf.len;
-            }
-            fn remapFn(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, _: usize, ret_addr: usize) ?[*]u8 {
-                _ = memory;
+
+            fn freeFn(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+                _ = ctx;
+                _ = buf;
                 _ = alignment;
                 _ = ret_addr;
-                return null; // don't support remap — caller handles alloc+copy+free
+            }
+
+            fn resizeFn(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+                _ = ctx;
+                _ = alignment;
+                _ = ret_addr;
+                return new_len <= buf.len;
+            }
+
+            fn remapFn(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+                _ = ctx;
+                _ = buf;
+                _ = alignment;
+                _ = new_len;
+                _ = ret_addr;
+                return null;
             }
         };
         return .{
@@ -230,7 +324,7 @@ pub const Overlay = struct {
         return Overlay{
             .general_allocator = allocator,
             .arena_allocator = undefined,
-            .arena = .{},
+            .arena = OverlayArena.init(allocator),
             .base = base,
             .dirty = undefined,
             .journal = .{},
@@ -261,6 +355,7 @@ pub const Overlay = struct {
         }
         self.logs.deinit(self.general_allocator);
         self.journal.deinit(self.general_allocator);
+        self.arena.deinit();
     }
 
     const JournalEntry = union(enum) {
@@ -454,6 +549,7 @@ pub const Overlay = struct {
 
     pub fn setCode(self: *Overlay, addr: types.Address, codeBytes: []const u8) !void {
         const key = State.codeKey(addr);
+        std.debug.print("SETCODE: addr={x}, key={x}, len={d}\n", .{ addr.bytes, key, codeBytes.len });
         const g = try self.dirty.getOrPut(key);
         var prev: ?[]const u8 = null;
         if (g.found_existing) {
@@ -463,7 +559,7 @@ pub const Overlay = struct {
         g.value_ptr.* = try self.arena_allocator.dupe(u8, codeBytes);
 
         var hash: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(codeBytes, &hash, .{});
+        std.crypto.hash.Blake3.hash(codeBytes, &hash, .{});
         const hKey = State.codeHashKey(addr);
         const hG = try self.dirty.getOrPut(hKey);
         var hPrev: ?[]const u8 = null;

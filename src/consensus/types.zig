@@ -173,7 +173,7 @@ pub const AdaptiveBlockHeader = struct {
     tier: ConsensusTier,
 
     /// Compute the woven root from thread roots.
-    /// Uses iterative Keccak256 Merkle: H(H(r0 ‖ r1) ‖ H(r2 ‖ r3) ‖ ...)
+    /// Uses iterative Blake3 Merkle: H(H(r0 ‖ r1) ‖ H(r2 ‖ r3) ‖ ...)
     pub fn computeWovenRoot(self: *AdaptiveBlockHeader) void {
         if (self.threadCount == 0) {
             self.wovenRoot = core.types.Hash.zero();
@@ -193,7 +193,7 @@ pub const AdaptiveBlockHeader = struct {
             var next_count: usize = 0;
             var i: usize = 0;
             while (i + 1 < count) : (i += 2) {
-                var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+                var hasher = std.crypto.hash.Blake3.init(.{});
                 hasher.update(&level[i].bytes);
                 hasher.update(&level[i + 1].bytes);
                 hasher.final(&level[next_count].bytes);
@@ -218,7 +218,7 @@ pub const AdaptiveBlockHeader = struct {
 
     /// Hash the entire header for signing/QC purposes.
     pub fn hash(self: *const AdaptiveBlockHeader) core.types.Hash {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         // Slot + epoch + parent
         var buf8: [8]u8 = undefined;
         std.mem.writeInt(u64, &buf8, self.slot, .big);
@@ -267,9 +267,9 @@ pub const ThreadAttestation = struct {
     attestingStake: u64,
 };
 
-/// Signing message for thread attestation: Keccak256(slot ‖ threadId ‖ thread_root)
+/// Signing message for thread attestation: Blake3(slot ‖ threadId ‖ thread_root)
 pub fn threadAttestationMessage(slot: u64, threadId: u8, thread_root: core.types.Hash) [32]u8 {
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+    var hasher = std.crypto.hash.Blake3.init(.{});
     var buf8: [8]u8 = undefined;
     std.mem.writeInt(u64, &buf8, slot, .big);
     hasher.update(&buf8);
@@ -344,7 +344,7 @@ pub const WovenQuorumCertificate = struct {
 
     /// Compute the randomness seed for the next slot.
     pub fn computeNextSeed(self: *const WovenQuorumCertificate) [32]u8 {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(&self.randomnessSeed);
         hasher.update(&self.aggregateSignature);
         var buf8: [8]u8 = undefined;

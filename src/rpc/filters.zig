@@ -47,7 +47,7 @@ pub const LogBloom = struct {
 
     /// Add an item to the bloom filter
     pub fn add(self: *Self, data: []const u8) void {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(data);
         var hash: [32]u8 = undefined;
         hasher.final(&hash);
@@ -71,7 +71,7 @@ pub const LogBloom = struct {
 
     /// Check if an item might be in the bloom filter
     pub fn mightContain(self: *const Self, data: []const u8) bool {
-        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+        var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(data);
         var hash: [32]u8 = undefined;
         hasher.final(&hash);

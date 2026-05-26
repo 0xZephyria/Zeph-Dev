@@ -88,7 +88,7 @@ pub const CommitteeManager = struct {
         if (validator_count == 0 or thread_count == 0) return;
 
         // Build shuffled index array using deterministic PRNG
-        // Fisher-Yates shuffle with Keccak256-based PRNG
+        // Fisher-Yates shuffle with Blake3-based PRNG
         const n: usize = @intCast(validator_count);
         var indices = self.allocator.alloc(u32, n) catch return;
         defer self.allocator.free(indices);
@@ -96,14 +96,14 @@ pub const CommitteeManager = struct {
             indices[i] = @intCast(i);
         }
 
-        // PRNG: chain Keccak256 hashes from the seed
+        // PRNG: chain Blake3 hashes from the seed
         var prng_state: [32]u8 = committee_seed;
 
         var i: usize = n;
         while (i > 1) {
             i -= 1;
             // Generate random index in [0, i]
-            var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+            var hasher = std.crypto.hash.Blake3.init(.{});
             hasher.update(&prng_state);
             var idx_buf: [8]u8 = undefined;
             std.mem.writeInt(u64, &idx_buf, @intCast(i), .big);

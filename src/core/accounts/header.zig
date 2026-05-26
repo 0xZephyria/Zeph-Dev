@@ -11,7 +11,7 @@
 
 const std = @import("std");
 const types = @import("../types.zig");
-const Keccak256 = std.crypto.hash.sha3.Keccak256;
+const Blake3 = std.crypto.hash.Blake3;
 
 /// Universal Account Header.
 /// Every account in the Verkle trie starts with this header.
@@ -36,12 +36,12 @@ pub const AccountHeader = struct {
         buf[0] = self.version;
         buf[1] = @intFromEnum(self.account_type);
         std.mem.writeInt(u16, buf[2..4], self.flags, .big);
-        @memcpy(buf[4..24], &self.owner_program.bytes);
-        std.mem.writeInt(u64, buf[24..32], self.nonce, .big);
-        std.mem.writeInt(u128, buf[32..48], self.balance, .big);
-        @memcpy(buf[48..80], &self.data_hash.bytes);
+        @memcpy(buf[4..36], &self.owner_program.bytes);
+        std.mem.writeInt(u64, buf[36..44], self.nonce, .big);
+        std.mem.writeInt(u128, buf[44..60], self.balance, .big);
+        @memcpy(buf[60..92], &self.data_hash.bytes);
         var h: types.Hash = undefined;
-        Keccak256.hash(&buf, &h.bytes, .{});
+        Blake3.hash(&buf, &h.bytes, .{});
         return h;
     }
 

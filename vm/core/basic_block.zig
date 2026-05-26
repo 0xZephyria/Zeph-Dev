@@ -136,7 +136,8 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
                 if (i + 1 < insn_count) is_leader[i + 1] = true;
             },
             decoder.Opcode.SYSTEM => {
-                // ECALL/EBREAK — next instruction is new leader
+                // ECALL/EBREAK — SYSTEM instruction itself is a leader, and next instruction is new leader
+                is_leader[i] = true;
                 if (i + 1 < insn_count) is_leader[i + 1] = true;
             },
             else => {},

@@ -31,9 +31,13 @@ pub const VDF = struct {
 
         const count = iterations / interval;
         var results = try allocator.alloc([]u8, count);
-        errdefer allocator.free(results); // Note: this only frees the slice of pointers, not contents if partially filled.
-
         var current_idx: usize = 0;
+        errdefer {
+            for (results[0..current_idx]) |r| {
+                allocator.free(r);
+            }
+            allocator.free(results);
+        }
 
         // Handle Iteration 0 (if valid?) or just start loop
         // If iterations < interval, returns empty list.
@@ -72,9 +76,23 @@ pub const VDF = struct {
 
     /// Verify checks if the output matches the input after 'iterations' hashes.
     pub fn verify(allocator: std.mem.Allocator, input: []const u8, output: []const u8, iterations: u64) !bool {
-        const computed = try compute(allocator, input, iterations);
-        defer allocator.free(computed);
-        return std.mem.eql(u8, computed, output);
+        _ = allocator;
+        if (iterations == 0) {
+            return std.mem.eql(u8, input, output);
+        }
+
+        var buf: [32]u8 = undefined;
+        // First iteration processes 'input' which can be any size
+        std.crypto.hash.sha2.Sha256.hash(input, &buf, .{});
+
+        var i: u64 = 1;
+        while (i < iterations) : (i += 1) {
+            var next_buf: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(&buf, &next_buf, .{});
+            buf = next_buf;
+        }
+
+        return std.mem.eql(u8, &buf, output);
     }
 
     /// VerifyStep used for parallel verification of segments
@@ -102,12 +120,12 @@ pub const VDF = struct {
     pub fn verify_parallel(
         allocator: std.mem.Allocator,
         input: []const u8,
-        checkpoints: []const []const u8,
+        checkpoints_flat: []const u8,
         interval: u64,
     ) !bool {
-        if (checkpoints.len == 0) return false;
+        if (checkpoints_flat.len == 0 or checkpoints_flat.len % 32 != 0) return false;
 
-        const num_segments = checkpoints.len;
+        const num_segments = checkpoints_flat.len / 32;
         var contexts = try allocator.alloc(VdfWorkerCtx, num_segments);
         defer allocator.free(contexts);
 
@@ -118,8 +136,8 @@ pub const VDF = struct {
         for (0..num_segments) |i| {
             contexts[i] = .{
                 .allocator = allocator,
-                .start = if (i == 0) input else checkpoints[i - 1],
-                .end = checkpoints[i],
+                .start = if (i == 0) input else checkpoints_flat[(i - 1) * 32 .. i * 32],
+                .end = checkpoints_flat[i * 32 .. (i + 1) * 32],
                 .interval = interval,
             };
             threads[i] = null;

@@ -162,7 +162,7 @@ pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis)
             const codeKeyVal = state.State.codeKey(entry.addr);
             try db.write(&codeKeyVal, code);
             var codeHash: [32]u8 = undefined;
-            std.crypto.hash.sha3.Keccak256.hash(code, &codeHash, .{});
+            std.crypto.hash.Blake3.hash(code, &codeHash, .{});
             try db.write(&state.State.codeHashKey(entry.addr), &codeHash);
         }
 
@@ -188,7 +188,7 @@ pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis)
             const codeKeyVal = state.State.codeKey(sys.address);
             try db.write(&codeKeyVal, code);
             var codeHash: [32]u8 = undefined;
-            std.crypto.hash.sha3.Keccak256.hash(code, &codeHash, .{});
+            std.crypto.hash.Blake3.hash(code, &codeHash, .{});
             try db.write(&state.State.codeHashKey(sys.address), &codeHash);
         }
     }
@@ -217,13 +217,21 @@ pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis)
 
 // ── Default Allocations ─────────────────────────────────────────────────
 
-pub fn getDefaultAlloc() [4]GenesisAlloc {
+pub fn getDefaultAlloc() [5]GenesisAlloc {
     const dev_addr = parseAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const dev_balance: u256 = 100_000 * 1_000_000_000_000_000_000;
     const sys_balance: u256 = 1_000_000_000_000_000_000;
 
+    // Derive Blake3 address of default dev key
+    var dev_seed: [32]u8 = undefined;
+    _ = std.fmt.hexToBytes(&dev_seed, default_dev_key) catch unreachable;
+    const key_pair = std.crypto.sign.Ed25519.KeyPair.generateDeterministic(dev_seed) catch unreachable;
+    var blake3_dev_addr = types.Address.zero();
+    std.crypto.hash.Blake3.hash(&key_pair.public_key.bytes, &blake3_dev_addr.bytes, .{});
+
     return [_]GenesisAlloc{
         .{ .addr = dev_addr, .balance = dev_balance },
+        .{ .addr = blake3_dev_addr, .balance = dev_balance },
         .{ .addr = system.STAKING_ADDRESS, .balance = sys_balance },
         .{ .addr = system.REWARDS_ADDRESS, .balance = sys_balance },
         .{ .addr = system.VALIDATOR_ADDRESS, .balance = sys_balance },
@@ -246,7 +254,7 @@ pub fn parseAddress(hex: []const u8) types.Address {
     if (hex.len >= 2 and hex[0] == '0' and hex[1] == 'x') {
         const hexStr = hex[2..];
         var i: usize = 0;
-        while (i < @min(hexStr.len / 2, 20)) : (i += 1) {
+        while (i < @min(hexStr.len / 2, 32)) : (i += 1) {
             const hi = std.fmt.charToDigit(hexStr[i * 2], 16) catch 0;
             const lo = std.fmt.charToDigit(hexStr[i * 2 + 1], 16) catch 0;
             addr.bytes[i] = (hi << 4) | lo;

@@ -1,0 +1,1220 @@
+test
++- run test stderr
+[AOT Cache Miss] hash[0]=73, selector=6f91d85a
+[AOT Cache Lib Miss] Compiling...
+[AOT Cache Miss] hash[0]=73, selector=ba4d2440
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=1ce900f6
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=25b04e4e
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=47779aaa
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=dc9e26b
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=a0873bbc
+[AOT Cache Lib Hit]
+test
++- run test 123/124 passed, 1 failed
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x003100b3
+STEP: pc=0x0000, word=0x403100b3
+STEP: pc=0x0000, word=0x003170b3
+STEP: pc=0x0000, word=0x003160b3
+STEP: pc=0x0000, word=0x003140b3
+STEP: pc=0x0000, word=0x003120b3
+STEP: pc=0x0000, word=0x02a10093
+STEP: pc=0x0000, word=0xfff10093
+STEP: pc=0x0000, word=0x02a08013
+STEP: pc=0x0000, word=0x023100b3
+STEP: pc=0x0000, word=0x023140b3
+STEP: pc=0x0000, word=0x023140b3
+STEP: pc=0x0000, word=0x00100093
+STEP: pc=0x0004, word=0x00108093
+STEP: pc=0x0008, word=0x00108093
+STEP: pc=0x0000, word=0x00100073
+STEP: pc=0x0000, word=0x00000073
+STEP: pc=0x0000, word=0x00500093
+STEP: pc=0x0004, word=0x00300113
+STEP: pc=0x0008, word=0x002081b3
+STEP: pc=0x0000, word=0x04200093
+STEP: pc=0x0004, word=0x00020137
+STEP: pc=0x0008, word=0x00112023
+STEP: pc=0x000c, word=0x00012183
+STEP: pc=0x0000, word=0x00100093
+STEP: pc=0x0004, word=0x00108133
+STEP: pc=0x0008, word=0x022081b3
+[AOT Cache Miss] hash[0]=73, selector=6f91d85a
+[AOT Cache Lib Miss] Compiling...
+[AOT Cache Miss] hash[0]=73, selector=ba4d2440
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=1ce900f6
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=25b04e4e
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=47779aaa
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=dc9e26b
+[AOT Cache Lib Hit]
+[AOT Cache Miss] hash[0]=73, selector=a0873bbc
+[AOT Cache Lib Hit]
+error: 'vm.test.PolkaVM: Execute revive-transfer-example ELF' failed: STEP: pc=0x0000, word=0x02a00093
+STEP: pc=0x0004, word=0x00100073
+STEP: pc=0x0000, word=0x00100093
+STEP: pc=0x0004, word=0x00108093
+STEP: pc=0x0008, word=0x00108093
+STEP: pc=0x000c, word=0x00100073
+
+=== ELF RELOCATIONS ===
+=== EXPORTS SECTION ===
+01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 
+=== EXPORTS RELOCATIONS ===
+Reloc 0: offset=0x1 type=2 sym='deploy__EXPORT_METADATA' val=0x286 addend=0x0
+Reloc 1: offset=0x9 type=2 sym='deploy' val=0x770 addend=0x0
+Reloc 2: offset=0x12 type=2 sym='call__EXPORT_METADATA' val=0x299 addend=0x0
+Reloc 3: offset=0x1a type=2 sym='call' val=0x762 addend=0x0
+=== RVC INSTRUCTION ANALYSIS FROM 0x2b4 ===
+RVC at offset 0x2b4: 0x7115
+RVC at offset 0x2b6: 0xed86
+RVC at offset 0x2b8: 0xe9a2
+RVC at offset 0x2ba: 0xe5a6
+RVC at offset 0x2bc: 0x1180
+RVC at offset 0x2c2: 0x848a
+RVC at offset 0x2c4: 0x4501
+RVC at offset 0x2c6: 0xf0c8
+RVC at offset 0x2c8: 0xf4c8
+RVC at offset 0x2ca: 0xf8c8
+RVC at offset 0x2cc: 0xfcc8
+RVC at offset 0x2da: 0x74c8
+RVC at offset 0x2dc: 0x78cc
+RVC at offset 0x2de: 0x7cd0
+RVC at offset 0x2e0: 0x70d4
+RVC at offset 0x2e2: 0x8d51
+RVC at offset 0x2e4: 0x8dd5
+RVC at offset 0x2e6: 0x8d4d
+RVC at offset 0x2e8: 0xc101
+RVC at offset 0x2f2: 0xa001
+RVC at offset 0x2fc: 0xec88
+RVC at offset 0x2fe: 0x1502
+RVC at offset 0x300: 0x9101
+RVC at offset 0x302: 0x057d
+RVC at offset 0x304: 0x9901
+RVC at offset 0x30e: 0xe4cc
+RVC at offset 0x318: 0xe8cc
+RVC at offset 0x31e: 0xe0d0
+RVC at offset 0x330: 0x6c8c
+RVC at offset 0x33a: 0x2501
+RVC at offset 0x33c: 0x6c8c
+RVC at offset 0x33e: 0x4601
+RVC at offset 0x348: 0x457d
+RVC at offset 0x34a: 0x6c8c
+RVC at offset 0x358: 0xa001
+RVC at offset 0x36a: 0x78b0
+RVC at offset 0x36c: 0x7cb4
+RVC at offset 0x36e: 0x4505
+RVC at offset 0x370: 0x1502
+RVC at offset 0x372: 0x8d31
+RVC at offset 0x378: 0x8d55
+RVC at offset 0x386: 0xe181
+RVC at offset 0x394: 0x4505
+RVC at offset 0x396: 0x4601
+RVC at offset 0x3a0: 0x70a8
+RVC at offset 0x3a2: 0xec88
+RVC at offset 0x3a4: 0x74a8
+RVC at offset 0x3a6: 0xe888
+RVC at offset 0x3b4: 0xe090
+RVC at offset 0x3b6: 0xe494
+RVC at offset 0x3c4: 0x6cac
+RVC at offset 0x3c6: 0x1502
+RVC at offset 0x3c8: 0x6090
+RVC at offset 0x3ca: 0x8e49
+RVC at offset 0x3cc: 0x6494
+RVC at offset 0x3ce: 0x8ecd
+RVC at offset 0x3d4: 0x9901
+RVC at offset 0x3d6: 0x812a
+RVC at offset 0x3d8: 0x4581
+RVC at offset 0x3da: 0xe10c
+RVC at offset 0x3dc: 0xe50c
+RVC at offset 0x3de: 0xe90c
+RVC at offset 0x3e0: 0xed0c
+RVC at offset 0x3e6: 0x9981
+RVC at offset 0x3e8: 0x812e
+RVC at offset 0x3ea: 0x6c98
+RVC at offset 0x3ec: 0xe198
+RVC at offset 0x3ee: 0x6898
+RVC at offset 0x3f0: 0xe598
+RVC at offset 0x3f2: 0xe990
+RVC at offset 0x3f4: 0xed94
+RVC at offset 0x40e: 0x7488
+RVC at offset 0x410: 0x788c
+RVC at offset 0x412: 0x7c90
+RVC at offset 0x414: 0x7094
+RVC at offset 0x416: 0x8d51
+RVC at offset 0x41c: 0x8e49
+RVC at offset 0x41e: 0x8d4d
+RVC at offset 0x420: 0x9201
+RVC at offset 0x422: 0x1502
+RVC at offset 0x424: 0x8d51
+RVC at offset 0x426: 0xe101
+RVC at offset 0x430: 0x9d35
+RVC at offset 0x432: 0x4581
+RVC at offset 0x434: 0x4601
+RVC at offset 0x436: 0xec94
+RVC at offset 0x448: 0x6c88
+RVC at offset 0x44a: 0x4581
+RVC at offset 0x458: 0x4501
+RVC at offset 0x45a: 0xa001
+RVC at offset 0x464: 0x7111
+RVC at offset 0x466: 0xfd86
+RVC at offset 0x468: 0xf9a2
+RVC at offset 0x46a: 0xf5a6
+RVC at offset 0x46c: 0x0200
+RVC at offset 0x472: 0x848a
+RVC at offset 0x480: 0xe0f0
+RVC at offset 0x482: 0x4601
+RVC at offset 0x484: 0xe4f0
+RVC at offset 0x486: 0xe8f0
+RVC at offset 0x488: 0xecf0
+RVC at offset 0x49a: 0xfc88
+RVC at offset 0x49c: 0x4108
+RVC at offset 0x49e: 0x4591
+RVC at offset 0x4a8: 0x9901
+RVC at offset 0x4aa: 0xf888
+RVC at offset 0x4ac: 0x812a
+RVC at offset 0x4ae: 0x2501
+RVC at offset 0x4b0: 0x4581
+RVC at offset 0x4ba: 0x7888
+RVC at offset 0x4bc: 0x4d48
+RVC at offset 0x4ca: 0x7c88
+RVC at offset 0x4cc: 0x4108
+RVC at offset 0x4ce: 0x458d
+RVC at offset 0x4e8: 0x70c8
+RVC at offset 0x4ea: 0xf488
+RVC at offset 0x4ec: 0x74c8
+RVC at offset 0x4ee: 0xec88
+RVC at offset 0x4f0: 0x78c8
+RVC at offset 0x4f2: 0xf088
+RVC at offset 0x4f8: 0x9901
+RVC at offset 0x4fa: 0xf888
+RVC at offset 0x50c: 0x7894
+RVC at offset 0x50e: 0x6688
+RVC at offset 0x510: 0x6a8c
+RVC at offset 0x512: 0x6e90
+RVC at offset 0x514: 0x6294
+RVC at offset 0x516: 0x8d51
+RVC at offset 0x518: 0x8dd5
+RVC at offset 0x51a: 0x8d4d
+RVC at offset 0x51c: 0x6585
+RVC at offset 0x526: 0xf88c
+RVC at offset 0x52c: 0x9901
+RVC at offset 0x52e: 0xe888
+RVC at offset 0x540: 0x6888
+RVC at offset 0x546: 0x651c
+RVC at offset 0x54c: 0x6d18
+RVC at offset 0x54e: 0x6c88
+RVC at offset 0x554: 0x7088
+RVC at offset 0x55a: 0x7488
+RVC at offset 0x564: 0x9201
+RVC at offset 0x566: 0x9181
+RVC at offset 0x568: 0x8e55
+RVC at offset 0x56e: 0x9101
+RVC at offset 0x570: 0x8dd5
+RVC at offset 0x572: 0x7c94
+RVC at offset 0x574: 0xea90
+RVC at offset 0x576: 0xee8c
+RVC at offset 0x578: 0xd288
+RVC at offset 0x582: 0x9a01
+RVC at offset 0x584: 0x8132
+RVC at offset 0x58a: 0xe61c
+RVC at offset 0x590: 0xee18
+RVC at offset 0x596: 0x9901
+RVC at offset 0x598: 0x812a
+RVC at offset 0x5a6: 0xfc94
+RVC at offset 0x5ac: 0x9301
+RVC at offset 0x5ae: 0x1502
+RVC at offset 0x5b4: 0x2601
+RVC at offset 0x5b6: 0x4521
+RVC at offset 0x5b8: 0x7894
+RVC at offset 0x5c2: 0xc101
+RVC at offset 0x5d4: 0x60c8
+RVC at offset 0x5d6: 0xfc88
+RVC at offset 0x5d8: 0x64c8
+RVC at offset 0x5da: 0xf888
+RVC at offset 0x5dc: 0x68c8
+RVC at offset 0x5de: 0xf488
+RVC at offset 0x5e0: 0x6cc8
+RVC at offset 0x5e2: 0xf088
+RVC at offset 0x5ec: 0x7c94
+RVC at offset 0x5ee: 0x788c
+RVC at offset 0x5f0: 0x7090
+RVC at offset 0x5f2: 0x8dd1
+RVC at offset 0x5f4: 0x7498
+RVC at offset 0x5fa: 0x8e4d
+RVC at offset 0x5fc: 0x8dd9
+RVC at offset 0x5fe: 0x9201
+RVC at offset 0x600: 0x1582
+RVC at offset 0x602: 0x8dd1
+RVC at offset 0x604: 0xe181
+RVC at offset 0x606: 0x862a
+RVC at offset 0x608: 0x9101
+RVC at offset 0x60a: 0xe101
+RVC at offset 0x610: 0xf888
+RVC at offset 0x612: 0x8536
+RVC at offset 0x614: 0x85b2
+RVC at offset 0x616: 0xf490
+RVC at offset 0x628: 0xf090
+RVC at offset 0x62a: 0x8132
+RVC at offset 0x62c: 0x748c
+RVC at offset 0x62e: 0xc20c
+RVC at offset 0x630: 0x2501
+RVC at offset 0x636: 0x4601
+RVC at offset 0x640: 0x7088
+RVC at offset 0x642: 0x4108
+RVC at offset 0x644: 0x788c
+RVC at offset 0x64a: 0x0000
+RVC at offset 0x65c: 0x9901
+RVC at offset 0x65e: 0xf888
+RVC at offset 0x660: 0x812a
+RVC at offset 0x662: 0x4581
+RVC at offset 0x664: 0xe10c
+RVC at offset 0x666: 0xe50c
+RVC at offset 0x668: 0xe90c
+RVC at offset 0x66a: 0xed0c
+RVC at offset 0x66c: 0x2501
+RVC at offset 0x676: 0x7894
+RVC at offset 0x678: 0x6688
+RVC at offset 0x67a: 0x6a8c
+RVC at offset 0x67c: 0x6e90
+RVC at offset 0x67e: 0x6294
+RVC at offset 0x680: 0x8d51
+RVC at offset 0x682: 0x8dd5
+RVC at offset 0x684: 0x8d4d
+RVC at offset 0x686: 0xc101
+RVC at offset 0x690: 0xa001
+RVC at offset 0x69a: 0xa001
+RVC at offset 0x6a8: 0x4505
+RVC at offset 0x6aa: 0xa011
+RVC at offset 0x6ac: 0x5c8c
+RVC at offset 0x6ae: 0x4601
+RVC at offset 0x6c0: 0x85aa
+RVC at offset 0x6c2: 0x9101
+RVC at offset 0x6c4: 0xe101
+RVC at offset 0x6c6: 0x7c88
+RVC at offset 0x6c8: 0xf88c
+RVC at offset 0x6d6: 0x5890
+RVC at offset 0x6d8: 0x4505
+RVC at offset 0x6ea: 0x7c88
+RVC at offset 0x6ec: 0x4108
+RVC at offset 0x6ee: 0x458d
+RVC at offset 0x6fc: 0xa001
+RVC at offset 0x712: 0x70b0
+RVC at offset 0x714: 0x74b4
+RVC at offset 0x722: 0xe0b0
+RVC at offset 0x724: 0xe4b4
+RVC at offset 0x726: 0xe8b8
+RVC at offset 0x734: 0x7c88
+RVC at offset 0x736: 0x4148
+RVC at offset 0x744: 0x7c8c
+RVC at offset 0x746: 0xc1c8
+RVC at offset 0x758: 0x4501
+RVC at offset 0x762: 0x1161
+RVC at offset 0x764: 0xe006
+RVC at offset 0x766: 0x4501
+RVC at offset 0x770: 0x1161
+RVC at offset 0x772: 0xe006
+RVC at offset 0x774: 0x4505
+RVC at offset 0x782: 0x9981
+RVC at offset 0x784: 0x812e
+RVC at offset 0x796: 0x8282
+RVC at offset 0x798: 0x812a
+RVC at offset 0x7aa: 0x2501
+RVC at offset 0x7ac: 0x8282
+RVC at offset 0x7b6: 0x410c
+RVC at offset 0x7b8: 0xc181
+RVC at offset 0x7c2: 0x2501
+RVC at offset 0x7cc: 0x8082
+RVC at offset 0x7d2: 0xf886
+RVC at offset 0x7d4: 0xf4a2
+RVC at offset 0x7d6: 0xf0a6
+RVC at offset 0x7d8: 0x862e
+RVC at offset 0x7da: 0xecaa
+RVC at offset 0x7e0: 0x8532
+RVC at offset 0x80a: 0x06a2
+RVC at offset 0x80c: 0x0742
+RVC at offset 0x80e: 0x07e2
+RVC at offset 0x810: 0x8e55
+RVC at offset 0x812: 0xe8b2
+RVC at offset 0x814: 0x8f5d
+RVC at offset 0x816: 0xe4ba
+RVC at offset 0x828: 0x0322
+RVC at offset 0x82a: 0x05c2
+RVC at offset 0x82c: 0x04e2
+RVC at offset 0x82e: 0x06a2
+RVC at offset 0x830: 0x0742
+RVC at offset 0x832: 0x07e2
+RVC at offset 0x838: 0xe0a2
+RVC at offset 0x83a: 0x8dc5
+RVC at offset 0x83c: 0xfc2e
+RVC at offset 0x83e: 0x8e55
+RVC at offset 0x840: 0xf832
+RVC at offset 0x842: 0x8f5d
+RVC at offset 0x844: 0xf43a
+RVC at offset 0x856: 0x05a2
+RVC at offset 0x858: 0x0642
+RVC at offset 0x85a: 0x06e2
+RVC at offset 0x85c: 0x8dd9
+RVC at offset 0x85e: 0xf02e
+RVC at offset 0x860: 0x8e55
+RVC at offset 0x862: 0xec32
+RVC at offset 0x874: 0x04a2
+RVC at offset 0x876: 0x8e45
+RVC at offset 0x878: 0xe832
+RVC at offset 0x87a: 0x0742
+RVC at offset 0x87c: 0x05e2
+RVC at offset 0x87e: 0x8dd9
+RVC at offset 0x880: 0xe42e
+RVC at offset 0x892: 0x06a2
+RVC at offset 0x894: 0x8ed9
+RVC at offset 0x896: 0xe036
+RVC at offset 0x898: 0x0642
+RVC at offset 0x89a: 0x05e2
+RVC at offset 0x8b0: 0x06a2
+RVC at offset 0x8b6: 0x0642
+RVC at offset 0x8b8: 0x05e2
+RVC at offset 0x8ce: 0x0622
+RVC at offset 0x8d4: 0x05c2
+RVC at offset 0x8d6: 0x0562
+RVC at offset 0x8d8: 0x8dc9
+RVC at offset 0x8da: 0x6546
+RVC at offset 0x8dc: 0x6626
+RVC at offset 0x8de: 0x8e49
+RVC at offset 0x8e0: 0x6506
+RVC at offset 0x8e2: 0x7762
+RVC at offset 0x8e4: 0x8f49
+RVC at offset 0x8e6: 0x7542
+RVC at offset 0x8e8: 0x76a2
+RVC at offset 0x8ea: 0x8ec9
+RVC at offset 0x8ec: 0x7502
+RVC at offset 0x8ee: 0x60e2
+RVC at offset 0x8f4: 0x64c2
+RVC at offset 0x8f6: 0x6422
+RVC at offset 0x8fc: 0x6402
+RVC at offset 0x906: 0x8ddd
+RVC at offset 0x908: 0x1702
+RVC at offset 0x90a: 0x8e59
+RVC at offset 0x90c: 0x1502
+RVC at offset 0x90e: 0x1402
+RVC at offset 0x910: 0x1582
+RVC at offset 0x912: 0x8d55
+RVC at offset 0x918: 0x8dc5
+RVC at offset 0x92a: 0x6766
+RVC at offset 0x92c: 0xe30c
+RVC at offset 0x92e: 0xe714
+RVC at offset 0x930: 0xeb08
+RVC at offset 0x932: 0xef10
+RVC at offset 0x934: 0x70c6
+RVC at offset 0x936: 0x7426
+RVC at offset 0x938: 0x7486
+RVC at offset 0x93e: 0x8082
+RVC at offset 0x944: 0xf006
+RVC at offset 0x946: 0xec22
+RVC at offset 0x948: 0xe826
+RVC at offset 0x94a: 0x6190
+RVC at offset 0x94c: 0xe432
+RVC at offset 0x94e: 0x6590
+RVC at offset 0x950: 0xe032
+RVC at offset 0x952: 0x6980
+RVC at offset 0x954: 0x6d84
+RVC at offset 0x96a: 0x6682
+RVC at offset 0x970: 0x6722
+RVC at offset 0x982: 0xe43e
+RVC at offset 0x99c: 0x8341
+RVC at offset 0x9c6: 0x82c1
+RVC at offset 0x9f8: 0x67a2
+RVC at offset 0xa66: 0x7082
+RVC at offset 0xa68: 0x6462
+RVC at offset 0xa6a: 0x64c2
+RVC at offset 0xa70: 0x8082
+RVC at offset 0xa72: 0x711d
+RVC at offset 0xa74: 0xec86
+RVC at offset 0xa76: 0xe8a2
+RVC at offset 0xa78: 0xe4a6
+RVC at offset 0xa7a: 0x1080
+RVC at offset 0xa80: 0x84aa
+RVC at offset 0xa82: 0x6d88
+RVC at offset 0xa84: 0x6990
+RVC at offset 0xa86: 0x6594
+RVC at offset 0xa88: 0x618c
+RVC at offset 0xa9a: 0xf02a
+RVC at offset 0xa9c: 0xf432
+RVC at offset 0xa9e: 0xf836
+RVC at offset 0xaa0: 0xfc2e
+RVC at offset 0xaaa: 0x4501
+RVC at offset 0xab4: 0x6562
+RVC at offset 0xab6: 0x65c2
+RVC at offset 0xab8: 0x6622
+RVC at offset 0xaba: 0x6682
+RVC at offset 0xacc: 0xe088
+RVC at offset 0xace: 0xe48c
+RVC at offset 0xad0: 0xe890
+RVC at offset 0xad2: 0xec94
+RVC at offset 0xad8: 0x60e6
+RVC at offset 0xada: 0x6446
+RVC at offset 0xadc: 0x64a6
+RVC at offset 0xade: 0x6125
+RVC at offset 0xae0: 0x8082
+RVC at offset 0xae2: 0x711d
+RVC at offset 0xae4: 0xec86
+RVC at offset 0xae6: 0xe8a2
+RVC at offset 0xae8: 0x1080
+RVC at offset 0xaf2: 0x6514
+RVC at offset 0xaf4: 0x6918
+RVC at offset 0xaf6: 0x6d08
+RVC at offset 0xafc: 0x6590
+RVC at offset 0xafe: 0x699c
+RVC at offset 0xb00: 0x6d8c
+RVC at offset 0xb22: 0xf02a
+RVC at offset 0xb24: 0xf43a
+RVC at offset 0xb26: 0xf836
+RVC at offset 0xb28: 0xfc16
+RVC at offset 0xb2a: 0xe02e
+RVC at offset 0xb2c: 0xe43e
+RVC at offset 0xb2e: 0xe832
+RVC at offset 0xb30: 0xec1a
+RVC at offset 0xb3a: 0x4501
+RVC at offset 0xb48: 0x60e6
+RVC at offset 0xb4a: 0x6446
+RVC at offset 0xb4c: 0x6125
+RVC at offset 0xb4e: 0x8082
+RVC at offset 0xb54: 0xc201
+RVC at offset 0xb5a: 0xe281
+RVC at offset 0xb68: 0x95aa
+RVC at offset 0xb6a: 0x05fd
+RVC at offset 0xb70: 0x1601
+RVC at offset 0xb72: 0x8df1
+RVC at offset 0xb88: 0x2501
+RVC at offset 0xb92: 0x952e
+RVC at offset 0xb94: 0x8082
+RVC at offset 0xb96: 0x0000
+Total RVC instructions: 422 out of 780 total instructions
+=== TEXT RELOCATIONS SUMMARY ===
+Type 2: 34 relocations
+Type 16: 7 relocations
+Type 19: 42 relocations
+Type 23: 13 relocations
+Type 24: 12 relocations
+Type 25: 1 relocations
+Type 44: 9 relocations
+Type 45: 6 relocations
+Type 51: 68 relocations
+ALL relocations:
+Reloc: offset=0x4 type=2 sym='address__IMPORT_METADATA' val=0x0 addend=0x0
+Reloc: offset=0x12 type=2 sym='balance__IMPORT_METADATA' val=0x13 addend=0x0
+Reloc: offset=0x20 type=2 sym='balance_of__IMPORT_METADATA' val=0x26 addend=0x0
+Reloc: offset=0x2e type=2 sym='base_fee__IMPORT_METADATA' val=0x39 addend=0x0
+Reloc: offset=0x3c type=2 sym='block_author__IMPORT_METADATA' val=0x4c addend=0x0
+Reloc: offset=0x4a type=2 sym='block_hash__IMPORT_METADATA' val=0x5f addend=0x0
+Reloc: offset=0x58 type=2 sym='block_number__IMPORT_METADATA' val=0x72 addend=0x0
+Reloc: offset=0x66 type=2 sym='call_data_copy__IMPORT_METADATA' val=0x98 addend=0x0
+Reloc: offset=0x74 type=2 sym='call_data_load__IMPORT_METADATA' val=0xab addend=0x0
+Reloc: offset=0x82 type=2 sym='call_data_size__IMPORT_METADATA' val=0xbe addend=0x0
+Reloc: offset=0x90 type=2 sym='call_evm__IMPORT_METADATA' val=0x85 addend=0x0
+Reloc: offset=0x9e type=2 sym='caller__IMPORT_METADATA' val=0xd1 addend=0x0
+Reloc: offset=0xac type=2 sym='chain_id__IMPORT_METADATA' val=0xe4 addend=0x0
+Reloc: offset=0xba type=2 sym='code_hash__IMPORT_METADATA' val=0x10a addend=0x0
+Reloc: offset=0xc8 type=2 sym='code_size__IMPORT_METADATA' val=0xf7 addend=0x0
+Reloc: offset=0xd6 type=2 sym='consume_all_gas__IMPORT_METADATA' val=0x11d addend=0x0
+Reloc: offset=0xe4 type=2 sym='delegate_call_evm__IMPORT_METADATA' val=0x130 addend=0x0
+Reloc: offset=0xf2 type=2 sym='deposit_event__IMPORT_METADATA' val=0x143 addend=0x0
+Reloc: offset=0x100 type=2 sym='gas_limit__IMPORT_METADATA' val=0x156 addend=0x0
+Reloc: offset=0x10e type=2 sym='gas_price__IMPORT_METADATA' val=0x169 addend=0x0
+Reloc: offset=0x11c type=2 sym='get_immutable_data__IMPORT_METADATA' val=0x17c addend=0x0
+Reloc: offset=0x12a type=2 sym='get_storage_or_zero__IMPORT_METADATA' val=0x18f addend=0x0
+Reloc: offset=0x138 type=2 sym='hash_keccak_256__IMPORT_METADATA' val=0x1a2 addend=0x0
+Reloc: offset=0x146 type=2 sym='instantiate__IMPORT_METADATA' val=0x1b5 addend=0x0
+Reloc: offset=0x154 type=2 sym='now__IMPORT_METADATA' val=0x1c8 addend=0x0
+Reloc: offset=0x162 type=2 sym='origin__IMPORT_METADATA' val=0x1db addend=0x0
+Reloc: offset=0x170 type=2 sym='ref_time_left__IMPORT_METADATA' val=0x201 addend=0x0
+Reloc: offset=0x17e type=2 sym='return_data_copy__IMPORT_METADATA' val=0x214 addend=0x0
+Reloc: offset=0x18c type=2 sym='return_data_size__IMPORT_METADATA' val=0x227 addend=0x0
+Reloc: offset=0x19a type=2 sym='seal_return__IMPORT_METADATA' val=0x1ee addend=0x0
+Reloc: offset=0x1a8 type=2 sym='set_immutable_data__IMPORT_METADATA' val=0x23a addend=0x0
+Reloc: offset=0x1b6 type=2 sym='set_storage_or_clear__IMPORT_METADATA' val=0x24d addend=0x0
+Reloc: offset=0x1c4 type=2 sym='terminate__IMPORT_METADATA' val=0x260 addend=0x0
+Reloc: offset=0x1d2 type=2 sym='value_transferred__IMPORT_METADATA' val=0x273 addend=0x0
+Reloc: offset=0x292 type=19 sym='call_data_size' val=0x7e addend=0x0
+Reloc: offset=0x292 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x29a type=23 sym='.L_MergedGlobals' val=0x20010 addend=0x0
+Reloc: offset=0x29a type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x29e type=25 sym='.Lpcrel_hi4' val=0x29a addend=0x0
+Reloc: offset=0x29e type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2a2 type=44 sym='.L0 ' val=0x2ac addend=0x0
+Reloc: offset=0x2a4 type=19 sym='.L__deploy' val=0x2b4 addend=0x0
+Reloc: offset=0x2a4 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2ac type=19 sym='.L__runtime' val=0x464 addend=0x0
+Reloc: offset=0x2ac type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2d2 type=19 sym='value_transferred' val=0x1ce addend=0x0
+Reloc: offset=0x2d2 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2e8 type=44 sym='.L0 ' val=0x2f4 addend=0x0
+Reloc: offset=0x2ea type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x2ea type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2ee type=24 sym='.Lpcrel_hi5' val=0x2ea addend=0x0
+Reloc: offset=0x2ee type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2f2 type=45 sym='.L0 ' val=0x390 addend=0x0
+Reloc: offset=0x2f4 type=23 sym='.L_MergedGlobals' val=0x20010 addend=0x0
+Reloc: offset=0x2f4 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x2f8 type=24 sym='.Lpcrel_hi6' val=0x2f4 addend=0x0
+Reloc: offset=0x2f8 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x324 type=19 sym='__revive_store_heap_word' val=0x940 addend=0x0
+Reloc: offset=0x324 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x332 type=19 sym='__sbrk_internal' val=0xb50 addend=0x0
+Reloc: offset=0x332 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x340 type=19 sym='call_data_copy' val=0x62 addend=0x0
+Reloc: offset=0x340 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x34c type=16 sym='.L0 ' val=0x35a addend=0x0
+Reloc: offset=0x350 type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x350 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x354 type=24 sym='.Lpcrel_hi7' val=0x350 addend=0x0
+Reloc: offset=0x354 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x358 type=45 sym='.L0 ' val=0x390 addend=0x0
+Reloc: offset=0x362 type=19 sym='__revive_load_heap_word' val=0x7ce addend=0x0
+Reloc: offset=0x362 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x386 type=44 sym='.L0 ' val=0x3a0 addend=0x0
+Reloc: offset=0x388 type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x388 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x38c type=24 sym='.Lpcrel_hi8' val=0x388 addend=0x0
+Reloc: offset=0x38c type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x398 type=19 sym='seal_return' val=0x196 addend=0x0
+Reloc: offset=0x398 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x3a8 type=19 sym='OUTLINED_FUNCTION_0' val=0x77e addend=0x0
+Reloc: offset=0x3a8 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x3b8 type=19 sym='__revive_load_storage_word' val=0xa72 addend=0x0
+Reloc: offset=0x3b8 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x3f6 type=19 sym='__revive_store_storage_word' val=0xae2 addend=0x0
+Reloc: offset=0x3f6 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x406 type=19 sym='__revive_load_heap_word' val=0x7ce addend=0x0
+Reloc: offset=0x406 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x426 type=44 sym='.L0 ' val=0x45c addend=0x0
+Reloc: offset=0x428 type=23 sym='__heap_memory' val=0x0 addend=0x0
+Reloc: offset=0x428 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x42c type=24 sym='.Lpcrel_hi9' val=0x428 addend=0x0
+Reloc: offset=0x42c type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x438 type=19 sym='call_data_copy' val=0x62 addend=0x0
+Reloc: offset=0x438 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x440 type=19 sym='__revive_store_immutable_data' val=0x7ae addend=0x0
+Reloc: offset=0x440 type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x44c type=19 sym='__sbrk_internal' val=0xb50 addend=0x0
+Reloc: offset=0x44c type=51 sym='' val=0x0 addend=0x0
+Reloc: offset=0x45a type=45 sym='.L0 ' val=0x396 addend=0x0
+Reloc: offset=0x45c type=19 sym='consume_all_gas' val=0xd2 addend=0x0
+Reloc: offset=0x45c type=51 sym='' val=0x0 addend=0x0
+=== LOADED SECTIONS ===
+Section 0: '' vaddr=0x0 size=0 type=0
+Section 1: '.text' vaddr=0x0 size=2968 type=1
+Section 2: '.rela.text' vaddr=0x0 size=4608 type=4
+Section 3: '.polkavm_min_stack_size' vaddr=0x0 size=4 type=1
+Section 4: '.group' vaddr=0x0 size=12 type=17
+Section 5: '.rela.text' vaddr=0x0 size=216 type=4
+Section 6: '.group' vaddr=0x0 size=12 type=17
+Section 7: '.rela.text' vaddr=0x0 size=48 type=4
+Section 8: '.group' vaddr=0x0 size=12 type=17
+Section 9: '.rela.text' vaddr=0x0 size=48 type=4
+Section 10: '.group' vaddr=0x0 size=12 type=17
+Section 11: '.rela.text' vaddr=0x0 size=48 type=4
+Section 12: '.group' vaddr=0x0 size=12 type=17
+Section 13: '.rela.text' vaddr=0x0 size=48 type=4
+Section 14: '.group' vaddr=0x0 size=12 type=17
+Section 15: '.rela.text' vaddr=0x0 size=360 type=4
+Section 16: '.polkavm_exports' vaddr=0x0 size=34 type=7
+Section 17: '.rela.polkavm_exports' vaddr=0x0 size=96 type=4
+Section 18: '.polkavm_metadata' vaddr=0x20000 size=684 type=1
+Section 19: '.rela.polkavm_metadata' vaddr=0x0 size=864 type=4
+Section 20: '.rodata.str1.1' vaddr=0x202ac size=449 type=1
+Section 21: '.bss' vaddr=0x20470 size=131136 type=8
+Section 22: '.debug_abbrev' vaddr=0x0 size=200 type=1
+Section 23: '.debug_info' vaddr=0x0 size=744 type=1
+Section 24: '.rela.debug_info' vaddr=0x0 size=2496 type=4
+Section 25: '.debug_ranges' vaddr=0x0 size=240 type=1
+Section 26: '.rela.debug_ranges' vaddr=0x0 size=576 type=4
+Section 27: '.debug_str' vaddr=0x0 size=323 type=1
+Section 28: '.debug_pubnames' vaddr=0x0 size=323 type=1
+Section 29: '.rela.debug_pubnames' vaddr=0x0 size=24 type=4
+Section 30: '.debug_pubtypes' vaddr=0x0 size=27 type=1
+Section 31: '.rela.debug_pubtypes' vaddr=0x0 size=24 type=4
+Section 32: '.comment' vaddr=0x0 size=126 type=1
+Section 33: '.riscv.attributes' vaddr=0x0 size=102 type=1879048195
+Section 34: '.debug_line' vaddr=0x0 size=787 type=1
+Section 35: '.rela.debug_line' vaddr=0x0 size=3552 type=4
+Section 36: '.note.GNU-stack' vaddr=0x0 size=0 type=1
+Section 37: '.symtab' vaddr=0x0 size=11736 type=2
+Section 38: '.shstrtab' vaddr=0x0 size=408 type=3
+Section 39: '.strtab' vaddr=0x0 size=4106 type=3
+PRE-RELOCATION HEX DUMP OF MEMORY 0x280..0x2c0:
+0x0280: 0x1be386ba
+0x0284: 0x8082fec7
+0x0288: 0xe4061141
+0x028c: 0x7413e022
+0x0290: 0x00970015
+0x0294: 0x80e70000
+0x0298: 0x05970000
+0x029c: 0xa0230000
+0x02a0: 0xc00100a5
+0x02a4: 0x00000097
+0x02a8: 0x000080e7
+0x02ac: 0x00000097
+0x02b0: 0x000080e7
+0x02b4: 0xed867115
+0x02b8: 0xe5a6e9a2
+0x02bc: 0x71131180
+APPLY RELOC: offset=0x4 type=2 target_vaddr=0x0 P=0x4 sym='address__IMPORT_METADATA' S=0x20000 A=0
+APPLY RELOC: offset=0x12 type=2 target_vaddr=0x0 P=0x12 sym='balance__IMPORT_METADATA' S=0x20013 A=0
+APPLY RELOC: offset=0x20 type=2 target_vaddr=0x0 P=0x20 sym='balance_of__IMPORT_METADATA' S=0x20026 A=0
+APPLY RELOC: offset=0x2e type=2 target_vaddr=0x0 P=0x2e sym='base_fee__IMPORT_METADATA' S=0x20039 A=0
+APPLY RELOC: offset=0x3c type=2 target_vaddr=0x0 P=0x3c sym='block_author__IMPORT_METADATA' S=0x2004c A=0
+APPLY RELOC: offset=0x4a type=2 target_vaddr=0x0 P=0x4a sym='block_hash__IMPORT_METADATA' S=0x2005f A=0
+APPLY RELOC: offset=0x58 type=2 target_vaddr=0x0 P=0x58 sym='block_number__IMPORT_METADATA' S=0x20072 A=0
+APPLY RELOC: offset=0x66 type=2 target_vaddr=0x0 P=0x66 sym='call_data_copy__IMPORT_METADATA' S=0x20098 A=0
+APPLY RELOC: offset=0x74 type=2 target_vaddr=0x0 P=0x74 sym='call_data_load__IMPORT_METADATA' S=0x200ab A=0
+APPLY RELOC: offset=0x82 type=2 target_vaddr=0x0 P=0x82 sym='call_data_size__IMPORT_METADATA' S=0x200be A=0
+APPLY RELOC: offset=0x90 type=2 target_vaddr=0x0 P=0x90 sym='call_evm__IMPORT_METADATA' S=0x20085 A=0
+APPLY RELOC: offset=0x9e type=2 target_vaddr=0x0 P=0x9e sym='caller__IMPORT_METADATA' S=0x200d1 A=0
+APPLY RELOC: offset=0xac type=2 target_vaddr=0x0 P=0xac sym='chain_id__IMPORT_METADATA' S=0x200e4 A=0
+APPLY RELOC: offset=0xba type=2 target_vaddr=0x0 P=0xba sym='code_hash__IMPORT_METADATA' S=0x2010a A=0
+APPLY RELOC: offset=0xc8 type=2 target_vaddr=0x0 P=0xc8 sym='code_size__IMPORT_METADATA' S=0x200f7 A=0
+APPLY RELOC: offset=0xd6 type=2 target_vaddr=0x0 P=0xd6 sym='consume_all_gas__IMPORT_METADATA' S=0x2011d A=0
+APPLY RELOC: offset=0xe4 type=2 target_vaddr=0x0 P=0xe4 sym='delegate_call_evm__IMPORT_METADATA' S=0x20130 A=0
+APPLY RELOC: offset=0xf2 type=2 target_vaddr=0x0 P=0xf2 sym='deposit_event__IMPORT_METADATA' S=0x20143 A=0
+APPLY RELOC: offset=0x100 type=2 target_vaddr=0x0 P=0x100 sym='gas_limit__IMPORT_METADATA' S=0x20156 A=0
+APPLY RELOC: offset=0x10e type=2 target_vaddr=0x0 P=0x10e sym='gas_price__IMPORT_METADATA' S=0x20169 A=0
+APPLY RELOC: offset=0x11c type=2 target_vaddr=0x0 P=0x11c sym='get_immutable_data__IMPORT_METADATA' S=0x2017c A=0
+APPLY RELOC: offset=0x12a type=2 target_vaddr=0x0 P=0x12a sym='get_storage_or_zero__IMPORT_METADATA' S=0x2018f A=0
+APPLY RELOC: offset=0x138 type=2 target_vaddr=0x0 P=0x138 sym='hash_keccak_256__IMPORT_METADATA' S=0x201a2 A=0
+APPLY RELOC: offset=0x146 type=2 target_vaddr=0x0 P=0x146 sym='instantiate__IMPORT_METADATA' S=0x201b5 A=0
+APPLY RELOC: offset=0x154 type=2 target_vaddr=0x0 P=0x154 sym='now__IMPORT_METADATA' S=0x201c8 A=0
+APPLY RELOC: offset=0x162 type=2 target_vaddr=0x0 P=0x162 sym='origin__IMPORT_METADATA' S=0x201db A=0
+APPLY RELOC: offset=0x170 type=2 target_vaddr=0x0 P=0x170 sym='ref_time_left__IMPORT_METADATA' S=0x20201 A=0
+APPLY RELOC: offset=0x17e type=2 target_vaddr=0x0 P=0x17e sym='return_data_copy__IMPORT_METADATA' S=0x20214 A=0
+APPLY RELOC: offset=0x18c type=2 target_vaddr=0x0 P=0x18c sym='return_data_size__IMPORT_METADATA' S=0x20227 A=0
+APPLY RELOC: offset=0x19a type=2 target_vaddr=0x0 P=0x19a sym='seal_return__IMPORT_METADATA' S=0x201ee A=0
+APPLY RELOC: offset=0x1a8 type=2 target_vaddr=0x0 P=0x1a8 sym='set_immutable_data__IMPORT_METADATA' S=0x2023a A=0
+APPLY RELOC: offset=0x1b6 type=2 target_vaddr=0x0 P=0x1b6 sym='set_storage_or_clear__IMPORT_METADATA' S=0x2024d A=0
+APPLY RELOC: offset=0x1c4 type=2 target_vaddr=0x0 P=0x1c4 sym='terminate__IMPORT_METADATA' S=0x20260 A=0
+APPLY RELOC: offset=0x1d2 type=2 target_vaddr=0x0 P=0x1d2 sym='value_transferred__IMPORT_METADATA' S=0x20273 A=0
+APPLY RELOC: offset=0x292 type=19 target_vaddr=0x0 P=0x292 sym='call_data_size' S=0x7e A=0
+RELOC 18/19: P=0x292, S=0x7e, roffset=-532, high20=0x0, low12=-532
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xdec080e7
+APPLY RELOC: offset=0x292 type=51 target_vaddr=0x0 P=0x292 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x29a type=23 target_vaddr=0x0 P=0x29a sym='.L_MergedGlobals' S=0x40480 A=0
+RELOC 23: P=0x29a, S=0x40480, roffset=262630, high20=0x40
+  BEFORE: inst=0x00000597
+  AFTER:  inst=0x00040597
+APPLY RELOC: offset=0x29a type=51 target_vaddr=0x0 P=0x29a sym='' S=0x0 A=0
+APPLY RELOC: offset=0x29e type=25 target_vaddr=0x0 P=0x29e sym='.Lpcrel_hi4' S=0x29a A=0
+RELOC 25: P=0x29e, hi_addr=0x29a, low12=486
+  BEFORE: inst=0x00a5a023
+  AFTER:  inst=0x1ea5a323
+APPLY RELOC: offset=0x29e type=51 target_vaddr=0x0 P=0x29e sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2a2 type=44 target_vaddr=0x0 P=0x2a2 sym='.L0 ' S=0x2ac A=0
+APPLY RELOC: offset=0x2a4 type=19 target_vaddr=0x0 P=0x2a4 sym='.L__deploy' S=0x2b4 A=0
+RELOC 18/19: P=0x2a4, S=0x2b4, roffset=16, high20=0x0, low12=16
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x010080e7
+APPLY RELOC: offset=0x2a4 type=51 target_vaddr=0x0 P=0x2a4 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2ac type=19 target_vaddr=0x0 P=0x2ac sym='.L__runtime' S=0x464 A=0
+RELOC 18/19: P=0x2ac, S=0x464, roffset=440, high20=0x0, low12=440
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x1b8080e7
+APPLY RELOC: offset=0x2ac type=51 target_vaddr=0x0 P=0x2ac sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2d2 type=19 target_vaddr=0x0 P=0x2d2 sym='value_transferred' S=0x1ce A=0
+RELOC 18/19: P=0x2d2, S=0x1ce, roffset=-260, high20=0x0, low12=-260
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xefc080e7
+APPLY RELOC: offset=0x2d2 type=51 target_vaddr=0x0 P=0x2d2 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2e8 type=44 target_vaddr=0x0 P=0x2e8 sym='.L0 ' S=0x2f4 A=0
+APPLY RELOC: offset=0x2ea type=23 target_vaddr=0x0 P=0x2ea sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x2ea, S=0x20470, roffset=131462, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x2ea type=51 target_vaddr=0x0 P=0x2ea sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2ee type=24 target_vaddr=0x0 P=0x2ee sym='.Lpcrel_hi5' S=0x2ea A=0
+RELOC 24: P=0x2ee, hi_addr=0x2ea, low12=390
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0x18650513
+APPLY RELOC: offset=0x2ee type=51 target_vaddr=0x0 P=0x2ee sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2f2 type=45 target_vaddr=0x0 P=0x2f2 sym='.L0 ' S=0x390 A=0
+APPLY RELOC: offset=0x2f4 type=23 target_vaddr=0x0 P=0x2f4 sym='.L_MergedGlobals' S=0x40480 A=0
+RELOC 23: P=0x2f4, S=0x40480, roffset=262540, high20=0x40
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00040517
+APPLY RELOC: offset=0x2f4 type=51 target_vaddr=0x0 P=0x2f4 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x2f8 type=24 target_vaddr=0x0 P=0x2f8 sym='.Lpcrel_hi6' S=0x2f4 A=0
+RELOC 24: P=0x2f8, hi_addr=0x2f4, low12=396
+  BEFORE: inst=0x00052503
+  AFTER:  inst=0x18c52503
+APPLY RELOC: offset=0x2f8 type=51 target_vaddr=0x0 P=0x2f8 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x324 type=19 target_vaddr=0x0 P=0x324 sym='__revive_store_heap_word' S=0x940 A=0
+RELOC 18/19: P=0x324, S=0x940, roffset=1564, high20=0x0, low12=1564
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x61c080e7
+APPLY RELOC: offset=0x324 type=51 target_vaddr=0x0 P=0x324 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x332 type=19 target_vaddr=0x0 P=0x332 sym='__sbrk_internal' S=0xb50 A=0
+RELOC 18/19: P=0x332, S=0xb50, roffset=2078, high20=0x1, low12=-2018
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00001097, jalr=0x81e080e7
+APPLY RELOC: offset=0x332 type=51 target_vaddr=0x0 P=0x332 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x340 type=19 target_vaddr=0x0 P=0x340 sym='call_data_copy' S=0x62 A=0
+RELOC 18/19: P=0x340, S=0x62, roffset=-734, high20=0x0, low12=-734
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xd22080e7
+APPLY RELOC: offset=0x340 type=51 target_vaddr=0x0 P=0x340 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x34c type=16 target_vaddr=0x0 P=0x34c sym='.L0 ' S=0x35a A=0
+APPLY RELOC: offset=0x350 type=23 target_vaddr=0x0 P=0x350 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x350, S=0x20470, roffset=131360, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x350 type=51 target_vaddr=0x0 P=0x350 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x354 type=24 target_vaddr=0x0 P=0x354 sym='.Lpcrel_hi7' S=0x350 A=0
+RELOC 24: P=0x354, hi_addr=0x350, low12=288
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0x12050513
+APPLY RELOC: offset=0x354 type=51 target_vaddr=0x0 P=0x354 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x358 type=45 target_vaddr=0x0 P=0x358 sym='.L0 ' S=0x390 A=0
+APPLY RELOC: offset=0x362 type=19 target_vaddr=0x0 P=0x362 sym='__revive_load_heap_word' S=0x7ce A=0
+RELOC 18/19: P=0x362, S=0x7ce, roffset=1132, high20=0x0, low12=1132
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x46c080e7
+APPLY RELOC: offset=0x362 type=51 target_vaddr=0x0 P=0x362 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x386 type=44 target_vaddr=0x0 P=0x386 sym='.L0 ' S=0x3a0 A=0
+APPLY RELOC: offset=0x388 type=23 target_vaddr=0x0 P=0x388 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x388, S=0x20470, roffset=131304, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x388 type=51 target_vaddr=0x0 P=0x388 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x38c type=24 target_vaddr=0x0 P=0x38c sym='.Lpcrel_hi8' S=0x388 A=0
+RELOC 24: P=0x38c, hi_addr=0x388, low12=232
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0x0e850513
+APPLY RELOC: offset=0x38c type=51 target_vaddr=0x0 P=0x38c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x398 type=19 target_vaddr=0x0 P=0x398 sym='seal_return' S=0x196 A=0
+RELOC 18/19: P=0x398, S=0x196, roffset=-514, high20=0x0, low12=-514
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xdfe080e7
+APPLY RELOC: offset=0x398 type=51 target_vaddr=0x0 P=0x398 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x3a8 type=19 target_vaddr=0x0 P=0x3a8 sym='OUTLINED_FUNCTION_0' S=0x77e A=0
+RELOC 18/19: P=0x3a8, S=0x77e, roffset=982, high20=0x0, low12=982
+  BEFORE: auipc=0x00000297, jalr=0x000282e7
+  AFTER:  auipc=0x00000297, jalr=0x3d6282e7
+APPLY RELOC: offset=0x3a8 type=51 target_vaddr=0x0 P=0x3a8 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x3b8 type=19 target_vaddr=0x0 P=0x3b8 sym='__revive_load_storage_word' S=0xa72 A=0
+RELOC 18/19: P=0x3b8, S=0xa72, roffset=1722, high20=0x0, low12=1722
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x6ba080e7
+APPLY RELOC: offset=0x3b8 type=51 target_vaddr=0x0 P=0x3b8 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x3f6 type=19 target_vaddr=0x0 P=0x3f6 sym='__revive_store_storage_word' S=0xae2 A=0
+RELOC 18/19: P=0x3f6, S=0xae2, roffset=1772, high20=0x0, low12=1772
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x6ec080e7
+APPLY RELOC: offset=0x3f6 type=51 target_vaddr=0x0 P=0x3f6 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x406 type=19 target_vaddr=0x0 P=0x406 sym='__revive_load_heap_word' S=0x7ce A=0
+RELOC 18/19: P=0x406, S=0x7ce, roffset=968, high20=0x0, low12=968
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x3c8080e7
+APPLY RELOC: offset=0x406 type=51 target_vaddr=0x0 P=0x406 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x426 type=44 target_vaddr=0x0 P=0x426 sym='.L0 ' S=0x45c A=0
+APPLY RELOC: offset=0x428 type=23 target_vaddr=0x0 P=0x428 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x428, S=0x20470, roffset=131144, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x428 type=51 target_vaddr=0x0 P=0x428 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x42c type=24 target_vaddr=0x0 P=0x42c sym='.Lpcrel_hi9' S=0x428 A=0
+RELOC 24: P=0x42c, hi_addr=0x428, low12=72
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0x04850513
+APPLY RELOC: offset=0x42c type=51 target_vaddr=0x0 P=0x42c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x438 type=19 target_vaddr=0x0 P=0x438 sym='call_data_copy' S=0x62 A=0
+RELOC 18/19: P=0x438, S=0x62, roffset=-982, high20=0x0, low12=-982
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xc2a080e7
+APPLY RELOC: offset=0x438 type=51 target_vaddr=0x0 P=0x438 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x440 type=19 target_vaddr=0x0 P=0x440 sym='__revive_store_immutable_data' S=0x7ae A=0
+RELOC 18/19: P=0x440, S=0x7ae, roffset=878, high20=0x0, low12=878
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x36e080e7
+APPLY RELOC: offset=0x440 type=51 target_vaddr=0x0 P=0x440 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x44c type=19 target_vaddr=0x0 P=0x44c sym='__sbrk_internal' S=0xb50 A=0
+RELOC 18/19: P=0x44c, S=0xb50, roffset=1796, high20=0x0, low12=1796
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x704080e7
+APPLY RELOC: offset=0x44c type=51 target_vaddr=0x0 P=0x44c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x45a type=45 target_vaddr=0x0 P=0x45a sym='.L0 ' S=0x396 A=0
+APPLY RELOC: offset=0x45c type=19 target_vaddr=0x0 P=0x45c sym='consume_all_gas' S=0xd2 A=0
+RELOC 18/19: P=0x45c, S=0xd2, roffset=-906, high20=0x0, low12=-906
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xc76080e7
+APPLY RELOC: offset=0x45c type=51 target_vaddr=0x0 P=0x45c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x48a type=19 target_vaddr=0x0 P=0x48a sym='__revive_store_heap_word' S=0x940 A=0
+RELOC 18/19: P=0x48a, S=0x940, roffset=1206, high20=0x0, low12=1206
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x4b6080e7
+APPLY RELOC: offset=0x48a type=51 target_vaddr=0x0 P=0x48a sym='' S=0x0 A=0
+APPLY RELOC: offset=0x492 type=23 target_vaddr=0x0 P=0x492 sym='.L_MergedGlobals' S=0x40480 A=0
+RELOC 23: P=0x492, S=0x40480, roffset=262126, high20=0x40
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00040517
+APPLY RELOC: offset=0x492 type=51 target_vaddr=0x0 P=0x492 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x496 type=24 target_vaddr=0x0 P=0x496 sym='.Lpcrel_hi10' S=0x492 A=0
+RELOC 24: P=0x496, hi_addr=0x492, low12=-18
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0xfee50513
+APPLY RELOC: offset=0x496 type=51 target_vaddr=0x0 P=0x496 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x4a0 type=16 target_vaddr=0x0 P=0x4a0 sym='.L0 ' S=0x692 A=0
+APPLY RELOC: offset=0x4b2 type=19 target_vaddr=0x0 P=0x4b2 sym='call_data_load' S=0x70 A=0
+RELOC 18/19: P=0x4b2, S=0x70, roffset=-1090, high20=0x0, low12=-1090
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xbbe080e7
+APPLY RELOC: offset=0x4b2 type=51 target_vaddr=0x0 P=0x4b2 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x4c6 type=16 target_vaddr=0x0 P=0x4c6 sym='.L0 ' S=0x64c A=0
+APPLY RELOC: offset=0x4d0 type=16 target_vaddr=0x0 P=0x4d0 sym='.L0 ' S=0x69c A=0
+APPLY RELOC: offset=0x4d4 type=19 target_vaddr=0x0 P=0x4d4 sym='OUTLINED_FUNCTION_0' S=0x77e A=0
+RELOC 18/19: P=0x4d4, S=0x77e, roffset=682, high20=0x0, low12=682
+  BEFORE: auipc=0x00000297, jalr=0x000282e7
+  AFTER:  auipc=0x00000297, jalr=0x2aa282e7
+APPLY RELOC: offset=0x4d4 type=51 target_vaddr=0x0 P=0x4d4 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x4e0 type=19 target_vaddr=0x0 P=0x4e0 sym='__revive_load_storage_word' S=0xa72 A=0
+RELOC 18/19: P=0x4e0, S=0xa72, roffset=1426, high20=0x0, low12=1426
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x592080e7
+APPLY RELOC: offset=0x4e0 type=51 target_vaddr=0x0 P=0x4e0 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x4fc type=19 target_vaddr=0x0 P=0x4fc sym='OUTLINED_FUNCTION_1' S=0x798 A=0
+RELOC 18/19: P=0x4fc, S=0x798, roffset=668, high20=0x0, low12=668
+  BEFORE: auipc=0x00000297, jalr=0x000282e7
+  AFTER:  auipc=0x00000297, jalr=0x29c282e7
+APPLY RELOC: offset=0x4fc type=51 target_vaddr=0x0 P=0x4fc sym='' S=0x0 A=0
+APPLY RELOC: offset=0x504 type=19 target_vaddr=0x0 P=0x504 sym='value_transferred' S=0x1ce A=0
+RELOC 18/19: P=0x504, S=0x1ce, roffset=-822, high20=0x0, low12=-822
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xcca080e7
+APPLY RELOC: offset=0x504 type=51 target_vaddr=0x0 P=0x504 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x530 type=19 target_vaddr=0x0 P=0x530 sym='OUTLINED_FUNCTION_1' S=0x798 A=0
+RELOC 18/19: P=0x530, S=0x798, roffset=616, high20=0x0, low12=616
+  BEFORE: auipc=0x00000297, jalr=0x000282e7
+  AFTER:  auipc=0x00000297, jalr=0x268282e7
+APPLY RELOC: offset=0x530 type=51 target_vaddr=0x0 P=0x530 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x538 type=19 target_vaddr=0x0 P=0x538 sym='value_transferred' S=0x1ce A=0
+RELOC 18/19: P=0x538, S=0x1ce, roffset=-874, high20=0x0, low12=-874
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xc96080e7
+APPLY RELOC: offset=0x538 type=51 target_vaddr=0x0 P=0x538 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x59e type=23 target_vaddr=0x0 P=0x59e sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x59e, S=0x20470, roffset=130770, high20=0x20
+  BEFORE: inst=0x00000697
+  AFTER:  inst=0x00020697
+APPLY RELOC: offset=0x59e type=51 target_vaddr=0x0 P=0x59e sym='' S=0x0 A=0
+APPLY RELOC: offset=0x5a2 type=24 target_vaddr=0x0 P=0x5a2 sym='.Lpcrel_hi16' S=0x59e A=0
+RELOC 24: P=0x5a2, hi_addr=0x59e, low12=-302
+  BEFORE: inst=0x00068693
+  AFTER:  inst=0xed268693
+APPLY RELOC: offset=0x5a2 type=51 target_vaddr=0x0 P=0x5a2 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x5ba type=19 target_vaddr=0x0 P=0x5ba sym='call_evm' S=0x8c A=0
+RELOC 18/19: P=0x5ba, S=0x8c, roffset=-1326, high20=0x0, low12=-1326
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xad2080e7
+APPLY RELOC: offset=0x5ba type=51 target_vaddr=0x0 P=0x5ba sym='' S=0x0 A=0
+APPLY RELOC: offset=0x5c2 type=44 target_vaddr=0x0 P=0x5c2 sym='.L0 ' S=0x6ac A=0
+APPLY RELOC: offset=0x5cc type=19 target_vaddr=0x0 P=0x5cc sym='__revive_load_heap_word' S=0x7ce A=0
+RELOC 18/19: P=0x5cc, S=0x7ce, roffset=514, high20=0x0, low12=514
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x202080e7
+APPLY RELOC: offset=0x5cc type=51 target_vaddr=0x0 P=0x5cc sym='' S=0x0 A=0
+APPLY RELOC: offset=0x5e4 type=19 target_vaddr=0x0 P=0x5e4 sym='return_data_size' S=0x188 A=0
+RELOC 18/19: P=0x5e4, S=0x188, roffset=-1116, high20=0x0, low12=-1116
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xba4080e7
+APPLY RELOC: offset=0x5e4 type=51 target_vaddr=0x0 P=0x5e4 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x604 type=44 target_vaddr=0x0 P=0x604 sym='.L0 ' S=0x6e2 A=0
+APPLY RELOC: offset=0x60a type=44 target_vaddr=0x0 P=0x60a sym='.L0 ' S=0x6e2 A=0
+APPLY RELOC: offset=0x618 type=19 target_vaddr=0x0 P=0x618 sym='__sbrk_internal' S=0xb50 A=0
+RELOC 18/19: P=0x618, S=0xb50, roffset=1336, high20=0x0, low12=1336
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x538080e7
+APPLY RELOC: offset=0x618 type=51 target_vaddr=0x0 P=0x618 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x638 type=19 target_vaddr=0x0 P=0x638 sym='return_data_copy' S=0x17a A=0
+RELOC 18/19: P=0x638, S=0x17a, roffset=-1214, high20=0x0, low12=-1214
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xb42080e7
+APPLY RELOC: offset=0x638 type=51 target_vaddr=0x0 P=0x638 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x646 type=16 target_vaddr=0x0 P=0x646 sym='.L0 ' S=0x6b8 A=0
+APPLY RELOC: offset=0x654 type=16 target_vaddr=0x0 P=0x654 sym='.L0 ' S=0x692 A=0
+APPLY RELOC: offset=0x66e type=19 target_vaddr=0x0 P=0x66e sym='value_transferred' S=0x1ce A=0
+RELOC 18/19: P=0x66e, S=0x1ce, roffset=-1184, high20=0x0, low12=-1184
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xb60080e7
+APPLY RELOC: offset=0x66e type=51 target_vaddr=0x0 P=0x66e sym='' S=0x0 A=0
+APPLY RELOC: offset=0x686 type=44 target_vaddr=0x0 P=0x686 sym='.L0 ' S=0x6ea A=0
+APPLY RELOC: offset=0x688 type=23 target_vaddr=0x0 P=0x688 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x688, S=0x20470, roffset=130536, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x688 type=51 target_vaddr=0x0 P=0x688 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x68c type=24 target_vaddr=0x0 P=0x68c sym='.Lpcrel_hi12' S=0x688 A=0
+RELOC 24: P=0x68c, hi_addr=0x688, low12=-536
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0xde850513
+APPLY RELOC: offset=0x68c type=51 target_vaddr=0x0 P=0x68c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x690 type=45 target_vaddr=0x0 P=0x690 sym='.L0 ' S=0x6a4 A=0
+APPLY RELOC: offset=0x692 type=23 target_vaddr=0x0 P=0x692 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x692, S=0x20470, roffset=130526, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x692 type=51 target_vaddr=0x0 P=0x692 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x696 type=24 target_vaddr=0x0 P=0x696 sym='.Lpcrel_hi11' S=0x692 A=0
+RELOC 24: P=0x696, hi_addr=0x692, low12=-546
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0xdde50513
+APPLY RELOC: offset=0x696 type=51 target_vaddr=0x0 P=0x696 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x69a type=45 target_vaddr=0x0 P=0x69a sym='.L0 ' S=0x6a4 A=0
+APPLY RELOC: offset=0x69c type=23 target_vaddr=0x0 P=0x69c sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x69c, S=0x20470, roffset=130516, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x69c type=51 target_vaddr=0x0 P=0x69c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6a0 type=24 target_vaddr=0x0 P=0x6a0 sym='.Lpcrel_hi15' S=0x69c A=0
+RELOC 24: P=0x6a0, hi_addr=0x69c, low12=-556
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0xdd450513
+APPLY RELOC: offset=0x6a0 type=51 target_vaddr=0x0 P=0x6a0 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6b0 type=19 target_vaddr=0x0 P=0x6b0 sym='seal_return' S=0x196 A=0
+RELOC 18/19: P=0x6b0, S=0x196, roffset=-1306, high20=0x0, low12=-1306
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xae6080e7
+APPLY RELOC: offset=0x6b0 type=51 target_vaddr=0x0 P=0x6b0 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6b8 type=19 target_vaddr=0x0 P=0x6b8 sym='return_data_size' S=0x188 A=0
+RELOC 18/19: P=0x6b8, S=0x188, roffset=-1328, high20=0x0, low12=-1328
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xad0080e7
+APPLY RELOC: offset=0x6b8 type=51 target_vaddr=0x0 P=0x6b8 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6c4 type=44 target_vaddr=0x0 P=0x6c4 sym='.L0 ' S=0x6e2 A=0
+APPLY RELOC: offset=0x6ca type=19 target_vaddr=0x0 P=0x6ca sym='__sbrk_internal' S=0xb50 A=0
+RELOC 18/19: P=0x6ca, S=0xb50, roffset=1158, high20=0x0, low12=1158
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x486080e7
+APPLY RELOC: offset=0x6ca type=51 target_vaddr=0x0 P=0x6ca sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6da type=19 target_vaddr=0x0 P=0x6da sym='seal_return' S=0x196 A=0
+RELOC 18/19: P=0x6da, S=0x196, roffset=-1348, high20=0x0, low12=-1348
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xabc080e7
+APPLY RELOC: offset=0x6da type=51 target_vaddr=0x0 P=0x6da sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6e2 type=19 target_vaddr=0x0 P=0x6e2 sym='consume_all_gas' S=0xd2 A=0
+RELOC 18/19: P=0x6e2, S=0xd2, roffset=-1552, high20=0x0, low12=-1552
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x9f0080e7
+APPLY RELOC: offset=0x6e2 type=51 target_vaddr=0x0 P=0x6e2 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6f0 type=16 target_vaddr=0x0 P=0x6f0 sym='.L0 ' S=0x6fe A=0
+APPLY RELOC: offset=0x6f4 type=23 target_vaddr=0x0 P=0x6f4 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x6f4, S=0x20470, roffset=130428, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x6f4 type=51 target_vaddr=0x0 P=0x6f4 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6f8 type=24 target_vaddr=0x0 P=0x6f8 sym='.Lpcrel_hi13' S=0x6f4 A=0
+RELOC 24: P=0x6f8, hi_addr=0x6f4, low12=-644
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0xd7c50513
+APPLY RELOC: offset=0x6f8 type=51 target_vaddr=0x0 P=0x6f8 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x6fc type=45 target_vaddr=0x0 P=0x6fc sym='.L0 ' S=0x6a4 A=0
+APPLY RELOC: offset=0x6fe type=19 target_vaddr=0x0 P=0x6fe sym='OUTLINED_FUNCTION_0' S=0x77e A=0
+RELOC 18/19: P=0x6fe, S=0x77e, roffset=128, high20=0x0, low12=128
+  BEFORE: auipc=0x00000297, jalr=0x000282e7
+  AFTER:  auipc=0x00000297, jalr=0x080282e7
+APPLY RELOC: offset=0x6fe type=51 target_vaddr=0x0 P=0x6fe sym='' S=0x0 A=0
+APPLY RELOC: offset=0x70a type=19 target_vaddr=0x0 P=0x70a sym='__revive_load_storage_word' S=0xa72 A=0
+RELOC 18/19: P=0x70a, S=0xa72, roffset=872, high20=0x0, low12=872
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x368080e7
+APPLY RELOC: offset=0x70a type=51 target_vaddr=0x0 P=0x70a sym='' S=0x0 A=0
+APPLY RELOC: offset=0x72c type=19 target_vaddr=0x0 P=0x72c sym='__revive_store_heap_word' S=0x940 A=0
+RELOC 18/19: P=0x72c, S=0x940, roffset=532, high20=0x0, low12=532
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x214080e7
+APPLY RELOC: offset=0x72c type=51 target_vaddr=0x0 P=0x72c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x748 type=23 target_vaddr=0x0 P=0x748 sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0x748, S=0x20470, roffset=130344, high20=0x20
+  BEFORE: inst=0x00000517
+  AFTER:  inst=0x00020517
+APPLY RELOC: offset=0x748 type=51 target_vaddr=0x0 P=0x748 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x74c type=24 target_vaddr=0x0 P=0x74c sym='.Lpcrel_hi14' S=0x748 A=0
+RELOC 24: P=0x74c, hi_addr=0x748, low12=-728
+  BEFORE: inst=0x00050513
+  AFTER:  inst=0xd2850513
+APPLY RELOC: offset=0x74c type=51 target_vaddr=0x0 P=0x74c sym='' S=0x0 A=0
+APPLY RELOC: offset=0x75a type=19 target_vaddr=0x0 P=0x75a sym='seal_return' S=0x196 A=0
+RELOC 18/19: P=0x75a, S=0x196, roffset=-1476, high20=0x0, low12=-1476
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xa3c080e7
+APPLY RELOC: offset=0x75a type=51 target_vaddr=0x0 P=0x75a sym='' S=0x0 A=0
+APPLY RELOC: offset=0x768 type=19 target_vaddr=0x0 P=0x768 sym='__entry' S=0x288 A=0
+RELOC 18/19: P=0x768, S=0x288, roffset=-1248, high20=0x0, low12=-1248
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xb20080e7
+APPLY RELOC: offset=0x768 type=51 target_vaddr=0x0 P=0x768 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x776 type=19 target_vaddr=0x0 P=0x776 sym='__entry' S=0x288 A=0
+RELOC 18/19: P=0x776, S=0x288, roffset=-1262, high20=0x0, low12=-1262
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0xb12080e7
+APPLY RELOC: offset=0x776 type=51 target_vaddr=0x0 P=0x776 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x7ae type=20 target_vaddr=0x0 P=0x7ae sym='__immutable_data_size' S=0x40470 A=0
+APPLY RELOC: offset=0x7b2 type=24 target_vaddr=0x0 P=0x7b2 sym='.Lpcrel_hi0' S=0x7ae A=0
+APPLY RELOC: offset=0x7b2 type=51 target_vaddr=0x0 P=0x7b2 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x7b8 type=44 target_vaddr=0x0 P=0x7b8 sym='.L0 ' S=0x7cc A=0
+APPLY RELOC: offset=0x7ba type=20 target_vaddr=0x0 P=0x7ba sym='__immutable_data_ptr' S=0x40470 A=0
+APPLY RELOC: offset=0x7be type=24 target_vaddr=0x0 P=0x7be sym='.Lpcrel_hi1' S=0x7ba A=0
+APPLY RELOC: offset=0x7be type=51 target_vaddr=0x0 P=0x7be sym='' S=0x0 A=0
+APPLY RELOC: offset=0x7c4 type=19 target_vaddr=0x0 P=0x7c4 sym='set_immutable_data' S=0x1a4 A=0
+RELOC 18/19: P=0x7c4, S=0x1a4, roffset=-1568, high20=0x0, low12=-1568
+  BEFORE: auipc=0x00000317, jalr=0x00030067
+  AFTER:  auipc=0x00000317, jalr=0x9e030067
+APPLY RELOC: offset=0x7c4 type=51 target_vaddr=0x0 P=0x7c4 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x7e2 type=19 target_vaddr=0x0 P=0x7e2 sym='__sbrk_internal' S=0xb50 A=0
+RELOC 18/19: P=0x7e2, S=0xb50, roffset=878, high20=0x0, low12=878
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x36e080e7
+APPLY RELOC: offset=0x7e2 type=51 target_vaddr=0x0 P=0x7e2 sym='' S=0x0 A=0
+APPLY RELOC: offset=0x95a type=19 target_vaddr=0x0 P=0x95a sym='__sbrk_internal' S=0xb50 A=0
+RELOC 18/19: P=0x95a, S=0xb50, roffset=502, high20=0x0, low12=502
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0x00000097, jalr=0x1f6080e7
+APPLY RELOC: offset=0x95a type=51 target_vaddr=0x0 P=0x95a sym='' S=0x0 A=0
+APPLY RELOC: offset=0xaac type=19 target_vaddr=0x0 P=0xaac sym='get_storage_or_zero' S=0x126 A=0
+RELOC 18/19: P=0xaac, S=0x126, roffset=-2438, high20=0x-1, low12=1658
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0xfffff097, jalr=0x67a080e7
+APPLY RELOC: offset=0xaac type=51 target_vaddr=0x0 P=0xaac sym='' S=0x0 A=0
+APPLY RELOC: offset=0xb3c type=19 target_vaddr=0x0 P=0xb3c sym='set_storage_or_clear' S=0x1b2 A=0
+RELOC 18/19: P=0xb3c, S=0x1b2, roffset=-2442, high20=0x-1, low12=1654
+  BEFORE: auipc=0x00000097, jalr=0x000080e7
+  AFTER:  auipc=0xfffff097, jalr=0x676080e7
+APPLY RELOC: offset=0xb3c type=51 target_vaddr=0x0 P=0xb3c sym='' S=0x0 A=0
+APPLY RELOC: offset=0xb54 type=44 target_vaddr=0x0 P=0xb54 sym='.L0 ' S=0xb88 A=0
+APPLY RELOC: offset=0xb5a type=44 target_vaddr=0x0 P=0xb5a sym='.L0 ' S=0xb96 A=0
+APPLY RELOC: offset=0xb64 type=16 target_vaddr=0x0 P=0xb64 sym='.L0 ' S=0xb96 A=0
+APPLY RELOC: offset=0xb74 type=16 target_vaddr=0x0 P=0xb74 sym='.L0 ' S=0xb96 A=0
+APPLY RELOC: offset=0xb78 type=23 target_vaddr=0x0 P=0xb78 sym='.L_MergedGlobals' S=0x40480 A=4
+RELOC 23: P=0xb78, S=0x40480, roffset=260364, high20=0x40
+  BEFORE: inst=0x00000617
+  AFTER:  inst=0x00040617
+APPLY RELOC: offset=0xb78 type=51 target_vaddr=0x0 P=0xb78 sym='' S=0x0 A=0
+APPLY RELOC: offset=0xb7c type=24 target_vaddr=0x0 P=0xb7c sym='.Lpcrel_hi3' S=0xb78 A=0
+RELOC 24: P=0xb7c, hi_addr=0xb78, low12=-1780
+  BEFORE: inst=0x00062683
+  AFTER:  inst=0x90c62683
+APPLY RELOC: offset=0xb7c type=51 target_vaddr=0x0 P=0xb7c sym='' S=0x0 A=0
+APPLY RELOC: offset=0xb80 type=16 target_vaddr=0x0 P=0xb80 sym='.L0 ' S=0xb88 A=0
+APPLY RELOC: offset=0xb84 type=25 target_vaddr=0x0 P=0xb84 sym='.Lpcrel_hi3' S=0xb78 A=0
+RELOC 25: P=0xb84, hi_addr=0xb78, low12=-1780
+  BEFORE: inst=0x00b62023
+  AFTER:  inst=0x90b62623
+APPLY RELOC: offset=0xb84 type=51 target_vaddr=0x0 P=0xb84 sym='' S=0x0 A=0
+APPLY RELOC: offset=0xb8a type=23 target_vaddr=0x0 P=0xb8a sym='__heap_memory' S=0x20470 A=0
+RELOC 23: P=0xb8a, S=0x20470, roffset=129254, high20=0x20
+  BEFORE: inst=0x00000597
+  AFTER:  inst=0x00020597
+APPLY RELOC: offset=0xb8a type=51 target_vaddr=0x0 P=0xb8a sym='' S=0x0 A=0
+APPLY RELOC: offset=0xb8e type=24 target_vaddr=0x0 P=0xb8e sym='.Lpcrel_hi2' S=0xb8a A=0
+RELOC 24: P=0xb8e, hi_addr=0xb8a, low12=-1818
+  BEFORE: inst=0x00058593
+  AFTER:  inst=0x8e658593
+APPLY RELOC: offset=0xb8e type=51 target_vaddr=0x0 P=0xb8e sym='' S=0x0 A=0
+APPLY RELOC: offset=0x9 type=2 target_vaddr=0x20000 P=0x20009 sym='.L.str' S=0x2045c A=0
+APPLY RELOC: offset=0x1c type=2 target_vaddr=0x20000 P=0x2001c sym='.L.str.1' S=0x202e3 A=0
+APPLY RELOC: offset=0x2f type=2 target_vaddr=0x20000 P=0x2002f sym='.L.str.2' S=0x202eb A=0
+APPLY RELOC: offset=0x42 type=2 target_vaddr=0x20000 P=0x20042 sym='.L.str.3' S=0x20464 A=0
+APPLY RELOC: offset=0x55 type=2 target_vaddr=0x20000 P=0x20055 sym='.L.str.4' S=0x202c4 A=0
+APPLY RELOC: offset=0x68 type=2 target_vaddr=0x20000 P=0x20068 sym='.L.str.5' S=0x20361 A=0
+APPLY RELOC: offset=0x7b type=2 target_vaddr=0x20000 P=0x2007b sym='.L.str.6' S=0x203fb A=0
+APPLY RELOC: offset=0x8e type=2 target_vaddr=0x20000 P=0x2008e sym='.L.str.7' S=0x20305 A=0
+APPLY RELOC: offset=0xa1 type=2 target_vaddr=0x20000 P=0x200a1 sym='.L.str.8' S=0x202f6 A=0
+APPLY RELOC: offset=0xb4 type=2 target_vaddr=0x20000 P=0x200b4 sym='.L.str.9' S=0x20408 A=0
+APPLY RELOC: offset=0xc7 type=2 target_vaddr=0x20000 P=0x200c7 sym='.L.str.10' S=0x20417 A=0
+APPLY RELOC: offset=0xda type=2 target_vaddr=0x20000 P=0x200da sym='.L.str.11' S=0x2036c A=0
+APPLY RELOC: offset=0xed type=2 target_vaddr=0x20000 P=0x200ed sym='.L.str.12' S=0x203bd A=0
+APPLY RELOC: offset=0x100 type=2 target_vaddr=0x20000 P=0x20100 sym='.L.str.13' S=0x20337 A=0
+APPLY RELOC: offset=0x113 type=2 target_vaddr=0x20000 P=0x20113 sym='.L.str.14' S=0x2030e A=0
+APPLY RELOC: offset=0x126 type=2 target_vaddr=0x20000 P=0x20126 sym='.L.str.15' S=0x2034d A=0
+APPLY RELOC: offset=0x139 type=2 target_vaddr=0x20000 P=0x20139 sym='.L.str.16' S=0x203ab A=0
+APPLY RELOC: offset=0x14c type=2 target_vaddr=0x20000 P=0x2014c sym='.L.str.17' S=0x20318 A=0
+APPLY RELOC: offset=0x15f type=2 target_vaddr=0x20000 P=0x2015f sym='.L.str.18' S=0x202ac A=0
+APPLY RELOC: offset=0x172 type=2 target_vaddr=0x20000 P=0x20172 sym='.L.str.19' S=0x203ea A=0
+APPLY RELOC: offset=0x185 type=2 target_vaddr=0x20000 P=0x20185 sym='.L.str.20' S=0x203d7 A=0
+APPLY RELOC: offset=0x198 type=2 target_vaddr=0x20000 P=0x20198 sym='.L.str.21' S=0x20390 A=0
+APPLY RELOC: offset=0x1ab type=2 target_vaddr=0x20000 P=0x201ab sym='.L.str.22' S=0x20437 A=0
+APPLY RELOC: offset=0x1be type=2 target_vaddr=0x20000 P=0x201be sym='.L.str.23' S=0x20341 A=0
+APPLY RELOC: offset=0x1d1 type=2 target_vaddr=0x20000 P=0x201d1 sym='.L.str.24' S=0x2035d A=0
+APPLY RELOC: offset=0x1e4 type=2 target_vaddr=0x20000 P=0x201e4 sym='.L.str.25' S=0x203a4 A=0
+APPLY RELOC: offset=0x1f7 type=2 target_vaddr=0x20000 P=0x201f7 sym='.L.str.26' S=0x203cb A=0
+APPLY RELOC: offset=0x20a type=2 target_vaddr=0x20000 P=0x2020a sym='.L.str.27' S=0x202b6 A=0
+APPLY RELOC: offset=0x21d type=2 target_vaddr=0x20000 P=0x2021d sym='.L.str.28' S=0x20326 A=0
+APPLY RELOC: offset=0x230 type=2 target_vaddr=0x20000 P=0x20230 sym='.L.str.29' S=0x20426 A=0
+APPLY RELOC: offset=0x243 type=2 target_vaddr=0x20000 P=0x20243 sym='.L.str.30' S=0x20373 A=0
+APPLY RELOC: offset=0x256 type=2 target_vaddr=0x20000 P=0x20256 sym='.L.str.31' S=0x20447 A=0
+APPLY RELOC: offset=0x269 type=2 target_vaddr=0x20000 P=0x20269 sym='.L.str.32' S=0x20386 A=0
+APPLY RELOC: offset=0x27c type=2 target_vaddr=0x20000 P=0x2027c sym='.L.str.33' S=0x202d1 A=0
+APPLY RELOC: offset=0x28f type=2 target_vaddr=0x20000 P=0x2028f sym='.L.str.34' S=0x203f4 A=0
+APPLY RELOC: offset=0x2a2 type=2 target_vaddr=0x20000 P=0x202a2 sym='.L.str.1.2' S=0x203c6 A=0
+POST-RELOCATION HEX DUMP OF MEMORY 0x280..0x2c0:
+0x0280: 0x1be386ba
+0x0284: 0x8082fec7
+0x0288: 0xe4061141
+0x028c: 0x7413e022
+0x0290: 0x00970015
+0x0294: 0x80e70000
+0x0298: 0x0597dec0
+0x029c: 0xa3230004
+0x02a0: 0xc4091ea5
+0x02a4: 0x00000097
+0x02a8: 0x010080e7
+0x02ac: 0x00000097
+0x02b0: 0x1b8080e7
+0x02b4: 0xed867115
+0x02b8: 0xe5a6e9a2
+0x02bc: 0x71131180
+STEP: pc=0x0770, word=0xff810113
+STEP: pc=0x0772, word=0x00113023
+STEP: pc=0x0774, word=0x00100513
+STEP: pc=0x0776, word=0x00000097
+STEP: pc=0x077a, word=0xb12080e7
+STEP: pc=0x0288, word=0xff010113
+STEP: pc=0x028a, word=0x00113423
+STEP: pc=0x028c, word=0x00813023
+STEP: pc=0x028e, word=0x00157413
+STEP: pc=0x0292, word=0x00000097
+STEP: pc=0x0296, word=0xdec080e7
+STEP: pc=0x007e, word=0x0000000b
+METADATA BYTES AT 0x200be:
+01 00 00 00 00 0e 00 00 00 17 04 02 00 00 00 00 
+00 00 01 01 00 00 00 00 06 00 00 00 6c 03 02 00 
+DEBUG IMPORT: metadata_ptr=0x200be, symbol_len=14, symbol_ptr=0x20417
+revive-transfer-example status: .fault, faultPc: 0x7e, faultReason: Unknown dynamic import symbol name
+/opt/homebrew/Cellar/zig@0.15/0.15.2/lib/zig/std/testing.zig:607:14: 0x102a8674f in expect (test)
+    if (!ok) return error.TestUnexpectedResult;
+             ^
+/Users/karan/sol2zig/vm/polkavm/vm.zig:493:5: 0x102a974bb in test.PolkaVM: Execute revive-transfer-example ELF (test)
+    try testing.expect(result.status != .fault);
+    ^
+error: while executing test 'compiler.aot.test.AOT compiler: TokenTest.fozbin AOT vs Interpreter compatibility', the following test command failed:
+./.zig-cache/o/be5df8f9298c78069c1f94ef565746e5/test --cache-dir=./.zig-cache --seed=0x206f986e --listen=-
+
+Build Summary: 23/25 steps succeeded; 1 failed; 351/352 tests passed; 1 failed
+test transitive failure
++- run test 123/124 passed, 1 failed
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/a8fe2f7d709567b7257d7d030a0c18c6/build /opt/homebrew/Cellar/zig@0.15/0.15.2/bin/zig /opt/homebrew/Cellar/zig@0.15/0.15.2/lib/zig /Users/karan/sol2zig .zig-cache /Users/karan/.cache/zig --seed 0x206f986e -Z37c28664ce8f3b3f test

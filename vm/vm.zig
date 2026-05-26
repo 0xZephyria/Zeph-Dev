@@ -22,6 +22,7 @@ pub const forgeFormat = @import("loader/forge_format.zig");
 pub const contractLoader = @import("loader/contract_loader.zig");
 pub const zephbinLoader = @import("loader/zephbin_loader.zig");
 pub const vmPool = @import("vm_pool.zig");
+pub const aot = @import("compiler/aot.zig");
 
 // Re-export key types
 pub const Instruction = decoder.Instruction;
@@ -228,4 +229,8 @@ test "ForgeVM: gas tracking" {
     try testing.expectEqual(ExecutionStatus.breakpoint, result.status);
     try testing.expect(result.gasUsed > 0);
     try testing.expectEqual(@as(u32, 3), vm.getReg(1));
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

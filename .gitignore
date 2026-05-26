@@ -16,6 +16,10 @@ node_modules/
 
 # artifacts
 tests/artifacts/
+works.md
+vm/polkavm
+temp_polkavm
+
 
 # fozbin and resolved files
 *.fozbin

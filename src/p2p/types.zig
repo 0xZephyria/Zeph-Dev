@@ -188,6 +188,10 @@ pub const PeersMsg = struct {
     nodes: []NodeInfo,
 };
 
+pub const GetPeersMsg = struct {
+    version: u32,
+};
+
 pub const NodeInfo = struct {
     id: [64]u8,
     ip: [16]u8,

@@ -45,7 +45,7 @@ pub const Header = extern struct {
     checksum: u32,
     reserved: [4]u8,
 
-    const SIZE: usize = 64;
+    const SIZE: usize = @sizeOf(Header);
 
     pub fn init() Header {
         return Header{
@@ -155,13 +155,13 @@ pub const BloomFilter = struct {
     }
 
     pub fn serialize(self: *const Self, allocator: Allocator) ![]u8 {
-        var list = std.ArrayList(u8).init(allocator);
-        errdefer list.deinit();
+        var list: std.ArrayList(u8) = .empty;
+        errdefer list.deinit(allocator);
 
-        try list.appendSlice(std.mem.asBytes(&@as(u64, self.bits.len)));
-        try list.appendSlice(self.bits);
+        try list.appendSlice(allocator, std.mem.asBytes(&@as(u64, self.bits.len)));
+        try list.appendSlice(allocator, self.bits);
 
-        return list.toOwnedSlice();
+        return try list.toOwnedSlice(allocator);
     }
 
     pub fn deserialize(allocator: Allocator, data: []const u8) !Self {
@@ -215,8 +215,8 @@ pub const SSTableWriter = struct {
             .allocator = allocator,
             .file = file,
             .path = try allocator.dupe(u8, path),
-            .data_buffer = std.ArrayList(u8).init(allocator),
-            .index_entries = std.ArrayList(IndexEntry).init(allocator),
+            .data_buffer = .empty,
+            .index_entries = .empty,
             .bloom = try BloomFilter.init(allocator, expected_keys),
             .key_count = 0,
             .current_block_offset = Header.SIZE,
@@ -229,8 +229,8 @@ pub const SSTableWriter = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.data_buffer.deinit();
-        self.index_entries.deinit();
+        self.data_buffer.deinit(self.allocator);
+        self.index_entries.deinit(self.allocator);
         self.bloom.deinit();
         self.file.close();
         self.allocator.free(self.path);
@@ -259,17 +259,17 @@ pub const SSTableWriter = struct {
         }
 
         // Write entry to buffer
-        try self.data_buffer.appendSlice(std.mem.asBytes(&@as(u32, 32)));
-        try self.data_buffer.appendSlice(&key);
-        try self.data_buffer.appendSlice(std.mem.asBytes(&@as(u32, @intCast(value.len))));
-        try self.data_buffer.appendSlice(value);
+        try self.data_buffer.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, 32)));
+        try self.data_buffer.appendSlice(self.allocator, &key);
+        try self.data_buffer.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(value.len))));
+        try self.data_buffer.appendSlice(self.allocator, value);
 
         // Entry checksum
         var hasher = std.hash.Crc32.init();
         hasher.update(&key);
         hasher.update(value);
         const checksum = hasher.final();
-        try self.data_buffer.appendSlice(std.mem.asBytes(&checksum));
+        try self.data_buffer.appendSlice(self.allocator, std.mem.asBytes(&checksum));
 
         self.current_block_size += entry_size;
         self.key_count += 1;
@@ -323,7 +323,7 @@ pub const SSTableWriter = struct {
         try self.file.writeAll(block_data);
 
         // Add index entry
-        try self.index_entries.append(.{
+        try self.index_entries.append(self.allocator, .{
             .first_key = self.first_key_in_block.?,
             .offset = self.current_block_offset,
             .size = @intCast(block_data.len),

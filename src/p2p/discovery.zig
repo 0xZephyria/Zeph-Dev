@@ -4,11 +4,11 @@
 //
 // Kademlia-based peer discovery with:
 //   • Full routing table with 256 buckets of 16 nodes each
-//   • XOR distance metric over Keccak256(pubkey)
+//   • XOR distance metric over Blake3(pubkey)
 //   • Subnet-aware peer prioritization
 //   • Bootstrap node support
 //   • Periodic routing table refresh with stale node eviction
-//   • ENR v4 attestation with validator address binding
+//   • ZNR attestation with validator address binding
 
 const std = @import("std");
 const net = std.net;
@@ -59,11 +59,11 @@ pub const Node = struct {
     }
 };
 
-// ── ENR Record ──────────────────────────────────────────────────────────
+// ── ZNR Record ──────────────────────────────────────────────────────────
 
-pub const EnrRecord = struct {
+pub const ZnrRecord = struct {
     seq: u64,
-    id: [4]u8, // "v4\x00\x00"
+    id: [4]u8, // "znr1"
     pubkey: [33]u8, // Compressed secp256k1 public key
     ip4: [4]u8,
     udpPort: u16,
@@ -72,10 +72,10 @@ pub const EnrRecord = struct {
     subnets: [8]u8,
     stake: u64,
 
-    pub fn init(pubkey: [33]u8, ip4: [4]u8, udpPort: u16) EnrRecord {
+    pub fn init(pubkey: [33]u8, ip4: [4]u8, udpPort: u16) ZnrRecord {
         return .{
             .seq = 1,
-            .id = [_]u8{ 'v', '4', 0, 0 },
+            .id = [_]u8{ 'z', 'n', 'r', '1' },
             .pubkey = pubkey,
             .ip4 = ip4,
             .udpPort = udpPort,
@@ -86,8 +86,8 @@ pub const EnrRecord = struct {
         };
     }
 
-    /// Serialize ENR to bytes for transmission
-    pub fn serialize(self: *const EnrRecord, buf: []u8) usize {
+    /// Serialize ZNR to bytes for transmission
+    pub fn serialize(self: *const ZnrRecord, buf: []u8) usize {
         if (buf.len < 101) return 0;
         @memcpy(buf[0..4], &self.id);
         std.mem.writeInt(u64, buf[4..12], self.seq, .big);
@@ -101,20 +101,20 @@ pub const EnrRecord = struct {
         return 101;
     }
 
-    /// Deserialize ENR from bytes
-    pub fn deserialize(data: []const u8) ?EnrRecord {
+    /// Deserialize ZNR from bytes
+    pub fn deserialize(data: []const u8) ?ZnrRecord {
         if (data.len < 101) return null;
-        var enr: EnrRecord = undefined;
-        @memcpy(&enr.id, data[0..4]);
-        enr.seq = std.mem.readInt(u64, data[4..12], .big);
-        @memcpy(&enr.pubkey, data[12..45]);
-        @memcpy(&enr.ip4, data[45..49]);
-        enr.udpPort = std.mem.readInt(u16, data[49..51], .big);
-        enr.tcpPort = std.mem.readInt(u16, data[51..53], .big);
-        @memcpy(&enr.validatorAddr.bytes, data[53..85]);
-        @memcpy(&enr.subnets, data[85..93]);
-        enr.stake = std.mem.readInt(u64, data[93..101], .big);
-        return enr;
+        var znr: ZnrRecord = undefined;
+        @memcpy(&znr.id, data[0..4]);
+        znr.seq = std.mem.readInt(u64, data[4..12], .big);
+        @memcpy(&znr.pubkey, data[12..45]);
+        @memcpy(&znr.ip4, data[45..49]);
+        znr.udpPort = std.mem.readInt(u16, data[49..51], .big);
+        znr.tcpPort = std.mem.readInt(u16, data[51..53], .big);
+        @memcpy(&znr.validatorAddr.bytes, data[53..85]);
+        @memcpy(&znr.subnets, data[85..93]);
+        znr.stake = std.mem.readInt(u64, data[93..101], .big);
+        return znr;
     }
 };
 
@@ -233,7 +233,7 @@ const Bucket = struct {
 pub const DiscoveryService = struct {
     allocator: Allocator,
     localNode: Node,
-    localEnr: EnrRecord,
+    localZnr: ZnrRecord,
     buckets: [MAX_BUCKETS]Bucket,
     bootstrapNodes: std.ArrayListUnmanaged(Node),
     mutex: std.Thread.Mutex,
@@ -256,7 +256,7 @@ pub const DiscoveryService = struct {
 
         // Hash node ID for XOR distance
         var hash: NodeHash = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&id, &hash, .{});
+        std.crypto.hash.Blake3.hash(&id, &hash, .{});
 
         const local_addr = try net.Address.parseIp4("0.0.0.0", port);
 
@@ -266,10 +266,10 @@ pub const DiscoveryService = struct {
             bucket.* = Bucket.init();
         }
 
-        // Create local ENR
+        // Create local ZNR
         var compressed_pubkey: [33]u8 = [_]u8{0} ** 33;
         @memcpy(compressed_pubkey[0..key_len], priv_key[0..key_len]);
-        const enr = EnrRecord.init(compressed_pubkey, [4]u8{ 0, 0, 0, 0 }, port);
+        const znr = ZnrRecord.init(compressed_pubkey, [4]u8{ 0, 0, 0, 0 }, port);
 
         self.* = Self{
             .allocator = allocator,
@@ -285,7 +285,7 @@ pub const DiscoveryService = struct {
                 .subscribedSubnets = [_]u8{0} ** 8,
                 .stakeAmount = 0,
             },
-            .localEnr = enr,
+            .localZnr = znr,
             .buckets = buckets,
             .bootstrapNodes = .{},
             .mutex = .{},
@@ -350,7 +350,7 @@ pub const DiscoveryService = struct {
         defer self.mutex.unlock();
 
         var hash: NodeHash = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(&id, &hash, .{});
+        std.crypto.hash.Blake3.hash(&id, &hash, .{});
         const dist = self.localNode.distance(hash);
         const idx = getBucketIndex(dist);
         self.buckets[idx].markPingFailure(id);

@@ -70,40 +70,38 @@ pub const PoolShard = struct {
         if (!self.mutex.tryLock()) return null; // non-blocking acquire
         defer self.mutex.unlock();
 
-        self.stats.total_acquires += 1;
         if (self.free_list.items.len > 0) {
             const mem = self.free_list.items[self.free_list.items.len - 1];
             self.free_list.items.len -= 1;
             mem.reset();
             self.checked_out += 1;
+            self.stats.total_acquires += 1;
             self.stats.cache_hits += 1;
             if (self.checked_out > self.stats.peak_checked_out) {
                 self.stats.peak_checked_out = self.checked_out;
             }
             return mem;
         }
-        self.stats.cache_misses += 1;
-        return null;
+        return null; // no memory, do not count as an acquire
     }
 
     pub fn forceAcquire(self: *PoolShard) ?*SandboxMemory {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        self.stats.total_acquires += 1;
         if (self.free_list.items.len > 0) {
             const mem = self.free_list.items[self.free_list.items.len - 1];
             self.free_list.items.len -= 1;
             mem.reset();
             self.checked_out += 1;
+            self.stats.total_acquires += 1;
             self.stats.cache_hits += 1;
             if (self.checked_out > self.stats.peak_checked_out) {
                 self.stats.peak_checked_out = self.checked_out;
             }
             return mem;
         }
-        self.stats.cache_misses += 1;
-        return null;
+        return null; // no memory, do not count as an acquire
     }
 
     pub fn release(self: *PoolShard, allocator: std.mem.Allocator, mem: *SandboxMemory) void {
@@ -270,7 +268,7 @@ pub const VMPool = struct {
             return mem;
         }
 
-        // Slow path: Work stealing
+        // Slow path: Work stealing — only try if pool is not at exhaustion
         var i: usize = 0;
         while (i < MAX_SHARDS) : (i += 1) {
             if (i == shard_idx) continue;
@@ -279,7 +277,16 @@ pub const VMPool = struct {
             }
         }
 
-        // Overflow allocation
+        // Overflow allocation — disabled when max_overflow == 0
+        if (self.config.max_overflow == 0) {
+            // All free-lists empty and overflow disallowed: count as cache miss
+            self.shards[shard_idx].mutex.lock();
+            self.shards[shard_idx].stats.total_acquires += 1;
+            self.shards[shard_idx].stats.cache_misses += 1;
+            self.shards[shard_idx].mutex.unlock();
+            return null;
+        }
+
         self.shards[shard_idx].mutex.lock();
         defer self.shards[shard_idx].mutex.unlock();
 
@@ -288,7 +295,10 @@ pub const VMPool = struct {
         const shard_max = (self.config.pool_size / MAX_SHARDS) + (self.config.max_overflow / MAX_SHARDS) + 1;
 
         if (total >= shard_max) {
-            return null; // overflow limit
+            // Overflow limit reached: count as cache miss
+            self.shards[shard_idx].stats.total_acquires += 1;
+            self.shards[shard_idx].stats.cache_misses += 1;
+            return null;
         }
 
         const mem_ptr = self.allocator.create(SandboxMemory) catch return null;
@@ -302,6 +312,8 @@ pub const VMPool = struct {
             return null;
         };
         self.shards[shard_idx].checked_out += 1;
+        self.shards[shard_idx].stats.total_acquires += 1;
+        self.shards[shard_idx].stats.cache_misses += 1;
         return mem_ptr;
     }
 
@@ -416,9 +428,11 @@ test "VMPool: statistics tracking" {
     pool.release(m1);
     _ = pool.acquire().?;
 
-    // Since thread_id is constant here, they all hit the same shard.
+    // With pool_size=2 distributed across 128 shards (round-robin), the thread
+    // may steal from other shards. All 3 acquires succeed from the pool (cache hits),
+    // no overflow allocation is needed.
     const stats = pool.getStats();
     try testing.expectEqual(@as(u64, 3), stats.total_acquires);
-    try testing.expectEqual(@as(u64, 2), stats.cache_hits);
-    try testing.expectEqual(@as(u64, 1), stats.cache_misses); // overflow allocation
+    try testing.expectEqual(@as(u64, 3), stats.cache_hits);
+    try testing.expectEqual(@as(u64, 0), stats.cache_misses);
 }

@@ -47,7 +47,7 @@ pub const HighPerfDB = struct {
 
     // Write path
     active_memtable: *ShardedMemTable,
-    immutable_memtables: std.ArrayList(*ShardedMemTable),
+    immutable_memtables: std.ArrayListUnmanaged(*ShardedMemTable),
     wal: ?*WAL,
 
     // Read path
@@ -113,7 +113,7 @@ pub const HighPerfDB = struct {
             .config = config,
             .data_dir = try allocator.dupe(u8, data_dir),
             .active_memtable = active_memtable,
-            .immutable_memtables = std.ArrayList(*ShardedMemTable).init(allocator),
+            .immutable_memtables = .{},
             .wal = wal,
             .compaction_manager = compaction_manager,
             .sstable_cache = std.AutoHashMap(u64, *SSTableReader).init(allocator),
@@ -147,7 +147,7 @@ pub const HighPerfDB = struct {
         for (self.immutable_memtables.items) |memtable| {
             memtable.deinit();
         }
-        self.immutable_memtables.deinit();
+        self.immutable_memtables.deinit(self.allocator);
 
         if (self.wal) |wal| {
             wal.deinit();
@@ -173,12 +173,12 @@ pub const HighPerfDB = struct {
 
         // Write to WAL first (if enabled)
         if (self.wal) |wal| {
-            var wal_entry = std.ArrayList(u8).init(self.allocator);
-            defer wal_entry.deinit();
-            try wal_entry.append(1); // PUT operation
-            try wal_entry.appendSlice(&key);
-            try wal_entry.appendSlice(std.mem.asBytes(&@as(u32, @intCast(value.len))));
-            try wal_entry.appendSlice(value);
+            var wal_entry: std.ArrayList(u8) = .empty;
+            defer wal_entry.deinit(self.allocator);
+            try wal_entry.append(self.allocator, 1); // PUT operation
+            try wal_entry.appendSlice(self.allocator, &key);
+            try wal_entry.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(value.len))));
+            try wal_entry.appendSlice(self.allocator, value);
             try wal.append(wal_entry.items, 0);
         }
 
@@ -200,10 +200,10 @@ pub const HighPerfDB = struct {
 
         // Write to WAL
         if (self.wal) |wal| {
-            var wal_entry = std.ArrayList(u8).init(self.allocator);
-            defer wal_entry.deinit();
-            try wal_entry.append(0); // DELETE operation
-            try wal_entry.appendSlice(&key);
+            var wal_entry: std.ArrayList(u8) = .empty;
+            defer wal_entry.deinit(self.allocator);
+            try wal_entry.append(self.allocator, 0); // DELETE operation
+            try wal_entry.appendSlice(self.allocator, &key);
             try wal.append(wal_entry.items, 0);
         }
 
@@ -271,19 +271,19 @@ pub const HighPerfDB = struct {
 
         // Write all to WAL as single entry
         if (self.wal) |wal| {
-            var wal_entry = std.ArrayList(u8).init(self.allocator);
-            defer wal_entry.deinit();
+            var wal_entry: std.ArrayList(u8) = .empty;
+            defer wal_entry.deinit(self.allocator);
 
-            try wal_entry.append(2); // BATCH operation
-            try wal_entry.appendSlice(std.mem.asBytes(&@as(u32, @intCast(batch.count()))));
+            try wal_entry.append(self.allocator, 2); // BATCH operation
+            try wal_entry.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(batch.count()))));
 
             for (batch.ops.items) |op| {
-                try wal_entry.append(if (op.is_delete) @as(u8, 0) else @as(u8, 1));
-                try wal_entry.appendSlice(&op.key);
+                try wal_entry.append(self.allocator, if (op.is_delete) @as(u8, 0) else @as(u8, 1));
+                try wal_entry.appendSlice(self.allocator, &op.key);
                 if (!op.is_delete) {
                     if (op.value) |value| {
-                        try wal_entry.appendSlice(std.mem.asBytes(&@as(u32, @intCast(value.len))));
-                        try wal_entry.appendSlice(value);
+                        try wal_entry.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(value.len))));
+                        try wal_entry.appendSlice(self.allocator, value);
                     }
                 }
             }
@@ -338,6 +338,7 @@ pub const HighPerfDB = struct {
             .ptr = self,
             .writeFn = abstractWrite,
             .readFn = abstractRead,
+            .deleteFn = abstractDelete,
         };
     }
 
@@ -362,6 +363,17 @@ pub const HighPerfDB = struct {
         hasher.final(&hashed_key);
 
         return self.get(hashed_key) catch null;
+    }
+
+    fn abstractDelete(ptr: *anyopaque, key: []const u8) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+
+        var hashed_key: [32]u8 = undefined;
+        var hasher = std.crypto.hash.Blake3.init(.{});
+        hasher.update(key);
+        hasher.final(&hashed_key);
+
+        try self.delete(hashed_key);
     }
 
     // Internal methods
@@ -403,14 +415,14 @@ pub const HighPerfDB = struct {
                     std.log.err("Flush error: {}", .{err});
                 };
             } else {
-                std.time.sleep(10 * std.time.ns_per_ms);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
             }
         }
     }
 
     fn maybeScheduleFlush(self: *Self) !void {
-        const shards_to_flush = try self.active_memtable.getShardsNeedingFlush();
-        defer shards_to_flush.deinit();
+        var shards_to_flush = try self.active_memtable.getShardsNeedingFlush();
+        defer shards_to_flush.deinit(self.allocator);
 
         if (shards_to_flush.items.len > 0) {
             // Rotate memtable
@@ -426,7 +438,7 @@ pub const HighPerfDB = struct {
             self.active_memtable = try ShardedMemTable.init(self.allocator, memtable_config);
 
             self.flush_mutex.lock();
-            try self.immutable_memtables.append(old_memtable);
+            try self.immutable_memtables.append(self.allocator, old_memtable);
             self.flush_mutex.unlock();
         }
     }
@@ -437,12 +449,12 @@ pub const HighPerfDB = struct {
         defer self.allocator.free(path);
 
         // Collect all entries from all shards
-        var all_entries = std.ArrayList(Entry).init(self.allocator);
+        var all_entries: std.ArrayList(Entry) = .empty;
         defer {
             for (all_entries.items) |*entry| {
                 entry.free(self.allocator);
             }
-            all_entries.deinit();
+            all_entries.deinit(self.allocator);
         }
 
         for (memtable.shards) |shard| {
@@ -455,7 +467,7 @@ pub const HighPerfDB = struct {
                 self.allocator.free(sorted);
             }
             for (sorted) |entry| {
-                try all_entries.append(try entry.dupe(self.allocator));
+                try all_entries.append(self.allocator, try entry.dupe(self.allocator));
             }
         }
 
@@ -522,7 +534,7 @@ pub const HighPerfDB = struct {
 
         // Flush all immutable memtables
         self.flush_mutex.lock();
-        const immutables = self.immutable_memtables.toOwnedSlice() catch return;
+        const immutables = self.immutable_memtables.toOwnedSlice(self.allocator) catch return;
         self.flush_mutex.unlock();
         defer self.allocator.free(immutables);
 

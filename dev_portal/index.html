@@ -1,0 +1,1171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zephyria Dev Portal & PolkaVM Sandbox</title>
+    <!-- Modern Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-base: #0a0d14;
+            --bg-surface: rgba(16, 22, 35, 0.7);
+            --bg-surface-opaque: #101623;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(56, 189, 248, 0.4);
+            
+            --primary: #00f0ff;
+            --primary-glow: rgba(0, 240, 255, 0.15);
+            --secondary: #a855f7;
+            --secondary-glow: rgba(168, 85, 247, 0.15);
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.15);
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --text-dim: #6b7280;
+            
+            --font-main: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            
+            --blur-radius: 12px;
+            --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 40%);
+            background-attachment: fixed;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border-color);
+            background-color: rgba(10, 13, 20, 0.5);
+            backdrop-filter: blur(var(--blur-radius));
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            font-size: 1.75rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+        }
+
+        .logo-text {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            border: 1px solid var(--border-color);
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+            transition: var(--transition-smooth);
+        }
+
+        .status-dot.online {
+            background-color: var(--success);
+            box-shadow: 0 0 12px var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        main {
+            flex: 1;
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 1024px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(var(--blur-radius));
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            transition: var(--transition-smooth);
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border-left: 3px solid var(--primary);
+            padding-left: 0.5rem;
+        }
+
+        .card-secondary h2 {
+            border-left-color: var(--secondary);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 1.125rem;
+            font-weight: 600;
+        }
+
+        .account-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .account-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .account-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .account-title {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--primary);
+        }
+
+        .account-title.derived {
+            color: var(--secondary);
+        }
+
+        .account-address {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            word-break: break-all;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 0 0.25rem;
+            transition: var(--transition-smooth);
+        }
+
+        .copy-btn:hover {
+            color: var(--text-main);
+        }
+
+        .account-balance {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-top: 0.25rem;
+        }
+
+        .balance-val {
+            font-family: var(--font-mono);
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .balance-unit {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-left: 0.25rem;
+        }
+
+        /* Forms and Controls */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        input, textarea, select {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-main);
+            padding: 0.75rem 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+            width: 100%;
+            transition: var(--transition-smooth);
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px var(--primary-glow);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary), #00b8d4);
+            color: #040814;
+            border: none;
+            border-radius: 8px;
+            padding: 0.875rem 1.5rem;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            transition: var(--transition-smooth);
+            font-family: var(--font-main);
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--primary-glow);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: var(--text-dim);
+            color: var(--bg-base);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, var(--secondary), #8b5cf6);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 4px 16px var(--secondary-glow);
+        }
+
+        /* Drag and Drop Zone */
+        .dropzone {
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 2rem 1rem;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.01);
+            cursor: pointer;
+            transition: var(--transition-smooth);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--primary);
+            background: rgba(0, 240, 255, 0.02);
+        }
+
+        .dropzone-icon {
+            font-size: 2rem;
+            color: var(--text-muted);
+            transition: var(--transition-smooth);
+        }
+
+        .dropzone:hover .dropzone-icon {
+            color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .file-info {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            display: none;
+        }
+
+        /* Log / Receipt Console */
+        .console-card {
+            grid-column: 1 / -1;
+        }
+
+        .console {
+            background: #05070a;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.825rem;
+            height: 250px;
+            overflow-y: auto;
+            color: #10b981;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
+        }
+
+        .console-line {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .console-time {
+            color: var(--text-dim);
+            flex-shrink: 0;
+        }
+
+        .console-info {
+            color: #60a5fa;
+        }
+
+        .console-success {
+            color: #34d399;
+        }
+
+        .console-error {
+            color: #f87171;
+        }
+
+        .console-warn {
+            color: #fbbf24;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .tab-btn {
+            background: none;
+            border: none;
+            padding: 0.75rem 1.25rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: var(--transition-smooth);
+            border-bottom: 2px solid transparent;
+            font-family: var(--font-main);
+        }
+
+        .tab-btn.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        /* Code Block Guide */
+        .guide-box {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .guide-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-main);
+        }
+
+        .guide-list {
+            list-style-type: none;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .guide-list li {
+            position: relative;
+            padding-left: 1.25rem;
+        }
+
+        .guide-list li::before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: var(--primary);
+        }
+
+        .code-snippet {
+            background: #030406;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 0.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            overflow-x: auto;
+            color: #d1d5db;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            background: rgba(10, 13, 20, 0.4);
+            margin-top: auto;
+        }
+
+        /* Responsive Columns */
+        .flex-row {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .flex-row > * {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-section">
+            <span class="logo-icon">⚡</span>
+            <span class="logo-text">Zephyria Dev Portal</span>
+        </div>
+        
+        <div class="connection-status">
+            <div id="statusDot" class="status-dot"></div>
+            <span id="statusText">Connecting to Node...</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- LEFT PANEL: Dashboard & Deploy -->
+        <div class="card">
+            <h2>◉ Node Metrics & Dashboard</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-label">RPC Network Endpoint</div>
+                    <div class="stat-value" style="color: var(--primary); font-size: 1rem;">http://127.0.0.1:8545</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Current Block</div>
+                    <div id="blockHeight" class="stat-value">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Chain ID</div>
+                    <div id="chainIdVal" class="stat-value">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Validator Status</div>
+                    <div class="stat-value" style="color: var(--success);">Active</div>
+                </div>
+            </div>
+
+            <div class="account-list">
+                <h3>Pre-funded Developer Accounts</h3>
+                
+                <!-- Account 1: Anvil/MetaMask default account -->
+                <div class="account-item">
+                    <div class="account-header">
+                        <span class="account-title">Dev Private Key / MetaMask Account</span>
+                        <span class="stat-label">ECDSA Legacy</span>
+                    </div>
+                    <div class="account-address">
+                        <span id="legacyAddr">0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266</span>
+                        <button class="copy-btn" onclick="copyText('legacyAddr')">❐</button>
+                    </div>
+                    <div class="account-balance">
+                        <span class="stat-label">Balance</span>
+                        <div>
+                            <span id="legacyBal" class="balance-val">-</span>
+                            <span class="balance-unit">ZEPH</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Account 2: Blake3 Derived Account -->
+                <div class="account-item">
+                    <div class="account-header">
+                        <span class="account-title derived">Blake3 Derived Account</span>
+                        <span class="stat-label">BLAKE3 Native</span>
+                    </div>
+                    <div class="account-address">
+                        <span id="derivedAddr">0x0000000000000000000000000000000000000000</span>
+                        <button class="copy-btn" onclick="copyText('derivedAddr')">❐</button>
+                    </div>
+                    <div class="account-balance">
+                        <span class="stat-label">Balance</span>
+                        <div>
+                            <span id="derivedBal" class="balance-val">-</span>
+                            <span class="balance-unit">ZEPH</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="border-top: 1px solid var(--border-color); padding-top: 1.25rem;">
+                <h2>◉ PolkaVM Contract Deployment</h2>
+                <p style="font-size: 0.825rem; color: var(--text-muted); margin-top: 0.25rem; margin-bottom: 1rem;">
+                    Deploy compiled RISC-V ELF smart contracts directly to the network.
+                </p>
+
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="switchTab('deploy-tab', 'prepackaged', this)">Pre-packaged Contract</button>
+                    <button class="tab-btn" onclick="switchTab('deploy-tab', 'custom', this)">Upload Custom ELF</button>
+                </div>
+
+                <!-- Prepackaged Tab -->
+                <div id="prepackagedTab" class="tab-content deploy-tab active">
+                    <div class="guide-box">
+                        <div class="guide-title">Standard Revive Transfer Contract</div>
+                        <p style="font-size: 0.8rem; color: var(--text-muted);">
+                            This contract is pre-compiled into a relocatable RISC-V ELF from the official Polkadot Revive Transfer example. It supports ERC-20 transfers and basic storage.
+                        </p>
+                    </div>
+                    
+                    <div class="flex-row">
+                        <div class="form-group">
+                            <label>Gas Limit</label>
+                            <input type="number" id="packGas" value="3000000">
+                        </div>
+                        <div class="form-group">
+                            <label>Value (ZEPH)</label>
+                            <input type="number" id="packValue" value="0" step="any">
+                        </div>
+                    </div>
+
+                    <button id="btnDeployPackaged" class="btn" onclick="deployPackagedContract()">
+                        Deploy Pre-packaged Contract
+                    </button>
+                </div>
+
+                <!-- Custom Tab -->
+                <div id="customTab" class="tab-content deploy-tab">
+                    <div class="dropzone" id="dropzone" onclick="document.getElementById('elfFileInput').click()">
+                        <span class="dropzone-icon">📥</span>
+                        <span style="font-size: 0.9rem; font-weight: 500;">Drag & Drop PolkaVM .elf binary here</span>
+                        <span style="font-size: 0.75rem; color: var(--text-dim);">or click to browse files</span>
+                        <input type="file" id="elfFileInput" style="display:none;" accept=".elf" onchange="handleFileSelect(event)">
+                        <div class="file-info" id="fileInfo">No file selected</div>
+                    </div>
+
+                    <div class="flex-row">
+                        <div class="form-group">
+                            <label>Gas Limit</label>
+                            <input type="number" id="customGas" value="5000000">
+                        </div>
+                        <div class="form-group">
+                            <label>Value (ZEPH)</label>
+                            <input type="number" id="customValue" value="0" step="any">
+                        </div>
+                    </div>
+
+                    <button id="btnDeployCustom" class="btn btn-secondary" onclick="deployCustomContract()" disabled>
+                        Deploy Custom ELF Contract
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: Call Sandbox & Integration Guides -->
+        <div class="card card-secondary">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('right-panel', 'sandbox', this)">Sandbox Interaction Console</button>
+                <button class="tab-btn" onclick="switchTab('right-panel', 'guide', this)">MetaMask & Remix Hookup</button>
+            </div>
+
+            <!-- Tab 1: Sandbox Interaction Console -->
+            <div id="sandboxTab" class="tab-content right-panel active">
+                <h2>◉ Invoke Deployed PolkaVM Contract</h2>
+                
+                <div class="form-group">
+                    <label>Contract Target Address</label>
+                    <input type="text" id="sandboxContractAddr" placeholder="0x..." value="">
+                </div>
+
+                <div class="form-group">
+                    <label>Calldata / Payload (Hex)</label>
+                    <textarea id="sandboxCalldata" rows="3" placeholder="0x... (e.g., 0x299a80e7 or function selectors)"></textarea>
+                </div>
+
+                <div class="flex-row">
+                    <div class="form-group">
+                        <label>Value (ZEPH)</label>
+                        <input type="number" id="sandboxValue" value="0" step="any">
+                    </div>
+                    <div class="form-group">
+                        <label>Gas Limit</label>
+                        <input type="number" id="sandboxGas" value="3000000">
+                    </div>
+                </div>
+
+                <div class="flex-row" style="margin-top: 0.5rem;">
+                    <!-- Read Call (eth_call) -->
+                    <button class="btn" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: white;" onclick="invokeContract(true)">
+                        Read State (eth_call)
+                    </button>
+                    <!-- Write Call (eth_sendTransaction) -->
+                    <button class="btn btn-secondary" onclick="invokeContract(false)">
+                        Modify State (Transaction)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tab 2: Remix & MetaMask Hookup Guide -->
+            <div id="guideTab" class="tab-content right-panel">
+                <h2>◉ MetaMask Wallet Connection</h2>
+                
+                <div class="guide-box">
+                    <div class="guide-title">1. Connect MetaMask to Zephyria Node</div>
+                    <ul class="guide-list">
+                        <li>Open MetaMask, click the network dropdown and select <strong>"Add network"</strong>.</li>
+                        <li>Click <strong>"Add a network manually"</strong>.</li>
+                        <li>Enter the following details:
+                            <ul class="guide-list" style="margin-top: 0.25rem; margin-left: 0.5rem;">
+                                <li><strong>Network Name</strong>: Zephyria Devnet</li>
+                                <li><strong>RPC URL</strong>: <code>http://127.0.0.1:8545</code></li>
+                                <li><strong>Chain ID</strong>: <code>91919191</code></li>
+                                <li><strong>Currency Symbol</strong>: <code>ZEPH</code></li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="guide-box">
+                    <div class="guide-title">2. Import Pre-funded Devnet Account</div>
+                    <ul class="guide-list">
+                        <li>In MetaMask, select <strong>"Import Account"</strong> under accounts.</li>
+                        <li>Paste the devnet private key:</li>
+                        <div class="code-snippet" style="font-size: 0.725rem; background: #080a0f;">ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80</div>
+                        <li>This imports the account <code>0xf39Fd6e51...</code> loaded with 100,000 ZEPH.</li>
+                    </ul>
+                </div>
+
+                <h2>◉ Remix IDE Contract Deployment</h2>
+
+                <div class="guide-box">
+                    <div class="guide-title">Deploy from Remix</div>
+                    <ul class="guide-list">
+                        <li>Open <a href="https://remix.ethereum.org" target="_blank" style="color: var(--primary);">remix.ethereum.org</a>.</li>
+                        <li>Navigate to the <strong>Deploy & Run Transactions</strong> tab.</li>
+                        <li>Under **Environment**, select <strong>"Injected Provider - MetaMask"</strong>.</li>
+                        <li>MetaMask will prompt to connect to the Zephyria Devnet.</li>
+                        <li>Now you can compile and deploy standard Solidity contracts directly via Remix!</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- BOTTOM PANEL: Live Execution Log -->
+        <div class="card console-card">
+            <h2>◉ Live JSON-RPC Transaction & VM Execution Logger</h2>
+            <div id="consoleLog" class="console">
+                <div class="console-line">
+                    <span class="console-time">[00:00:00]</span>
+                    <span class="console-info">Developer Sandbox console active. Waiting for RPC transactions...</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        Zephyria Network v0.2.0 • Powered by RISC-V PolkaVM Engine & ZephyrDB Flat Storage.
+    </footer>
+
+    <script>
+        // Embedded ELF Hex string placeholder. Filled dynamically by the installer script.
+        var EMBEDDED_ELF_HEX = "0x7f454c460201010300000000000000000100f3000100000000000000000000000000000000000000608e000000000000090000004000000000004000280026000b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b000000000000000000000082800b0000000000000000000000828009ce2a96aa8603c705008505938716002380e600be86e398c7fe8280630cb5069396050213170502819201933297998e131716003307e0406372d702637eb50231ca2a96aa8603c705008505938716002380e600be86e398c7fe2da805ce2a96aa8603c705008505938716002380e600be86e398c7fe39a811ce9b06f6ff3387d500034707007d16b307d5002380e700fd3675f6828011ca2a96aa86138716002380b600ba86e31bc7fe8280411106e422e01374150097000000e78000009705000023a0a50001c097000000e780000097000000e7800000157186eda2e9a6e58011137101fe8a840145c8f0c8f4c8f8c8fc1b85040a97000000e7800000c874cc78d07cd470518dd58d4d8d01c1170500001305050001a0170500000325050088ec021501917d05019913060508b335a600cce48b15b04213050004cce893850408d0e023bc040897000000e7800000130500088c6c97000000e780000001258c6c014697000000e78000007d458c6c6360b500170500001305050001a0138504069305000897000000e7800000b078b47c05450215318d93550602558d93b515008b15d0428b15a04081e117050000130505009b0505000545014697000000e7800000a87088eca87488e897020000e78202001385040490e094e497000000e780000003e54405ac6c02159060498e9464cd8e130501fe01992a8181450ce10ce50ce90ced930501fe81992e81986c98e1986898e590e994ed97000000e7800000138504029305000497000000e780000088748c78907c9470518d33e6b600498e4d8d01920215518d01e11705000013050500359d8145014694ec97000000e780000097000000e7800000886c814597000000e78000009b050500014501a097000000e7800000117186fda2f9a6f50002137101fe8a8413060008130500049385040cf0e00146f0e4f0e8f0ec97000000e7800000170500001305050088fc084191456360b500130501fe019988f82a810125814597000000e78000008878484db715c5b09385e5346310b500887c08418d4563f0a50097020000e78202001385040a97000000e7800000c87088f4c87488ecc87888f0130501fe019988f897020000e782020097000000e7800000947888668c6a906e9462518dd58d4d8d85659385c58f8b15a0428cf8130501fe019988e897020000e782020097000000e78000008868833205001c6503330501186d886c9355856b88701356856b88741355856b9396050201928191558e931605020191d58d947c90ea8cee88d29b850601130601fe019a3281233056001ce62338660018ee130581ff01992a8123200500970600009386060094fc1397060201930215b367e50001262145947897000000e780000001c1138504089305000497000000e7800000c86088fcc86488f8c86888f4c86c88f097000000e7800000947c8c789070d18d987433e6e6004d8ed98d01928215d18d81e12a86019101e11b05060088f83685b28590f497000000e7800000930581ff13f605fe90f032818c740cc201259b050600014697000000e7800000887008418c786370b5000000b705d0669385c53a6310b500130501fe019988f82a8181450ce10ce50ce90ced012597000000e7800000947888668c6a906e9462518dd58d4d8d01c1170500001305050001a0170500001305050001a017050000130505009b050500054511a08c5c014697000000e780000097000000e7800000aa85019101e1887c8cf897000000e78000009b0505009058054597000000e780000097000000e7800000887c08418d4563e0a500170500001305050001a097020000e78202001385040697000000e7800000b070b47403e704071305000893850404b0e0b4e4b8e823bc040497000000e7800000887c48419305f00963e6a5001305000a8c7cc8c117050000130505009b05050813060002014597000000e7800000611106e0014597000000e7800000611106e0054597000000e7800000930501fe81992e8123b0050023b4050023b8050023bc050082822a81233005002334050023380500233c05000125828217050000033505000c4181c11705000003350500012517030000670003008280130181f886f8a2f4a6f02e86aaec93050002328597000000e78000000346050083461500034725008347350083424500034355008345650083447500a2064207e207558eb2e85d8fbae403468500834695000347a5008347b5002203c205e204a2064207e20733645300a2e0c58d2efc558e32f85d8f3af48345d5000346e5008346f5000347c500a2054206e206d98d2ef0558e32ec83441501034605010347250183453501a204458e32e84207e205d98d2ee483465501034745010346650183457501a206d98e36e04206e205b3e3c50083469501034785010346a5018345b501a20633e3e6004206e205b3e2c5000346d5010347c5018345e5010345f5012206b367e600c2056205c98d46652666498e06656277498f4275a276c98e0275e26033e5a000c2642264b3609400026433e48300b3e46200dd8d0217598e021502148215558db3661400c58d93d5856b93d6866b1355856b1356866b66670ce314e708eb10efc67026748674130181078280130181fd06f022ec26e8906132e4906532e08069846d9305000297000000e780000093d5846b1356846b826693d6866b22671357876b13538700230ce50093d786003ee42308d50093538703135407039357870293540702935087014183230e950093d48603a30ef50093d20603230f850093d78602a30f750093d30602a30c650013d48601c182230de50013538603a30d150093500603230a750013578602a30af50093530602230b550093528601a30b950093540601a267a308f500935786002309d50093d68503a309850013d405032306750093d38502a306e50013d705022307150093d08501a307650013d305012304c500a304f50023059500a305550013d685002302e500a302750023038500a303d5002300b500a300c50023016500a301150082706264c2641301810282801d7186eca2e8a6e48010137101feaa84886d906994658c611355856b1356866b93d6866b93d5856b2af032f436f82efc9b0501021b060100014597000000e78000006265c265226682661355856b93d5856b1356866b93d6866b88e08ce490e894ec130104fae6604664a664256182801d7186eca2e88010137101fe8332050014651869086d03b3050090659c698c6d1355856b1357876b93d6866b93d2826b93d5856b93d7876b1356866b1353836b2af03af436f816fc2ee03ee432e81aec9b0501021b060100014597000000e7800000130104fae6604664256182801b86050001c29b56150181e2b7060200138716006370e600aa95fd05370608000116f18d63e0b600170600008326060063f0b6002320b600012597050000938505002e9582800000010000000007000000000000000000000001000100000000070000000000000000000000010001000000000a000000000000000000000002000100000000080000000000000000000000010001000000000c0000000000000000000000010001000000000a0000000000000000000000020001000000000c000000000000000000000001000100000000080000000000000000000000060101000000000e0000000000000000000000030001000000000e0000000000000000000000020001000000000e000000000000000000000000010100000000060000000000000000000000010001000000000800000000000000000000000100010000000009000000000000000000000001010100000000090000000000000000000000020001000000000f000000000000000000000000000100000000110000000000000000000000050101000000000d000000000000000000000004000100000000090000000000000000000000000101000000000900000000000000000000000001010000000012000000000000000000000002000100000000130000000000000000000000030001000000000f0000000000000000000000030001000000000b00000000000000000000000601010000000003000000000000000000000001000100000000060000000000000000000000010001000000000b0000000000000000000000030001000000000d0000000000000000000000000101000000001000000000000000000000000300010000000010000000000000000000000000010100000000120000000000000000000000020001000000001400000000000000000000000301010000000009000000000000000000000001000100000000110000000000000000000000010001000000000600000000000000000000000000010000000004000000000000000000000000006761735f6c696d6974007265665f74696d655f6c65667400626c6f636b5f617574686f720076616c75655f7472616e736665727265640062616c616e63650062616c616e63655f6f660063616c6c5f646174615f636f70790063616c6c5f65766d00636f64655f68617368006465706f7369745f6576656e740072657475726e5f646174615f636f707900636f64655f73697a6500696e7374616e746961746500636f6e73756d655f616c6c5f676173006e6f7700626c6f636b5f686173680063616c6c6572007365745f696d6d757461626c655f64617461007465726d696e617465006765745f73746f726167655f6f725f7a65726f006f726967696e0064656c65676174655f63616c6c5f65766d00636861696e5f69640063616c6c007365616c5f72657475726e006765745f696d6d757461626c655f64617461006761735f7072696365006465706c6f7900626c6f636b5f6e756d6265720063616c6c5f646174615f6c6f61640063616c6c5f646174615f73697a650072657475726e5f646174615f73697a6500686173685f6b656363616b5f323536007365745f73746f726167655f6f725f636c656172006164647265737300626173655f666565000000000400000000000000020000000500000000000000000000001200000000000000020000000a00000000000000000000002000000000000000020000000f00000000000000000000002e00000000000000020000001400000000000000000000003c00000000000000020000001900000000000000000000004a00000000000000020000001e00000000000000000000005800000000000000020000002300000000000000000000006600000000000000020000002800000000000000000000007400000000000000020000002d00000000000000000000008200000000000000020000003200000000000000000000009000000000000000020000003700000000000000000000009e00000000000000020000003c0000000000000000000000ac0000000000000002000000410000000000000000000000ba0000000000000002000000460000000000000000000000c800000000000000020000004b0000000000000000000000d60000000000000002000000500000000000000000000000e40000000000000002000000550000000000000000000000f200000000000000020000005a00000000000000000000000001000000000000020000005f00000000000000000000000e01000000000000020000006400000000000000000000001c01000000000000020000006900000000000000000000002a01000000000000020000006e00000000000000000000003801000000000000020000007300000000000000000000004601000000000000020000007800000000000000000000005401000000000000020000007d00000000000000000000006201000000000000020000008200000000000000000000007001000000000000020000008700000000000000000000007e01000000000000020000008c00000000000000000000008c01000000000000020000009100000000000000000000009a0100000000000002000000960000000000000000000000a801000000000000020000009b0000000000000000000000b60100000000000002000000a00000000000000000000000c40100000000000002000000a50000000000000000000000d20100000000000002000000aa00000000000000000000009202000000000000130000002f00000000000000000000009202000000000000330000000000000000000000000000009a0200000000000017000000ed00000000000000000000009a02000000000000330000000000000000000000000000009e0200000000000019000000f700000000000000000000009e0200000000000033000000000000000000000000000000a2020000000000002c000000f80000000000000000000000a40200000000000013000000f90000000000000000000000a40200000000000033000000000000000000000000000000ac0200000000000013000000fa0000000000000000000000ac0200000000000033000000000000000000000000000000d20200000000000013000000a70000000000000000000000d20200000000000033000000000000000000000000000000e8020000000000002c000000010100000000000000000000ea0200000000000017000000ef0000000000000000000000ea0200000000000033000000000000000000000000000000ee0200000000000018000000030100000000000000000000ee0200000000000033000000000000000000000000000000f2020000000000002d000000050100000000000000000000f40200000000000017000000ed0000000000000000000000f40200000000000033000000000000000000000000000000f80200000000000018000000070100000000000000000000f80200000000000033000000000000000000000000000000240300000000000013000000e50100000000000000000000240300000000000033000000000000000000000000000000320300000000000013000000e401000000000000000000003203000000000000330000000000000000000000000000004003000000000000130000002500000000000000000000004003000000000000330000000000000000000000000000004c0300000000000010000000100100000000000000000000500300000000000017000000ef000000000000000000000050030000000000003300000000000000000000000000000054030000000000001800000012010000000000000000000054030000000000003300000000000000000000000000000058030000000000002d000000050100000000000000000000620300000000000013000000e3010000000000000000000062030000000000003300000000000000000000000000000086030000000000002c000000180100000000000000000000880300000000000017000000ef00000000000000000000008803000000000000330000000000000000000000000000008c03000000000000180000001a01000000000000000000008c0300000000000033000000000000000000000000000000980300000000000013000000930000000000000000000000980300000000000033000000000000000000000000000000a80300000000000013000000200100000000000000000000a80300000000000033000000000000000000000000000000b80300000000000013000000e60100000000000000000000b80300000000000033000000000000000000000000000000f60300000000000013000000e70100000000000000000000f60300000000000033000000000000000000000000000000060400000000000013000000e3010000000000000000000006040000000000003300000000000000000000000000000026040000000000002c000000270100000000000000000000280400000000000017000000ef00000000000000000000002804000000000000330000000000000000000000000000002c04000000000000180000002901000000000000000000002c0400000000000033000000000000000000000000000000380400000000000013000000250000000000000000000000380400000000000033000000000000000000000000000000400400000000000013000000e001000000000000000000004004000000000000330000000000000000000000000000004c0400000000000013000000e401000000000000000000004c04000000000000330000000000000000000000000000005a040000000000002d0000001e01000000000000000000005c04000000000000130000004d00000000000000000000005c04000000000000330000000000000000000000000000008a0400000000000013000000e501000000000000000000008a0400000000000033000000000000000000000000000000920400000000000017000000ed0000000000000000000000920400000000000033000000000000000000000000000000960400000000000018000000370100000000000000000000960400000000000033000000000000000000000000000000a00400000000000010000000390100000000000000000000b204000000000000130000002a0000000000000000000000b20400000000000033000000000000000000000000000000c604000000000000100000003c0100000000000000000000d004000000000000100000003f0100000000000000000000d40400000000000013000000200100000000000000000000d40400000000000033000000000000000000000000000000e00400000000000013000000e60100000000000000000000e00400000000000033000000000000000000000000000000fc0400000000000013000000440100000000000000000000fc0400000000000033000000000000000000000000000000040500000000000013000000a70000000000000000000000040500000000000033000000000000000000000000000000300500000000000013000000440100000000000000000000300500000000000033000000000000000000000000000000380500000000000013000000a700000000000000000000003805000000000000330000000000000000000000000000009e0500000000000017000000ef00000000000000000000009e0500000000000033000000000000000000000000000000a20500000000000018000000480100000000000000000000a20500000000000033000000000000000000000000000000ba0500000000000013000000340000000000000000000000ba0500000000000033000000000000000000000000000000c2050000000000002c000000490100000000000000000000cc0500000000000013000000e30100000000000000000000cc0500000000000033000000000000000000000000000000e405000000000000130000008e0000000000000000000000e4050000000000003300000000000000000000000000000004060000000000002c0000004f01000000000000000000000a060000000000002c0000004f0100000000000000000000180600000000000013000000e401000000000000000000001806000000000000330000000000000000000000000000003806000000000000130000008900000000000000000000003806000000000000330000000000000000000000000000004606000000000000100000005401000000000000000000005406000000000000100000003901000000000000000000006e0600000000000013000000a700000000000000000000006e060000000000003300000000000000000000000000000086060000000000002c000000580100000000000000000000880600000000000017000000ef00000000000000000000008806000000000000330000000000000000000000000000008c06000000000000180000005a01000000000000000000008c060000000000003300000000000000000000000000000090060000000000002d0000005c0100000000000000000000920600000000000017000000ef00000000000000000000009206000000000000330000000000000000000000000000009606000000000000180000005e01000000000000000000009606000000000000330000000000000000000000000000009a060000000000002d0000005c01000000000000000000009c0600000000000017000000ef00000000000000000000009c0600000000000033000000000000000000000000000000a00600000000000018000000600100000000000000000000a00600000000000033000000000000000000000000000000b00600000000000013000000930000000000000000000000b00600000000000033000000000000000000000000000000b806000000000000130000008e0000000000000000000000b80600000000000033000000000000000000000000000000c4060000000000002c0000004f0100000000000000000000ca0600000000000013000000e40100000000000000000000ca0600000000000033000000000000000000000000000000da0600000000000013000000930000000000000000000000da0600000000000033000000000000000000000000000000e206000000000000130000004d0000000000000000000000e20600000000000033000000000000000000000000000000f006000000000000100000006a0100000000000000000000f40600000000000017000000ef0000000000000000000000f40600000000000033000000000000000000000000000000f806000000000000180000006c0100000000000000000000f80600000000000033000000000000000000000000000000fc060000000000002d0000005c0100000000000000000000fe0600000000000013000000200100000000000000000000fe06000000000000330000000000000000000000000000000a0700000000000013000000e601000000000000000000000a07000000000000330000000000000000000000000000002c0700000000000013000000e501000000000000000000002c0700000000000033000000000000000000000000000000480700000000000017000000ef00000000000000000000004807000000000000330000000000000000000000000000004c07000000000000180000007401000000000000000000004c07000000000000330000000000000000000000000000005a07000000000000130000009300000000000000000000005a0700000000000033000000000000000000000000000000680700000000000013000000e80100000000000000000000680700000000000033000000000000000000000000000000760700000000000013000000e8010000000000000000000076070000000000003300000000000000000000000000000000000200000000000100000005000000ae0700000000000014000000e10100000000000000000000b20700000000000018000000b20000000000000000000000b20700000000000033000000000000000000000000000000b8070000000000002c000000b60000000000000000000000ba0700000000000014000000e20100000000000000000000be0700000000000018000000b70000000000000000000000be0700000000000033000000000000000000000000000000c40700000000000013000000980000000000000000000000c4070000000000003300000000000000000000000000000000000000010000000700000000000000e20700000000000013000000e40100000000000000000000e20700000000000033000000000000000000000000000000000000000100000009000000000000005a0900000000000013000000e401000000000000000000005a090000000000003300000000000000000000000000000000000000010000000b00000000000000ac0a000000000000130000006b0000000000000000000000ac0a0000000000003300000000000000000000000000000000000000010000000d000000000000003c0b000000000000130000009d00000000000000000000003c0b0000000000003300000000000000000000000000000000000000010000000f00000000000000540b0000000000002c000000e900000000000000000000005a0b0000000000002c000000eb0000000000000000000000640b00000000000010000000eb0000000000000000000000740b00000000000010000000eb0000000000000000000000780b00000000000017000000ed0000000400000000000000780b000000000000330000000000000000000000000000007c0b00000000000018000000ec00000000000000000000007c0b00000000000033000000000000000000000000000000800b00000000000010000000e90000000000000000000000840b00000000000019000000ec0000000000000000000000840b000000000000330000000000000000000000000000008a0b00000000000017000000ef00000000000000000000008a0b000000000000330000000000000000000000000000008e0b00000000000018000000ee00000000000000000000008e0b00000000000033000000000000000000000000000000010000000000000000000000000000000001000000000000000000000000000000000000000000000100000000000000020000007b01000000000000000000000900000000000000020000007c01000000000000000000001200000000000000020000008001000000000000000000001a00000000000000020000008101000000000000000000000900000000000000020000008f01000000000000000000001c00000000000000020000009001000000000000000000002f00000000000000020000009101000000000000000000004200000000000000020000009201000000000000000000005500000000000000020000009301000000000000000000006800000000000000020000009401000000000000000000007b00000000000000020000009501000000000000000000008e0000000000000002000000960100000000000000000000a10000000000000002000000970100000000000000000000b40000000000000002000000980100000000000000000000c70000000000000002000000990100000000000000000000da00000000000000020000009a0100000000000000000000ed00000000000000020000009b01000000000000000000000001000000000000020000009c01000000000000000000001301000000000000020000009d01000000000000000000002601000000000000020000009e01000000000000000000003901000000000000020000009f01000000000000000000004c0100000000000002000000a001000000000000000000005f0100000000000002000000a10100000000000000000000720100000000000002000000a20100000000000000000000850100000000000002000000a30100000000000000000000980100000000000002000000a40100000000000000000000ab0100000000000002000000a50100000000000000000000be0100000000000002000000a60100000000000000000000d10100000000000002000000a70100000000000000000000e40100000000000002000000a80100000000000000000000f70100000000000002000000a901000000000000000000000a0200000000000002000000aa01000000000000000000001d0200000000000002000000ab0100000000000000000000300200000000000002000000ac0100000000000000000000430200000000000002000000ad0100000000000000000000560200000000000002000000ae0100000000000000000000690200000000000002000000af01000000000000000000007c0200000000000002000000b001000000000000000000008f0200000000000002000000b30100000000000000000000a20200000000000002000000b40100000000000000000000011101250e1305030e1017b44219110155170000022e001101120640186e0e030e49133f19320b0000032e0011011206401831130000042e006e0e030e49133f19320b200b0000052400030e3e0b0b0b0000062e011101120640186e0e030e49133f19320b0000071d00311311011206580b590b570b0000081d00311311011206580b590b0000091d0031135517580b590b570b00000a1d01311311011206580b590b570b00000b1d0031135517580b590b00000c2e001101120640186e0e030e34193f19000000e4020000040000000000080100000000020000000000000000000000000000000000000000000200000000000000000000000001520000000000000000f0000000010200000000000000000000000001520000000000000000f0000000010200000000000000000000000001520000000000000000f0000000010200000000000000000000000001580000000000000000f0000000010200000000000000000000000001580000000000000000f000000001030000000000000000000000000152060100000200000000000000000000000001520000000000000000f000000001040000000000000000f0000000010105000000000020040000000000000000f00000000101040000000000000000f000000001010600000000000000000000000001580000000000000000f00000000107e100000000000000000000000000000001071e07e100000000000000000000000000000001151107e1000000000000000000000000000000011c1108e1000000000000000000000000000000010009f70000000000000001220d070601000000000000000000000000000001220d07e100000000000000000000000000000001230d000600000000000000000000000001580000000000000000f00000000107f700000000000000000000001400000001441d07f700000000000000000000000a00000001441d0ae100000000000000000000000000000001451d08f700000000000000000000000400000001000007e100000000000000000000000000000001312a07e1000000000000000000000000000000014a1107e10000000000000000000000000000000137420be100000000000000010007e100000000000000000000000200000001471907e10000000000000000000000000000000132420ae10000000000000000000000000000000134190806010000000000000000000012000000010000000c00000000000000001a000000015200000000000000000c0000000000000000160000000152000000000000000000060000000000000001000000d201000000000000000000000c0000000000000001000000000000000000000000000000120000000000000001000000000000000000000000000000160000000000000001000000bb0100000000000000000000220000000000000001000000bc0100000000000000000000270000000000000002000000b000000000000000000000002f0000000000000023000000b800000000000000000000002f0000000000000027000000b00000000000000000000000350000000000000001000000000000000000000000000000390000000000000001000000000000000000000000000000430000000000000002000000bb00000000000000000000004b0000000000000023000000c300000000000000000000004b0000000000000027000000bb00000000000000000000005100000000000000010000000000000000000000000000005500000000000000010000000000000000000000000000005f0000000000000002000000c60000000000000000000000670000000000000023000000ce0000000000000000000000670000000000000027000000c600000000000000000000006d00000000000000010000000000000000000000000000007100000000000000010000000000000000000000000000007b0000000000000002000000d10000000000000000000000830000000000000023000000d80000000000000000000000830000000000000027000000d100000000000000000000008900000000000000010000000000000000000000000000008d0000000000000001000000000000000000000000000000970000000000000002000000db00000000000000000000009f0000000000000023000000e200000000000000000000009f0000000000000027000000db0000000000000000000000a50000000000000001000000000000000000000000000000a90000000000000001000000000000000000000000000000b30000000000000002000000e50000000000000000000000bb0000000000000023000000f00000000000000000000000bb0000000000000027000000e50000000000000000000000c60000000000000002000000f20000000000000000000000ce0000000000000023000000fb0000000000000000000000ce0000000000000027000000f20000000000000000000000d40000000000000001000000000000000000000000000000d80000000000000001000000000000000000000000000000e20000000000000001000000000000000000000000000000e60000000000000001000000000000000000000000000000f10000000000000001000000000000000000000000000000f80000000000000001000000000000000000000000000000fc00000000000000010000000000000000000000000000000701000000000000010000000000000000000000000000000b0100000000000001000000000000000000000000000000160100000000000002000000fd00000000000000000000001e01000000000000230000003101000000000000000000001e0100000000000027000000fd00000000000000000000002401000000000000010000000000000000000000000000002801000000000000010000000000000000000000000000003601000000000000020000000201000000000000000000003e01000000000000230000000601000000000000000000003e01000000000000270000000201000000000000000000004a01000000000000020000001301000000000000000000005201000000000000230000001501000000000000000000005201000000000000270000001301000000000000000000005e01000000000000020000001b01000000000000000000006601000000000000230000001d01000000000000000000006601000000000000270000001b01000000000000000000007201000000000000020000001d01000000000000000000007a01000000000000230000001f01000000000000000000007a01000000000000270000001d0100000000000000000000850100000000000001000000bd01000000000000000000009101000000000000020000002801000000000000000000009901000000000000230000002a0100000000000000000000990100000000000027000000280100000000000000000000a501000000000000020000002d0100000000000000000000ad01000000000000230000002f0100000000000000000000ad01000000000000270000002d0100000000000000000000b60100000000000002000000330100000000000000000000be0100000000000023000000760100000000000000000000be0100000000000027000000330100000000000000000000c40100000000000001000000000000000000000000000000c80100000000000001000000000000000000000000000000d601000000000000020000004d0100000000000000000000ea0100000000000002000000510100000000000000000000fe01000000000000020000006601000000000000000000000602000000000000230000006801000000000000000000000602000000000000270000006601000000000000000000001202000000000000020000006601000000000000000000002602000000000000020000005901000000000000000000002e02000000000000230000005d01000000000000000000002e02000000000000270000005901000000000000000000003a02000000000000020000005d01000000000000000000004202000000000000230000005f01000000000000000000004202000000000000270000005d01000000000000000000004e02000000000000020000005f01000000000000000000005602000000000000230000006101000000000000000000005602000000000000270000005f0100000000000000000000620200000000000001000000be01000000000000000000006d02000000000000020000006201000000000000000000008102000000000000020000006d01000000000000000000008902000000000000230000006f01000000000000000000008902000000000000270000006d01000000000000000000009502000000000000020000007201000000000000000000009d02000000000000230000007501000000000000000000009d0200000000000027000000720100000000000000000000a90200000000000002000000720100000000000000000000ba0200000000000002000000870100000000000000000000c80200000000000001000000000000000000000000000000cc0200000000000001000000000000000000000000000000d102000000000000020000008a0100000000000000000000df0200000000000001000000000000000000000000000000e302000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000002501000000000000000000000800000000000000020000002801000000000000000000001000000000000000020000002f0100000000000000000000180000000000000002000000300100000000000000000000300000000000000002000000610100000000000000000000380000000000000002000000620100000000000000000000400000000000000002000000630100000000000000000000480000000000000002000000640100000000000000000000600000000000000002000000b00000000000000000000000680000000000000002000000b80000000000000000000000700000000000000002000000bb0000000000000000000000780000000000000002000000c30000000000000000000000800000000000000002000000c60000000000000000000000880000000000000002000000ce0000000000000000000000900000000000000002000000d10000000000000000000000980000000000000002000000d80000000000000000000000a00000000000000002000000db0000000000000000000000a80000000000000002000000e20000000000000000000000b00000000000000002000000e50000000000000000000000b80000000000000002000000f00000000000000000000000c00000000000000002000000f20000000000000000000000c80000000000000002000000760100000000000000000000d00000000000000002000000870100000000000000000000d800000000000000020000008d01000000000000000000005f5f7265766976655f73746f72655f696d6d757461626c655f64617461005f5f7265766976655f73746f72655f73746f726167655f776f72640055323536005f5f72756e74696d65004f55544c494e45445f46554e4354494f4e5f3000005f5f656e747279005f5f7265766976655f696e745f7472756e63617465005f5f7265766976655f6c6f61645f73746f726167655f776f7264005f5f7362726b5f696e7465726e616c002f746d702f6261645f64656275675f696e666f2f5f746d705f6261645f64656275675f696e666f2e736f6c2e5472616e736665724578616d706c652e79756c005f5f6465706c6f79005f5f7265766976655f73746f72655f686561705f776f7264005f5f7265766976655f65786974004f55544c494e45445f46554e4354494f4e5f31005f5f7265766976655f6c6f61645f686561705f776f7264003f010000020000000000e8020000260000005f5f7265766976655f73746f72655f696d6d757461626c655f6461746100420000005f5f7265766976655f6c6f61645f686561705f776f7264005e0000005f5f7265766976655f73746f72655f686561705f776f7264007a0000005f5f7265766976655f6c6f61645f73746f726167655f776f726400960000005f5f7265766976655f73746f72655f73746f726167655f776f726400c50000005f5f656e74727900e10000005f5f7265766976655f6578697400f70000005f5f7265766976655f696e745f7472756e6361746500060100005f5f7362726b5f696e7465726e616c00150100005f5f6465706c6f7900b50100005f5f72756e74696d6500b90200004f55544c494e45445f46554e4354494f4e5f3000d00200004f55544c494e45445f46554e4354494f4e5f3100000000000000060000000000000001000000b9010000000000000000000017000000020000000000e8020000f00000005532353600000000000000000000060000000000000001000000b901000000000000000000000050617269747920546563686e6f6c6f6769657320636c616e672076657273696f6e2032312e312e36202868747470733a2f2f6769746875622e636f6d2f6c6c766d2f6c6c766d2d70726f6a6563742e676974203663613634353435653165623737326663396230363836363930613462383264356439383735386229004165000000726973637600015b00000004080572763634653270305f6d3270305f613270315f633270305f7a6d6d756c3170305f7a61616d6f3170305f7a616c7273633170305f7a63613170305f7a62623170305f787468656164636f6e646d6f76317030000f030000040057000000010101fb0e0d0001010101000000010000012f746d702f6261645f64656275675f696e666f00005f746d705f6261645f64656275675f696e666f2e736f6c2e5472616e736665724578616d706c652e79756c000100000000090200000000000000000106037f090000010900000001010009020000000000000000010a03000900000106037f090000010900000001010009020000000000000000010a03000900000106037f090000010900000001010009020000000000000000010a037f090000010900000001010009020000000000000000010a037f090000010900000001010a00090200000000000000000106490900000001010009020000000000000000010a03000900000106037f090000010603010900000105100a030609000001050006037909000001052006030909000001052b030109000001052706030009000001051f030009000001050d06030709000001051f037909000001050d0307090000010301090000010510030109000001050006036d09000001051a060318090000010517030209000001051006083c0500036609000001056506031f09000001055e06030009000001050d030009000001051706030109000001050006036009000001050d06032209000001030109000001050006035d090000010603010900000105110a032b09000001051e030109000001051406030009000001052506030209000001051c0603000900000103510900000105240603372e051c064a034909000001052a060338090000010544030409000001051c06030009000001055406030309000001052306030009000001051c030009000001052806030409000001053403010900000105000603bc7f0900000103c4000900000103bc7f2e051d03c4000900000103bc7f09000001051c06032f82030209000001050006034f0900000105290603c5000900000105000603bb7f09000001052406033209000001051c064a0500034e090000010528060333090000010519060300090000010500034d090000010900000001010a0009020000000000000000110300090000010a2e021400010100640000000000000002000000b30000000000000000000000710000000000000022000000b50000000000000000000000710000000000000026000000b30000000000000000000000750000000000000022000000b80000000000000000000000750000000000000026000000b500000000000000000000007d0000000000000002000000be00000000000000000000008a0000000000000022000000c000000000000000000000008a0000000000000026000000be0000000000000000000000910000000000000022000000c10000000000000000000000910000000000000026000000c00000000000000000000000950000000000000022000000c30000000000000000000000950000000000000026000000c100000000000000000000009d0000000000000002000000c90000000000000000000000aa0000000000000022000000cb0000000000000000000000aa0000000000000026000000c90000000000000000000000b10000000000000022000000cc0000000000000000000000b10000000000000026000000cb0000000000000000000000b50000000000000022000000ce0000000000000000000000b50000000000000026000000cc0000000000000000000000bd0000000000000002000000d40000000000000000000000ca0000000000000022000000d60000000000000000000000ca0000000000000026000000d40000000000000000000000ce0000000000000022000000d80000000000000000000000ce0000000000000026000000d60000000000000000000000d60000000000000002000000de0000000000000000000000e30000000000000022000000e00000000000000000000000e30000000000000026000000de0000000000000000000000e70000000000000022000000e20000000000000000000000e70000000000000026000000e00000000000000000000000f00000000000000002000000e80000000000000000000000fc0000000000000022000000f00000000000000000000000fc0000000000000026000000ea0000000000000000000000040100000000000002000000f40000000000000000000000110100000000000022000000f50000000000000000000000110100000000000026000000f40000000000000000000000180100000000000022000000f60000000000000000000000180100000000000026000000f500000000000000000000001f0100000000000022000000ff00000000000000000000001f0100000000000026000000f60000000000000000000000280100000000000022000000000100000000000000000000280100000000000026000000ff00000000000000000000003101000000000000220000000401000000000000000000003101000000000000260000000001000000000000000000003a01000000000000220000000801000000000000000000003a01000000000000260000000401000000000000000000004201000000000000220000000901000000000000000000004201000000000000260000000801000000000000000000004b01000000000000220000000a01000000000000000000004b01000000000000260000000901000000000000000000005301000000000000220000000b01000000000000000000005301000000000000260000000a01000000000000000000005c01000000000000220000000c01000000000000000000005c01000000000000260000000b01000000000000000000006401000000000000220000000d01000000000000000000006401000000000000260000000c01000000000000000000006c01000000000000220000000e01000000000000000000006c01000000000000260000000d01000000000000000000007201000000000000220000000f01000000000000000000007201000000000000260000000e01000000000000000000007a01000000000000220000001101000000000000000000007a01000000000000260000000f01000000000000000000008301000000000000220000001401000000000000000000008301000000000000260000001101000000000000000000008c01000000000000220000001601000000000000000000008c0100000000000026000000140100000000000000000000940100000000000022000000170100000000000000000000940100000000000026000000160100000000000000000000a101000000000000220000001c0100000000000000000000a10100000000000026000000190100000000000000000000aa0100000000000022000000210100000000000000000000aa01000000000000260000001c0100000000000000000000b30100000000000022000000220100000000000000000000b30100000000000026000000210100000000000000000000bb0100000000000022000000230100000000000000000000bb0100000000000026000000220100000000000000000000c40100000000000022000000240100000000000000000000c40100000000000026000000230100000000000000000000cd0100000000000022000000260100000000000000000000cd0100000000000026000000240100000000000000000000d601000000000000220000002b0100000000000000000000d60100000000000026000000260100000000000000000000dc01000000000000220000002c0100000000000000000000dc01000000000000260000002b0100000000000000000000e501000000000000220000002e0100000000000000000000e501000000000000260000002c0100000000000000000000ec0100000000000022000000350100000000000000000000ec01000000000000260000002e0100000000000000000000f50100000000000022000000360100000000000000000000f50100000000000026000000350100000000000000000000fd0100000000000022000000380100000000000000000000fd01000000000000260000003601000000000000000000000602000000000000220000003a01000000000000000000000602000000000000260000003801000000000000000000000f02000000000000220000003b01000000000000000000000f02000000000000260000003a01000000000000000000001802000000000000220000003d01000000000000000000001802000000000000260000003b01000000000000000000001e02000000000000220000003e01000000000000000000001e02000000000000260000003d01000000000000000000002e02000000000000220000004101000000000000000000002e02000000000000260000004001000000000000000000003702000000000000220000004201000000000000000000003702000000000000260000004101000000000000000000003f02000000000000220000004301000000000000000000003f02000000000000260000004201000000000000000000004802000000000000220000004501000000000000000000004802000000000000260000004301000000000000000000005102000000000000220000004601000000000000000000005102000000000000260000004501000000000000000000005a02000000000000220000004701000000000000000000005a02000000000000260000004601000000000000000000006202000000000000220000004a01000000000000000000006202000000000000260000004701000000000000000000006b02000000000000220000004b01000000000000000000006b02000000000000260000004a01000000000000000000007302000000000000220000004c01000000000000000000007302000000000000260000004b01000000000000000000007d02000000000000220000004e01000000000000000000007d02000000000000260000004c01000000000000000000008402000000000000220000005001000000000000000000008402000000000000260000004e0100000000000000000000910200000000000022000000530100000000000000000000910200000000000026000000520100000000000000000000980200000000000022000000550100000000000000000000980200000000000026000000530100000000000000000000a40200000000000022000000570100000000000000000000a40200000000000026000000560100000000000000000000ad02000000000000220000005b0100000000000000000000ad0200000000000026000000570100000000000000000000b70200000000000022000000650100000000000000000000b702000000000000260000005b0100000000000000000000c10200000000000022000000670100000000000000000000c10200000000000026000000650100000000000000000000ca0200000000000022000000690100000000000000000000ca0200000000000026000000670100000000000000000000d602000000000000220000006e0100000000000000000000d602000000000000260000006b0100000000000000000000df0200000000000022000000700100000000000000000000df02000000000000260000006e0100000000000000000000e80200000000000022000000710100000000000000000000e80200000000000026000000700100000000000000000000f00200000000000022000000730100000000000000000000f00200000000000026000000710100000000000000000000f40200000000000022000000760100000000000000000000f40200000000000026000000730100000000000000000000fd02000000000000020000008901000000000000000000000903000000000000220000008c0100000000000000000000090300000000000026000000890100000000000000000000000000000000000000000000000000000000000000000000010000000400f1ff00000000000000000000000000000000240000000000030000000000000000000000000000000000270000000200010000000000000000000e000000000000002f00000000000100000000000000000000000000000000003400000001001200000000000000000013000000000000004d000000000001000c00000000000000000000000000000050000000020001000e000000000000000e0000000000000058000000000001000e0000000000000000000000000000005d000000000001000e00000000000000000000000000000060000000010012001300000000000000130000000000000079000000000001001a0000000000000000000000000000007c000000020001001c000000000000000e0000000000000087000000000001001c0000000000000000000000000000008c000000000001001c0000000000000000000000000000008f0000000100120026000000000000001300000000000000ab0000000000010028000000000000000000000000000000ae000000020001002a000000000000000e00000000000000b7000000000001002a000000000000000000000000000000bc000000000001002a000000000000000000000000000000bf0000000100120039000000000000001300000000000000d90000000000010036000000000000000000000000000000dc0000000200010038000000000000000e00000000000000e90000000000010038000000000000000000000000000000ee0000000000010038000000000000000000000000000000f1000000010012004c0000000000000013000000000000000f0100000000010044000000000000000000000000000000120100000200010046000000000000000e000000000000001d010000000001004600000000000000000000000000000022010000000001004600000000000000000000000000000025010000010012005f000000000000001300000000000000410100000000010052000000000000000000000000000000440100000200010054000000000000000e000000000000005101000000000100540000000000000000000000000000005601000000000100540000000000000000000000000000005901000001001200720000000000000013000000000000007701000000000100600000000000000000000000000000007a0100000200010062000000000000000e000000000000008901000000000100620000000000000000000000000000008e0100000000010062000000000000000000000000000000910100000100120098000000000000001300000000000000b1010000000001006e000000000000000000000000000000b40100000200010070000000000000000e00000000000000c30100000000010070000000000000000000000000000000c80100000000010070000000000000000000000000000000cb01000001001200ab000000000000001300000000000000eb010000000001007c000000000000000000000000000000ee010000020001007e000000000000000e00000000000000fd010000000001007e00000000000000000000000000000002020000000001007e0000000000000000000000000000000502000001001200be00000000000000130000000000000025020000000001008a00000000000000000000000000000028020000020001008c000000000000000e0000000000000031020000000001008c00000000000000000000000000000036020000000001008c00000000000000000000000000000039020000010012008500000000000000130000000000000053020000000001009800000000000000000000000000000056020000020001009a000000000000000e000000000000005d020000000001009a00000000000000000000000000000062020000000001009a0000000000000000000000000000006502000001001200d10000000000000013000000000000007d02000000000100a60000000000000000000000000000008002000002000100a8000000000000000e000000000000008902000000000100a80000000000000000000000000000008e02000000000100a80000000000000000000000000000009102000001001200e4000000000000001300000000000000ab02000000000100b4000000000000000000000000000000ae02000002000100b6000000000000000e00000000000000b802000000000100b6000000000000000000000000000000bd02000000000100b6000000000000000000000000000000c0020000010012000a010000000000001300000000000000db02000000000100c2000000000000000000000000000000de02000002000100c4000000000000000e00000000000000e802000000000100c4000000000000000000000000000000ed02000000000100c4000000000000000000000000000000f002000001001200f70000000000000013000000000000000b03000000000100d00000000000000000000000000000000e03000002000100d2000000000000000e000000000000001e03000000000100d20000000000000000000000000000002303000000000100d200000000000000000000000000000026030000010012001d0100000000000013000000000000004703000000000100de0000000000000000000000000000004a03000002000100e0000000000000000e000000000000005c03000000000100e00000000000000000000000000000006103000000000100e00000000000000000000000000000006403000001001200300100000000000013000000000000008703000000000100ec0000000000000000000000000000008a03000002000100ee000000000000000e000000000000009803000000000100ee0000000000000000000000000000009d03000000000100ee000000000000000000000000000000a00300000100120043010000000000001300000000000000bf03000000000100fa000000000000000000000000000000c203000002000100fc000000000000000e00000000000000cc03000000000100fc000000000000000000000000000000d103000000000100fc000000000000000000000000000000d40300000100120056010000000000001300000000000000ef0300000000010008010000000000000000000000000000f2030000020001000a010000000000000e00000000000000fc030000000001000a01000000000000000000000000000001040000000001000a0100000000000000000000000000000404000001001200690100000000000013000000000000001f0400000000010016010000000000000000000000000000220400000200010018010000000000000e000000000000003504000000000100180100000000000000000000000000003a04000000000100180100000000000000000000000000003d040000010012007c010000000000001300000000000000610400000000010024010000000000000000000000000000640400000200010026010000000000000e000000000000007804000000000100260100000000000000000000000000007d040000000001002601000000000000000000000000000080040000010012008f010000000000001300000000000000a50400000000010032010000000000000000000000000000a80400000200010034010000000000000e00000000000000b80400000000010034010000000000000000000000000000bd0400000000010034010000000000000000000000000000c004000001001200a2010000000000001300000000000000e10400000000010040010000000000000000000000000000e40400000200010042010000000000000e00000000000000f00400000000010042010000000000000000000000000000f50400000000010042010000000000000000000000000000f804000001001200b501000000000000130000000000000015050000000001004e010000000000000000000000000000180500000200010050010000000000000e000000000000001c05000000000100500100000000000000000000000000002105000000000100500100000000000000000000000000002405000001001200c801000000000000130000000000000039050000000001005c0100000000000000000000000000003c050000020001005e010000000000000e0000000000000043050000000001005e01000000000000000000000000000048050000000001005e0100000000000000000000000000004b05000001001200db01000000000000130000000000000063050000000001006a01000000000000000000000000000066050000020001006c010000000000000e0000000000000074050000000001006c01000000000000000000000000000079050000000001006c0100000000000000000000000000007c05000001001200010200000000000013000000000000009b05000000000100780100000000000000000000000000009e050000020001007a010000000000000e00000000000000af050000000001007a010000000000000000000000000000b4050000000001007a010000000000000000000000000000b70500000100120014020000000000001300000000000000d90500000000010086010000000000000000000000000000dc0500000200010088010000000000000e00000000000000ed0500000000010088010000000000000000000000000000f20500000000010088010000000000000000000000000000f505000001001200270200000000000013000000000000001706000000000100940100000000000000000000000000001a0600000200010096010000000000000e000000000000002606000000000100960100000000000000000000000000002b06000000000100960100000000000000000000000000002e06000001001200ee0100000000000013000000000000004b06000000000100a20100000000000000000000000000004e06000002000100a4010000000000000e000000000000006106000000000100a40100000000000000000000000000006606000000000100a401000000000000000000000000000069060000010012003a0200000000000013000000000000008d06000000000100b00100000000000000000000000000009006000002000100b2010000000000000e00000000000000a506000000000100b2010000000000000000000000000000aa06000000000100b2010000000000000000000000000000ad060000010012004d020000000000001300000000000000d306000000000100be010000000000000000000000000000d606000002000100c0010000000000000e00000000000000e006000000000100c0010000000000000000000000000000e506000000000100c0010000000000000000000000000000e806000001001200600200000000000013000000000000000307000000000100cc0100000000000000000000000000000607000002000100ce010000000000000e000000000000001807000000000100ce0100000000000000000000000000001d07000000000100ce0100000000000000000000000000002007000001001200730200000000000013000000000000004307000000000100da0100000000000000000000000000004607000000000100dc0100000000000000000000000000004b07000000000100f80100000000000000000000000000005007000000000100720200000000000000000000000000005507000000000400000000000000000000000000000000007a07000000000100ae0700000000000000000000000000007f07000000000100ae0700000000000000000000000000008407000000000100ae0700000000000000000000000000009007000000000100ae0700000000000000000000000000009507000000000100ae0700000000000000000000000000009807000000000100ae0700000000000000000000000000009d07000000000100cc070000000000000000000000000000a207000000000100ba070000000000000000000000000000ae07000000000100ce070000000000000000000000000000b307000000000100ce070000000000000000000000000000b80700000000060000000000000000000000000000000000d707000000000100ce070000000000000000000000000000dc07000000000100ce070000000000000000000000000000e107000000000100ce070000000000000000000000000000e407000000000100ce070000000000000000000000000000e907000000000100d8070000000000000000000000000000ee07000000000100da070000000000000000000000000000f307000000000100dc070000000000000000000000000000f8070000000001003a090000000000000000000000000000fd07000000000100400900000000000000000000000000000208000000000100400900000000000000000000000000000708000000000800000000000000000000000000000000002708000000000100400900000000000000000000000000002c080000000001004009000000000000000000000000000031080000000001004009000000000000000000000000000034080000000001004009000000000000000000000000000039080000000001004a0900000000000000000000000000003e080000000001004a09000000000000000000000000000043080000000001005609000000000000000000000000000048080000000001006c0a00000000000000000000000000004d08000000000100720a00000000000000000000000000005208000000000100720a00000000000000000000000000005708000000000a00000000000000000000000000000000007908000000000100720a00000000000000000000000000007e08000000000100720a00000000000000000000000000008308000000000100720a00000000000000000000000000008608000000000100720a00000000000000000000000000008b080000000001007c0a00000000000000000000000000009008000000000100820a00000000000000000000000000009508000000000100d80a00000000000000000000000000009a08000000000100e20a00000000000000000000000000009f08000000000100e20a0000000000000000000000000000a408000000000c0000000000000000000000000000000000c708000000000100e20a0000000000000000000000000000cc08000000000100e20a0000000000000000000000000000d108000000000100e20a0000000000000000000000000000d408000000000100e20a0000000000000000000000000000d908000000000100ea0a0000000000000000000000000000de08000000000100ee0a0000000000000000000000000000e308000000000100480b0000000000000000000000000000e808000000000100500b0000000000000000000000000000ed08000000000100500b0000000000000000000000000000f208000000000e00000000000000000000000000000000000909000000000100500b00000000000000000000000000000e09000000000100500b00000000000000000000000000001309000000000100500b00000000000000000000000000001609000000000100500b00000000000000000000000000001b09000000000100880b00000000000000000000000000002009000000000100540b00000000000000000000000000002509000000000100960b00000000000000000000000000002a09000000000100780b000000000000000000000000000036090000010015001000020000000000300000000000000047090000000001008a0b00000000000000000000000000005309000001001500000000000000000000000200000000006109000000000100980b00000000000000000000000000006609000000000100980b00000000000000000000000000006b09000000000100880200000000000000000000000000007009000000000100880200000000000000000000000000007509000000000100880200000000000000000000000000007a090000000001008e0200000000000000000000000000007f090000000001009202000000000000000000000000000084090000000001009a0200000000000000000000000000009009000000000100ac0200000000000000000000000000009509000002000100b402000000000000b001000000000000a0090000020001006404000000000000fe02000000000000ac09000000000100b4020000000000000000000000000000b109000000000100b4020000000000000000000000000000b609000000000100b4020000000000000000000000000000bb09000000000100b4020000000000000000000000000000c009000000000100b4020000000000000000000000000000c509000000000100c4020000000000000000000000000000ca09000000000100f4020000000000000000000000000000cf09000000000100ea020000000000000000000000000000d409000000000100ea020000000000000000000000000000e009000000000100ea020000000000000000000000000000e50900000000010090030000000000000000000000000000ea09000000000100f4020000000000000000000000000000ef09000000000100f4020000000000000000000000000000fb09000000000100f4020000000000000000000000000000000a00000000010002030000000000000000000000000000050a000000000100040300000000000000000000000000000a0a000000000100060300000000000000000000000000000f0a0000000001000e030000000000000000000000000000140a00000000010010030000000000000000000000000000190a000000000100140300000000000000000000000000001e0a0000000001002c030000000000000000000000000000230a0000000001005a030000000000000000000000000000280a0000000001004c0300000000000000000000000000002d0a00000000010050030000000000000000000000000000390a000000000100500300000000000000000000000000003e0a00000000010050030000000000000000000000000000430a0000000001005a030000000000000000000000000000480a0000000001005a0300000000000000000000000000004d0a00000000010072030000000000000000000000000000520a000000000100a0030000000000000000000000000000570a000000000100860300000000000000000000000000005c0a00000000010088030000000000000000000000000000680a000000000100880300000000000000000000000000006d0a00000000010088030000000000000000000000000000720a00000000010090030000000000000000000000000000770a000000000100960300000000000000000000000000007c0a000000000100a0030000000000000000000000000000810a0000020001007e070000000000001a00000000000000950a000000000100b00300000000000000000000000000009a0a000000000100ca0300000000000000000000000000009f0a000000000100d0030000000000000000000000000000a40a000000000100fe030000000000000000000000000000a90a00000000010016040000000000000000000000000000ae0a00000000010016040000000000000000000000000000b30a0000000001005c040000000000000000000000000000b80a00000000010028040000000000000000000000000000bd0a00000000010028040000000000000000000000000000c90a00000000010032040000000000000000000000000000ce0a00000000010032040000000000000000000000000000d30a00000000010040040000000000000000000000000000d80a0000000001004a040000000000000000000000000000dd0a0000000001004a040000000000000000000000000000e20a0000000001005c040000000000000000000000000000e70a00000000010064040000000000000000000000000000ec0a00000000010064040000000000000000000000000000f10a00000000010064040000000000000000000000000000f60a00000000010064040000000000000000000000000000fb0a00000000010064040000000000000000000000000000000b00000000010064040000000000000000000000000000050b000000000100780400000000000000000000000000000a0b00000000010092040000000000000000000000000000170b000000000100920400000000000000000000000000001c0b00000000010092060000000000000000000000000000210b000000000100a0040000000000000000000000000000260b000000000100a40400000000000000000000000000002b0b0000000001004c060000000000000000000000000000300b000000000100c6040000000000000000000000000000350b000000000100ca0400000000000000000000000000003a0b0000000001009c0600000000000000000000000000003f0b000000000100d0040000000000000000000000000000440b000000000100d4040000000000000000000000000000490b000000000100dc0400000000000000000000000000004e0b000000000100f4040000000000000000000000000000530b00000200010098070000000000001600000000000000670b000000000100160500000000000000000000000000006c0b00000000010028050000000000000000000000000000710b00000000010050050000000000000000000000000000760b0000000001009e050000000000000000000000000000830b000000000100ac060000000000000000000000000000880b000000000100c20500000000000000000000000000008d0b000000000100c4050000000000000000000000000000920b000000000100e4050000000000000000000000000000970b000000000100f20500000000000000000000000000009c0b000000000100f2050000000000000000000000000000a10b000000000100e2060000000000000000000000000000a60b00000000010006060000000000000000000000000000ab0b00000000010008060000000000000000000000000000b00b00000000010008060000000000000000000000000000b50b00000000010012060000000000000000000000000000ba0b000000000100b8060000000000000000000000000000bf0b0000000001004c060000000000000000000000000000c40b00000000010054060000000000000000000000000000c90b00000000010058060000000000000000000000000000ce0b000000000100ea060000000000000000000000000000d30b00000000010088060000000000000000000000000000d80b00000000010088060000000000000000000000000000e50b00000000010088060000000000000000000000000000ea0b000000000100a4060000000000000000000000000000ef0b00000000010092060000000000000000000000000000f40b00000000010092060000000000000000000000000000010c0000000001009c060000000000000000000000000000060c0000000001009c060000000000000000000000000000130c000000000100a4060000000000000000000000000000180c000000000100ac0600000000000000000000000000001d0c000000000100ae060000000000000000000000000000220c000000000100b8060000000000000000000000000000270c000000000100b80600000000000000000000000000002c0c000000000100c2060000000000000000000000000000310c000000000100c2060000000000000000000000000000360c000000000100e20600000000000000000000000000003b0c000000000100ec060000000000000000000000000000400c000000000100fe060000000000000000000000000000450c000000000100f00600000000000000000000000000004a0c000000000100f4060000000000000000000000000000570c000000000100f40600000000000000000000000000005c0c000000000100f4060000000000000000000000000000610c000000000100fe060000000000000000000000000000660c000000000100060700000000000000000000000000006b0c0000000001001a070000000000000000000000000000700c00000000010036070000000000000000000000000000750c000000000100360700000000000000000000000000007a0c00000000010048070000000000000000000000000000870c000000000100620700000000000000000000000000008c0c00000000010062070000000000000000000000000000910c00000000010062070000000000000000000000000000960c00000200010062070000000000000000000000000000ac0c00000000010062070000000000000000000000000000b10c00000000100000000000000000000000000000000000b40c00000100120086020000000000001300000000000000cc0c00000200010070070000000000000e00000000000000d30c00000200010062070000000000000000000000000000e90c00000000010062070000000000000000000000000000ee0c00000000100011000000000000000000000000000000f10c00000100120099020000000000001300000000000000070d00000200010062070000000000000e000000000000000c0d00000000010062070000000000000000000000000000110d00000000010062070000000000000000000000000000140d00000000010070070000000000000000000000000000190d000000000100700700000000000000000000000000001e0d0000000001007e070000000000000000000000000000230d0000000001007e070000000000000000000000000000280d0000000001007e0700000000000000000000000000002d0d0000000001007e070000000000000000000000000000320d00000000010098070000000000000000000000000000370d000000000100980700000000000000000000000000003c0d00000000010098070000000000000000000000000000410d000000000100ae070000000000000000000000000000460d00000000120000000000000000000000000000000000490d000001001400b0010000000000000800000000000000500d00000100140037000000000000000800000000000000590d0000010014003f000000000000000b00000000000000620d000001001400b80100000000000009000000000000006b0d00000100140018000000000000000d00000000000000740d000001001400b5000000000000000b000000000000007d0d0000010014004f010000000000000d00000000000000860d000001001400590000000000000009000000000000008f0d0000010014004a000000000000000f00000000000000980d0000010014005c010000000000000f00000000000000a10d0000010014006b010000000000000f00000000000000ab0d000001001400c0000000000000000700000000000000b50d00000100140011010000000000000900000000000000bf0d0000010014008b000000000000000a00000000000000c90d00000100140062000000000000000a00000000000000d30d000001001400a1000000000000001000000000000000dd0d000001001400ff000000000000001200000000000000e70d0000010014006c000000000000000e00000000000000f10d00000100140000000000000000000a00000000000000fb0d0000010014003e010000000000000a00000000000000050e0000010014002b0100000000000013000000000000000f0e000001001400e4000000000000001400000000000000190e0000010014008b010000000000001000000000000000230e00000100140095000000000000000c000000000000002d0e000001001400b1000000000000000400000000000000370e000001001400f8000000000000000700000000000000410e0000010014001f010000000000000c000000000000004b0e0000010014000a000000000000000e00000000000000550e0000010014007a0000000000000011000000000000005f0e0000010014007a010000000000001100000000000000690e000001001400c7000000000000001300000000000000730e0000010014009b0100000000000015000000000000007d0e000001001400da000000000000000a00000000000000870e00000100140025000000000000001200000000000000910e000000001400b0010000000000000000000000000000940e00000000150000000000000000000000000000000000970e00000100140048010000000000000700000000000000a10e0000010014001a010000000000000500000000000000ac0e00000100150010000200000000000400000000000000b90e00000100150014000200000000000400000000000000c50e00000100150020000200000000002000000000000000da0e00000000160000000000000000000000000000000000dd0e00000000170000000000000000000000000000000000e20e00000000170000000000000000000000000000000000e50e00000000220000000000000000000000000000000000f90e00000000190060000000000000000000000000000000fe0e00000000190000000000000000000000000000000000030f00000000190030000000000000000000000000000000080f000000001900000000000000000000000000000000000b0f000000001b005d0000000000000000000000000000000e0f000000001c0000000000000000000000000000000000110f000000001e0000000000000000000000000000000000140f00000000200000000000000000000000000000000000170f000000002000010000000000000000000000000000001a0f00000000f1ff000000000000000000000000000000001d0f000000002200000000000000000000000000000000000000000003000100000000000000000000000000000000000000000003000300000000000000000000000000000000000000000003000400000000000000000000000000000000000000000003000600000000000000000000000000000000000000000003000800000000000000000000000000000000000000000003000a00000000000000000000000000000000000000000003000c00000000000000000000000000000000000000000003000e00000000000000000000000000000000000000000003001000000000000000000000000000000000000000000003001200000000000000000000000000000000000000000003001500000000000000000000000000000000000000000003001600000000000000000000000000000000000000000003001700000000000000000000000000000000000000000003001900000000000000000000000000000000000000000003001c00000000000000000000000000000000000000000003001e0000000000000000000000000000000000000000000300220000000000000000000000000000000000200f00000400f1ff00000000000000000000000000000000280f00000000f1ff000000000000000000000000000000000000000003001400000000000000000000000000000000000000000003001b00000000000000000000000000000000000000000003002000000000000000000000000000000000002b0f000012000100dc010000000000001c00000000000000320f000012000100f8010000000000007a000000000000003a0f00001200010072020000000000001600000000000000410f000022000100ae0700000000000020000000000000005f0f00001100150000000200000000000400000000000000750f000011001500000002000000000000000000000000008a0f000022000100ce070000000000007201000000000000a20f000022000100500b0000000000004800000000000000b20f00002200010040090000000000003201000000000000cb0f000022000100720a0000000000007000000000000000e60f000022000100e20a0000000000006e00000000000000021000001200010088020000000000002c00000000000000002e74657874002e72656c612e74657874002e706f6c6b61766d5f6d696e5f737461636b5f73697a65002e67726f7570002e706f6c6b61766d5f6578706f727473002e72656c612e706f6c6b61766d5f6578706f727473002e706f6c6b61766d5f6d65746164617461002e72656c612e706f6c6b61766d5f6d65746164617461002e726f646174612e737472312e31002e627373002e64656275675f616262726576002e64656275675f696e666f002e72656c612e64656275675f696e666f002e64656275675f72616e676573002e72656c612e64656275675f72616e676573002e64656275675f737472002e64656275675f7075626e616d6573002e72656c612e64656275675f7075626e616d6573002e64656275675f7075627479706573002e72656c612e64656275675f7075627479706573002e636f6d6d656e74002e72697363762e61747472696275746573002e64656275675f6c696e65002e72656c612e64656275675f6c696e65002e6e6f74652e474e552d737461636b002e73796d746162002e7368737472746162002e73747274616200006261645f64656275675f696e666f2e736f6c3a5472616e736665724578616d706c650024640061646472657373002e4c302000616464726573735f5f494d504f52545f4d455441444154410024780062616c616e6365002e4c30200024640062616c616e63655f5f494d504f52545f4d455441444154410024780062616c616e63655f6f66002e4c30200024640062616c616e63655f6f665f5f494d504f52545f4d4554414441544100247800626173655f666565002e4c302000246400626173655f6665655f5f494d504f52545f4d4554414441544100247800626c6f636b5f617574686f72002e4c302000246400626c6f636b5f617574686f725f5f494d504f52545f4d4554414441544100247800626c6f636b5f68617368002e4c302000246400626c6f636b5f686173685f5f494d504f52545f4d4554414441544100247800626c6f636b5f6e756d626572002e4c302000246400626c6f636b5f6e756d6265725f5f494d504f52545f4d455441444154410024780063616c6c5f646174615f636f7079002e4c30200024640063616c6c5f646174615f636f70795f5f494d504f52545f4d455441444154410024780063616c6c5f646174615f6c6f6164002e4c30200024640063616c6c5f646174615f6c6f61645f5f494d504f52545f4d455441444154410024780063616c6c5f646174615f73697a65002e4c30200024640063616c6c5f646174615f73697a655f5f494d504f52545f4d455441444154410024780063616c6c5f65766d002e4c30200024640063616c6c5f65766d5f5f494d504f52545f4d455441444154410024780063616c6c6572002e4c30200024640063616c6c65725f5f494d504f52545f4d4554414441544100247800636861696e5f6964002e4c302000246400636861696e5f69645f5f494d504f52545f4d4554414441544100247800636f64655f68617368002e4c302000246400636f64655f686173685f5f494d504f52545f4d4554414441544100247800636f64655f73697a65002e4c302000246400636f64655f73697a655f5f494d504f52545f4d4554414441544100247800636f6e73756d655f616c6c5f676173002e4c302000246400636f6e73756d655f616c6c5f6761735f5f494d504f52545f4d455441444154410024780064656c65676174655f63616c6c5f65766d002e4c30200024640064656c65676174655f63616c6c5f65766d5f5f494d504f52545f4d45544144415441002478006465706f7369745f6576656e74002e4c3020002464006465706f7369745f6576656e745f5f494d504f52545f4d45544144415441002478006761735f6c696d6974002e4c3020002464006761735f6c696d69745f5f494d504f52545f4d45544144415441002478006761735f7072696365002e4c3020002464006761735f70726963655f5f494d504f52545f4d45544144415441002478006765745f696d6d757461626c655f64617461002e4c3020002464006765745f696d6d757461626c655f646174615f5f494d504f52545f4d45544144415441002478006765745f73746f726167655f6f725f7a65726f002e4c3020002464006765745f73746f726167655f6f725f7a65726f5f5f494d504f52545f4d4554414441544100247800686173685f6b656363616b5f323536002e4c302000246400686173685f6b656363616b5f3235365f5f494d504f52545f4d4554414441544100247800696e7374616e7469617465002e4c302000246400696e7374616e74696174655f5f494d504f52545f4d45544144415441002478006e6f77002e4c3020002464006e6f775f5f494d504f52545f4d45544144415441002478006f726967696e002e4c3020002464006f726967696e5f5f494d504f52545f4d45544144415441002478007265665f74696d655f6c656674002e4c3020002464007265665f74696d655f6c6566745f5f494d504f52545f4d455441444154410024780072657475726e5f646174615f636f7079002e4c30200024640072657475726e5f646174615f636f70795f5f494d504f52545f4d455441444154410024780072657475726e5f646174615f73697a65002e4c30200024640072657475726e5f646174615f73697a655f5f494d504f52545f4d45544144415441002478007365616c5f72657475726e002e4c3020002464007365616c5f72657475726e5f5f494d504f52545f4d45544144415441002478007365745f696d6d757461626c655f64617461002e4c3020002464007365745f696d6d757461626c655f646174615f5f494d504f52545f4d45544144415441002478007365745f73746f726167655f6f725f636c656172002e4c3020002464007365745f73746f726167655f6f725f636c6561725f5f494d504f52545f4d45544144415441002478007465726d696e617465002e4c3020002464007465726d696e6174655f5f494d504f52545f4d455441444154410024780076616c75655f7472616e73666572726564002e4c30200024640076616c75655f7472616e736665727265645f5f494d504f52545f4d45544144415441002478002e4c3020002e4c3020002e4c3020005f5f7265766976655f73746f72655f696d6d757461626c655f646174615f636f6d646174002e4c3020002e4c3020002e4c706372656c5f686930002e4c3020002478002e4c3020002e4c3020002e4c706372656c5f686931002e4c3020002e4c3020005f5f7265766976655f6c6f61645f686561705f776f72645f636f6d646174002e4c3020002e4c3020002478002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020005f5f7265766976655f73746f72655f686561705f776f72645f636f6d646174002e4c3020002e4c3020002478002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020005f5f7265766976655f6c6f61645f73746f726167655f776f72645f636f6d646174002e4c3020002e4c3020002478002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020005f5f7265766976655f73746f72655f73746f726167655f776f72645f636f6d646174002e4c3020002e4c3020002478002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020005f5f7362726b5f696e7465726e616c5f636f6d646174002e4c3020002e4c3020002478002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f686933002e4c5f4d6572676564476c6f62616c73002e4c706372656c5f686932005f5f686561705f6d656d6f7279002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f686934002e4c3020002e4c5f5f6465706c6f79002e4c5f5f72756e74696d65002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f686935002e4c3020002e4c3020002e4c3020002e4c706372656c5f686936002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f686937002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f686938002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020004f55544c494e45445f46554e4354494f4e5f30002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f686939002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f68693130002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020004f55544c494e45445f46554e4354494f4e5f31002e4c3020002e4c3020002e4c3020002e4c706372656c5f68693136002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f68693132002e4c3020002e4c3020002e4c3020002e4c706372656c5f68693131002e4c3020002e4c706372656c5f68693135002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f68693133002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c706372656c5f68693134002e4c3020002e4c3020002e4c302000706f6c6b61766d5f6578706f72745f64756d6d7930002e4c3020002464006465706c6f795f5f4558504f52545f4d45544144415441006465706c6f7900706f6c6b61766d5f6578706f72745f64756d6d7931002e4c30200024640063616c6c5f5f4558504f52545f4d455441444154410063616c6c002e4c3020002478002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002e4c3020002464002e4c2e737472002e4c2e7374722e31002e4c2e7374722e32002e4c2e7374722e33002e4c2e7374722e34002e4c2e7374722e35002e4c2e7374722e36002e4c2e7374722e37002e4c2e7374722e38002e4c2e7374722e39002e4c2e7374722e3130002e4c2e7374722e3131002e4c2e7374722e3132002e4c2e7374722e3133002e4c2e7374722e3134002e4c2e7374722e3135002e4c2e7374722e3136002e4c2e7374722e3137002e4c2e7374722e3138002e4c2e7374722e3139002e4c2e7374722e3230002e4c2e7374722e3231002e4c2e7374722e3232002e4c2e7374722e3233002e4c2e7374722e3234002e4c2e7374722e3235002e4c2e7374722e3236002e4c2e7374722e3237002e4c2e7374722e3238002e4c2e7374722e3239002e4c2e7374722e3330002e4c2e7374722e3331002e4c2e7374722e3332002e4c2e7374722e3333002464002464002e4c2e7374722e3334002e4c2e7374722e312e320063616c6c6461746173697a65005f5f686561705f73697a6500616464726573735f7370696c6c5f627566666572002464002e4c3020002464002e4c6c696e655f7461626c655f737461727430002e4c3020002e4c3020002e4c30200024640024640024640024640024640024640024640024640073796d626f6c73002464006d656d637079006d656d6d6f7665006d656d736574005f5f7265766976655f73746f72655f696d6d757461626c655f64617461005f5f696d6d757461626c655f646174615f73697a65005f5f696d6d757461626c655f646174615f707472005f5f7265766976655f6c6f61645f686561705f776f7264005f5f7362726b5f696e7465726e616c005f5f7265766976655f73746f72655f686561705f776f7264005f5f7265766976655f6c6f61645f73746f726167655f776f7264005f5f7265766976655f73746f72655f73746f726167655f776f7264005f5f656e74727900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000001000000060200000000000000000000000000004000000000000000980b00000000000000000000000000000200000000000000000000000000000007000000040000004000000000000000000000000000000048100000000000000012000000000000250000000100000008000000000000001800000000000000120000000100000000000000000000000000000000000000482200000000000004000000000000000000000000000000010000000000000000000000000000002a00000011000000000000000000000000000000000000004c220000000000000c0000000000000025000000af000000040000000000000004000000000000000700000004000000400200000000000000000000000000005822000000000000d8000000000000002500000001000000080000000000000018000000000000002a000000110000000000000000000000000000000000000030230000000000000c0000000000000025000000ba00000004000000000000000400000000000000070000000400000040020000000000000000000000000000402300000000000030000000000000002500000001000000080000000000000018000000000000002a000000110000000000000000000000000000000000000070230000000000000c0000000000000025000000c500000004000000000000000400000000000000070000000400000040020000000000000000000000000000802300000000000030000000000000002500000001000000080000000000000018000000000000002a0000001100000000000000000000000000000000000000b0230000000000000c0000000000000025000000d000000004000000000000000400000000000000070000000400000040020000000000000000000000000000c02300000000000030000000000000002500000001000000080000000000000018000000000000002a0000001100000000000000000000000000000000000000f0230000000000000c0000000000000025000000da00000004000000000000000400000000000000070000000400000040020000000000000000000000000000002400000000000030000000000000002500000001000000080000000000000018000000000000002a000000110000000000000000000000000000000000000030240000000000000c0000000000000025000000e40000000400000000000000040000000000000007000000040000004002000000000000000000000000000040240000000000006801000000000000250000000100000008000000000000001800000000000000310000000700000000002000000000000000000000000000a8250000000000002200000000000000000000000000000001000000000000000000000000000000420000000400000040000000000000000000000000000000d0250000000000006000000000000000250000001000000008000000000000001800000000000000580000000100000003000000000000000000000000000000d80b000000000000ac020000000000000000000000000000010000000000000000000000000000006a000000040000004000000000000000000000000000000030260000000000006003000000000000250000001200000008000000000000001800000000000000810000000100000032000000000000000000000000000000840e000000000000c101000000000000000000000000000001000000000000000100000000000000900000000800000003000000000000000000000000000000451000000000000040000200000000000000000000000000100000000000000000000000000000009500000001000000000000000000000000000000000000009029000000000000c800000000000000000000000000000001000000000000000000000000000000a30000000100000000000000000000000000000000000000582a000000000000e802000000000000000000000000000001000000000000000000000000000000af0000000400000040000000000000000000000000000000402d000000000000c009000000000000250000001700000008000000000000001800000000000000c000000001000000000000000000000000000000000000000037000000000000f000000000000000000000000000000001000000000000000000000000000000ce0000000400000040000000000000000000000000000000f0370000000000004002000000000000250000001900000008000000000000001800000000000000e10000000100000030000000000000000000000000000000303a0000000000004301000000000000000000000000000001000000000000000100000000000000ec0000000100000000000000000000000000000000000000733b0000000000004301000000000000000000000000000001000000000000000000000000000000fc0000000400000040000000000000000000000000000000b83c0000000000001800000000000000250000001c00000008000000000000001800000000000000110100000100000000000000000000000000000000000000d03c0000000000001b00000000000000000000000000000001000000000000000000000000000000210100000400000040000000000000000000000000000000f03c0000000000001800000000000000250000001e00000008000000000000001800000000000000360100000100000030000000000000000000000000000000083d0000000000007e000000000000000000000000000000010000000000000001000000000000003f0100000300007000000000000000000000000000000000863d0000000000006600000000000000000000000000000001000000000000000000000000000000510100000100000000000000000000000000000000000000ec3d00000000000013030000000000000000000000000000010000000000000000000000000000005d01000004000000400000000000000000000000000000000041000000000000e00d0000000000002500000022000000080000000000000018000000000000006e0100000100000000000000000000000000000000000000e04e00000000000000000000000000000000000000000000010000000000000000000000000000007e0100000200000000000000000000000000000000000000e04e000000000000d82d00000000000027000000dd01000008000000000000001800000000000000860100000300000000000000000000000000000000000000b87c0000000000009801000000000000000000000000000001000000000000000000000000000000900100000300000000000000000000000000000000000000507e0000000000000a10000000000000000000000000000001000000000000000000000000000000";
+        var customElfHex = null;
+        var rpcUrl = "http://127.0.0.1:8545";
+        var isNodeOnline = false;
+
+        // Devnet address details
+        var legacyDevAddress = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        var derivedDevAddress = "0x0000000000000000000000000000000000000000";
+
+        // DOM Elements
+        const statusDot = document.getElementById("statusDot");
+        const statusText = document.getElementById("statusText");
+        const blockHeightEl = document.getElementById("blockHeight");
+        const chainIdEl = document.getElementById("chainIdVal");
+        const legacyBalEl = document.getElementById("legacyBal");
+        const derivedBalEl = document.getElementById("derivedBal");
+        const consoleLog = document.getElementById("consoleLog");
+        const sandboxContractAddr = document.getElementById("sandboxContractAddr");
+
+        // Logging helper
+        function logMsg(msg, type = "info") {
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement("div");
+            div.className = "console-line";
+            
+            let colorClass = "console-info";
+            if (type === "success") colorClass = "console-success";
+            if (type === "error") colorClass = "console-error";
+            if (type === "warn") colorClass = "console-warn";
+
+            div.innerHTML = `<span class="console-time">[${time}]</span><span class="${colorClass}">${msg}</span>`;
+            consoleLog.appendChild(div);
+            consoleLog.scrollTop = consoleLog.scrollHeight;
+        }
+
+        // Copy text helper
+        function copyText(elemId) {
+            const text = document.getElementById(elemId).innerText;
+            navigator.clipboard.writeText(text);
+            logMsg(`Copied address: ${text}`, "info");
+        }
+
+        // Tab switcher
+        function switchTab(group, tabId, button) {
+            // Deactivate all in group
+            document.querySelectorAll(`.${group}`).forEach(el => el.classList.remove('active'));
+            // Activate selected
+            document.getElementById(`${tabId}Tab`).classList.add('active');
+            
+            // Toggle active state on buttons
+            button.parentElement.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            button.classList.add('active');
+        }
+
+        // Fetch wrapper for JSON-RPC
+        async function sendRpc(method, params = []) {
+            try {
+                const response = await fetch(rpcUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0",
+                        method: method,
+                        params: params,
+                        id: Date.now()
+                    })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
+                return data.result;
+            } catch (err) {
+                throw err;
+            }
+        }
+
+        // Format BigInt hex strings to readable decimals
+        function formatWei(hexVal) {
+            if (!hexVal || hexVal === "0x") return "0";
+            const cleanHex = hexVal.startsWith("0x") ? hexVal.substring(2) : hexVal;
+            const wei = BigInt("0x" + cleanHex);
+            // Convert to Eth units (18 decimal places)
+            const eth = Number(wei) / 1e18;
+            return eth.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+        }
+
+        // Convert decimal ZEPH value to hex wei
+        function toWeiHex(zephVal) {
+            if (!zephVal || isNaN(zephVal)) return "0x0";
+            const wei = BigInt(Math.floor(parseFloat(zephVal) * 1e18));
+            return "0x" + wei.toString(16);
+        }
+
+        // Check node connectivity
+        async function updateStatus() {
+            try {
+                // Query Chain ID and Block Number
+                const chainIdHex = await sendRpc("eth_chainId");
+                const blockNumHex = await sendRpc("eth_blockNumber");
+                
+                const chainId = parseInt(chainIdHex, 16);
+                const blockNum = parseInt(blockNumHex, 16);
+
+                chainIdEl.innerText = `${chainId} (Hex: ${chainIdHex})`;
+                blockHeightEl.innerText = `#${blockNum}`;
+
+                if (!isNodeOnline) {
+                    isNodeOnline = true;
+                    statusDot.classList.add("online");
+                    statusText.innerText = "Node Online";
+                    logMsg(`Connected successfully to Zephyria L1 Devnet (Chain ID: ${chainId})`, "success");
+                    
+                    // Fetch derived address
+                    const accounts = await sendRpc("eth_accounts");
+                    // Fetch Blake3 derived account address by checking net_version/net_peerCount or simple static key derivation
+                    // The derived address is generated on startup by the node from the dev seed, let's query it!
+                    // In Zephyria, eth_accounts contains [derived_addr]
+                    if (accounts && accounts.length > 0) {
+                        derivedDevAddress = accounts[0];
+                        document.getElementById("derivedAddr").innerText = derivedDevAddress;
+                    }
+                }
+
+                // Query account balances
+                const legacyBalHex = await sendRpc("eth_getBalance", [legacyDevAddress, "latest"]);
+                legacyBalEl.innerText = formatWei(legacyBalHex);
+
+                const derivedBalHex = await sendRpc("eth_getBalance", [derivedDevAddress, "latest"]);
+                derivedBalEl.innerText = formatWei(derivedBalHex);
+
+            } catch (err) {
+                if (isNodeOnline || statusText.innerText.startsWith("Connecting")) {
+                    isNodeOnline = false;
+                    statusDot.classList.remove("online");
+                    statusText.innerText = "Node Offline";
+                    logMsg(`Disconnected from node. Make sure Zephyria node is running at ${rpcUrl}.`, "error");
+                }
+                blockHeightEl.innerText = "-";
+                chainIdEl.innerText = "-";
+                legacyBalEl.innerText = "-";
+                derivedBalEl.innerText = "-";
+            }
+        }
+
+        // Drag & drop file handlers
+        const dropzone = document.getElementById("dropzone");
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropzone.classList.add('dragover');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('dragover');
+            }, false);
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                processElfFile(files[0]);
+            }
+        });
+
+        function handleFileSelect(event) {
+            const files = event.target.files;
+            if (files.length > 0) {
+                processElfFile(files[0]);
+            }
+        }
+
+        function processElfFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                const bytes = new Uint8Array(arrayBuffer);
+                
+                // Validate ELF Magic Bytes (0x7F 0x45 0x4C 0x46)
+                if (bytes.length < 4 || bytes[0] !== 0x7F || bytes[1] !== 0x45 || bytes[2] !== 0x4C || bytes[3] !== 0x46) {
+                    logMsg(`Invalid file. The uploaded binary does not contain valid ELF magic headers.`, "error");
+                    document.getElementById("fileInfo").style.display = "none";
+                    document.getElementById("btnDeployCustom").disabled = true;
+                    return;
+                }
+
+                // Convert bytes to hex string
+                let hexStr = "";
+                for (let i = 0; i < bytes.length; i++) {
+                    let h = bytes[i].toString(16);
+                    if (h.length === 1) h = "0" + h;
+                    hexStr += h;
+                }
+                
+                customElfHex = "0x" + hexStr;
+                document.getElementById("fileInfo").innerText = `${file.name} (${(bytes.length / 1024).toFixed(1)} KB)`;
+                document.getElementById("fileInfo").style.display = "block";
+                document.getElementById("btnDeployCustom").disabled = false;
+                logMsg(`Loaded custom ELF: ${file.name} (${bytes.length} bytes)`, "info");
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // Deploy prepackaged contract
+        async function deployPackagedContract() {
+            if (!isNodeOnline) {
+                logMsg("Cannot deploy. Node is offline.", "error");
+                return;
+            }
+            if (EMBEDDED_ELF_HEX.startsWith("{{")) {
+                logMsg("Template error. Pre-packaged contract hex placeholder has not been replaced by build script.", "error");
+                return;
+            }
+            
+            const gas = parseInt(document.getElementById("packGas").value);
+            const valZeph = parseFloat(document.getElementById("packValue").value);
+            const valWeiHex = toWeiHex(valZeph);
+
+            logMsg("Submitting deployment tx for pre-packaged PolkaVM contract...", "info");
+            
+            try {
+                // Send deployment transaction (to is null, data contains ELF binary)
+                const txHash = await sendRpc("eth_sendTransaction", [{
+                    from: legacyDevAddress,
+                    to: "",
+                    gas: "0x" + gas.toString(16),
+                    value: valWeiHex,
+                    data: EMBEDDED_ELF_HEX.startsWith("0x") ? EMBEDDED_ELF_HEX : "0x" + EMBEDDED_ELF_HEX
+                }]);
+
+                logMsg(`Deployment transaction submitted. Tx Hash: ${txHash}`, "info");
+                logMsg("Waiting for transaction receipt...", "info");
+                
+                // Poll receipt
+                pollReceipt(txHash);
+
+            } catch (err) {
+                logMsg(`Deployment failed: ${err.message}`, "error");
+            }
+        }
+
+        // Deploy custom contract
+        async function deployCustomContract() {
+            if (!isNodeOnline || !customElfHex) return;
+            
+            const gas = parseInt(document.getElementById("customGas").value);
+            const valZeph = parseFloat(document.getElementById("customValue").value);
+            const valWeiHex = toWeiHex(valZeph);
+
+            logMsg("Submitting deployment tx for uploaded custom PolkaVM contract...", "info");
+            
+            try {
+                const txHash = await sendRpc("eth_sendTransaction", [{
+                    from: legacyDevAddress,
+                    to: "",
+                    gas: "0x" + gas.toString(16),
+                    value: valWeiHex,
+                    data: customElfHex
+                }]);
+
+                logMsg(`Custom deployment transaction submitted. Tx Hash: ${txHash}`, "info");
+                logMsg("Waiting for transaction receipt...", "info");
+                
+                pollReceipt(txHash);
+
+            } catch (err) {
+                logMsg(`Deployment failed: ${err.message}`, "error");
+            }
+        }
+
+        // Receipt polling helper
+        async function pollReceipt(txHash) {
+            let attempts = 0;
+            const maxAttempts = 30; // 15 seconds
+            
+            const interval = setInterval(async () => {
+                attempts++;
+                try {
+                    const receipt = await sendRpc("eth_getTransactionReceipt", [txHash]);
+                    if (receipt) {
+                        clearInterval(interval);
+                        
+                        const status = parseInt(receipt.status, 16);
+                        const contractAddr = receipt.contractAddress;
+                        
+                        if (status === 1) {
+                            logMsg(`Transaction MINED SUCCESSFULLY. Gas Used: ${parseInt(receipt.gasUsed, 16)}`, "success");
+                            if (contractAddr) {
+                                logMsg(`CONTRACT DEPLOYED AT: ${contractAddr}`, "success");
+                                sandboxContractAddr.value = contractAddr;
+                            }
+                        } else {
+                            logMsg("Transaction REVERTED during execution.", "error");
+                        }
+                    }
+                } catch (err) {
+                    // Ignore errors during polling
+                }
+                
+                if (attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    logMsg("Transaction receipt timeout. Check node logs for status.", "warn");
+                }
+            }, 500);
+        }
+
+        // Invoke Deployed Contract Methods
+        async function invokeContract(isReadCall) {
+            if (!isNodeOnline) {
+                logMsg("Node is offline.", "error");
+                return;
+            }
+
+            const target = document.getElementById("sandboxContractAddr").value.trim();
+            let data = document.getElementById("sandboxCalldata").value.trim();
+            const valZeph = parseFloat(document.getElementById("sandboxValue").value);
+            const gas = parseInt(document.getElementById("sandboxGas").value);
+
+            if (!target.startsWith("0x") || target.length < 40) {
+                logMsg("Invalid target contract address.", "error");
+                return;
+            }
+
+            if (data.length > 0 && !data.startsWith("0x")) {
+                data = "0x" + data;
+            }
+
+            const valWeiHex = toWeiHex(valZeph);
+
+            if (isReadCall) {
+                logMsg(`Calling contract at ${target} (Read State / eth_call)...`, "info");
+                try {
+                    const returnData = await sendRpc("eth_call", [{
+                        from: legacyDevAddress,
+                        to: target,
+                        data: data,
+                        value: valWeiHex
+                    }, "latest"]);
+                    
+                    logMsg(`Call successful. Return Data: ${returnData}`, "success");
+                } catch (err) {
+                    logMsg(`Call failed: ${err.message}`, "error");
+                }
+            } else {
+                logMsg(`Sending transaction to contract ${target} (Modify State / eth_sendTransaction)...`, "info");
+                try {
+                    const txHash = await sendRpc("eth_sendTransaction", [{
+                        from: legacyDevAddress,
+                        to: target,
+                        data: data,
+                        gas: "0x" + gas.toString(16),
+                        value: valWeiHex
+                    }]);
+
+                    logMsg(`Transaction submitted. Hash: ${txHash}`, "info");
+                    logMsg("Waiting for receipt...", "info");
+                    
+                    pollReceipt(txHash);
+                } catch (err) {
+                    logMsg(`Transaction failed: ${err.message}`, "error");
+                }
+            }
+        }
+
+        // Initial setup and polling intervals
+        updateStatus();
+        setInterval(updateStatus, 2000);
+    </script>
+</body>
+</html>

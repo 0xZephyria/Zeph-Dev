@@ -175,12 +175,12 @@ pub const Shard = struct {
 
     /// Get all entries sorted by key
     pub fn getSorted(self: *const Self, allocator: Allocator) ![]Entry {
-        var entries = std.ArrayList(Entry).init(allocator);
-        errdefer entries.deinit();
+        var entries: std.ArrayList(Entry) = .empty;
+        errdefer entries.deinit(allocator);
 
         var it = self.data.iterator();
         while (it.next()) |kv| {
-            try entries.append(try kv.value_ptr.dupe(allocator));
+            try entries.append(allocator, try kv.value_ptr.dupe(allocator));
         }
 
         // Sort by key
@@ -190,7 +190,7 @@ pub const Shard = struct {
             }
         }.lessThan);
 
-        return entries.toOwnedSlice();
+        return try entries.toOwnedSlice(allocator);
     }
 
     /// Get size in bytes
@@ -273,12 +273,12 @@ pub const ShardedMemTable = struct {
 
     /// Check which shards need flushing
     pub fn getShardsNeedingFlush(self: *Self) !std.ArrayList(*Shard) {
-        var result = std.ArrayList(*Shard).init(self.allocator);
-        errdefer result.deinit();
+        var result: std.ArrayList(*Shard) = .empty;
+        errdefer result.deinit(self.allocator);
 
         for (self.shards) |shard| {
             if (shard.needsFlush(self.config.max_shard_size)) {
-                try result.append(shard);
+                try result.append(self.allocator, shard);
             }
         }
 
@@ -349,7 +349,7 @@ pub const WriteBatch = struct {
     pub fn init(allocator: Allocator) Self {
         return Self{
             .allocator = allocator,
-            .ops = std.ArrayList(Op).init(allocator),
+            .ops = .{},
         };
     }
 
@@ -359,11 +359,11 @@ pub const WriteBatch = struct {
                 self.allocator.free(v);
             }
         }
-        self.ops.deinit();
+        self.ops.deinit(self.allocator);
     }
 
     pub fn put(self: *Self, key: [32]u8, value: []const u8) !void {
-        try self.ops.append(.{
+        try self.ops.append(self.allocator, .{
             .key = key,
             .value = try self.allocator.dupe(u8, value),
             .is_delete = false,
@@ -371,7 +371,7 @@ pub const WriteBatch = struct {
     }
 
     pub fn delete(self: *Self, key: [32]u8) !void {
-        try self.ops.append(.{
+        try self.ops.append(self.allocator, .{
             .key = key,
             .value = null,
             .is_delete = true,

@@ -163,7 +163,11 @@ pub const Arena = struct {
         }
 
         // Fall back to bump allocation
-        return self.bumpAlloc(size_val(size));
+        if (self.bumpAlloc(size_val(size))) |ptr| {
+            _ = self.size_classes[idx].alloc_count.fetchAdd(1, .monotonic);
+            return @ptrCast(@alignCast(ptr));
+        }
+        return null;
     }
 
     /// Free a fixed-size block back to the free-list for reuse.

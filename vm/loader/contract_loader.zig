@@ -12,6 +12,7 @@ const basic_block = @import("../core/basic_block.zig");
 const syscallDispatch = @import("../syscall/dispatch.zig");
 const zephbinLoader = @import("zephbin_loader.zig");
 const gasMeter = @import("../gas/meter.zig");
+const aot = @import("../compiler/aot.zig");
 
 pub const LoadError = error{
     // Format errors
@@ -203,12 +204,16 @@ pub fn executeFromZephWithMemory(
     const pkg = forgeFormat.parse(forgeData) catch return LoadError.InvalidPackage;
 
     var computedHash: [32]u8 = undefined;
-    var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+    var hasher = std.crypto.hash.Blake3.init(.{});
     hasher.update(pkg.bytecode);
     hasher.final(&computedHash);
     if (!std.mem.eql(u8, &computedHash, &pkg.header.code_hash)) {
         return LoadError.InvalidPackage;
     }
+
+    const isElf = pkg.bytecode.len >= 4 and pkg.bytecode[0] == 0x7F and pkg.bytecode[1] == 'E' and pkg.bytecode[2] == 'L' and pkg.bytecode[3] == 'F';
+    if (!isElf) return LoadError.InvalidElf;
+
     return executeWithMemory(allocator, memory, pkg.bytecode, calldata, gasLimit, env);
 }
 
@@ -227,6 +232,342 @@ pub fn executeFromZephBin(
     return executeFromZephBinWithMemory(allocator, &memory, binData, calldata, gasLimit, env);
 }
 
+fn aotSyscallHandler(vm_opaque: ?*anyopaque, syscall_id: u32) callconv(.c) i32 {
+    _ = syscall_id;
+    const vm: *executor.ForgeVM = @ptrCast(@alignCast(vm_opaque orelse return 5));
+    if (vm.syscallHandler) |handler| {
+        handler(vm) catch |err| {
+            return switch (err) {
+                error.ReturnData => @as(i32, 1),
+                error.Revert => @as(i32, 2),
+                error.SelfDestruct => @as(i32, 3),
+                error.OutOfGas => @as(i32, 4),
+                else => @as(i32, 5),
+            };
+        };
+        return 0; // success
+    }
+    return 5; // fault
+}
+
+const AotLibEntry = struct {
+    hash: [32]u8,
+    lib: std.DynLib,
+};
+
+const AotFuncEntry = struct {
+    hash: [32]u8,
+    selector: u32,
+    func: *const fn (*const aot.AotContext) callconv(.c) void,
+};
+
+var aot_cache_rwlock: std.Thread.RwLock = .{};
+var aot_cache_entries: std.ArrayListUnmanaged(AotLibEntry) = .empty;
+var aot_func_entries: std.ArrayListUnmanaged(AotFuncEntry) = .empty;
+
+var no_aot_cached: bool = false;
+var no_aot_initialized: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+fn isNoAotEnabled(allocator: std.mem.Allocator) bool {
+    if (no_aot_initialized.load(.acquire)) {
+        return no_aot_cached;
+    }
+    
+    aot_cache_rwlock.lock();
+    defer aot_cache_rwlock.unlock();
+    
+    if (no_aot_initialized.load(.unordered)) {
+        return no_aot_cached;
+    }
+    
+    var is_no_aot = false;
+    if (std.process.getEnvVarOwned(allocator, "FORGE_NO_AOT")) |env_val| {
+        defer allocator.free(env_val);
+        if (std.mem.eql(u8, env_val, "1")) {
+            is_no_aot = true;
+        }
+    } else |_| {}
+    no_aot_cached = is_no_aot;
+    no_aot_initialized.store(true, .release);
+    return is_no_aot;
+}
+
+fn getCachedLib(hash: [32]u8) ?std.DynLib {
+    aot_cache_rwlock.lockShared();
+    defer aot_cache_rwlock.unlockShared();
+
+    for (aot_cache_entries.items) |entry| {
+        if (std.mem.eql(u8, &entry.hash, &hash)) {
+            return entry.lib;
+        }
+    }
+    return null;
+}
+
+fn putCachedLib(allocator: std.mem.Allocator, hash: [32]u8, lib: std.DynLib) !void {
+    aot_cache_rwlock.lock();
+    defer aot_cache_rwlock.unlock();
+
+    for (aot_cache_entries.items) |entry| {
+        if (std.mem.eql(u8, &entry.hash, &hash)) {
+            return;
+        }
+    }
+
+    try aot_cache_entries.append(allocator, .{ .hash = hash, .lib = lib });
+}
+
+fn getCachedFunc(hash: [32]u8, selector: u32) ?*const fn (*const aot.AotContext) callconv(.c) void {
+    aot_cache_rwlock.lockShared();
+    defer aot_cache_rwlock.unlockShared();
+
+    for (aot_func_entries.items) |entry| {
+        if (entry.selector == selector and std.mem.eql(u8, &entry.hash, &hash)) {
+            return entry.func;
+        }
+    }
+    return null;
+}
+
+
+fn putCachedFunc(allocator: std.mem.Allocator, hash: [32]u8, selector: u32, func: *const fn (*const aot.AotContext) callconv(.c) void) !void {
+    aot_cache_rwlock.lock();
+    defer aot_cache_rwlock.unlock();
+
+    for (aot_func_entries.items) |entry| {
+        if (entry.selector == selector and std.mem.eql(u8, &entry.hash, &hash)) {
+            return;
+        }
+    }
+
+    try aot_func_entries.append(allocator, .{ .hash = hash, .selector = selector, .func = func });
+}
+
+pub fn deinitAotCache(allocator: std.mem.Allocator) void {
+    aot_cache_rwlock.lock();
+    defer aot_cache_rwlock.unlock();
+
+    for (aot_cache_entries.items) |*entry| {
+        entry.lib.close();
+    }
+    aot_cache_entries.deinit(allocator);
+    aot_func_entries.deinit(allocator);
+
+    if (last_parsed_pkg) |*old_pkg| {
+        old_pkg.deinit();
+        last_parsed_pkg = null;
+    }
+    last_parsed_bin_ptr = null;
+    last_parsed_bin_len = 0;
+}
+
+pub fn preWarmAot(allocator: std.mem.Allocator, binData: []const u8) !void {
+    if (!zephbinLoader.isZephBin(binData)) return;
+
+    var hash: [32]u8 = undefined;
+    std.crypto.hash.Blake3.hash(binData, &hash, .{});
+
+    // 1. Check/load dynamic library
+    var lib: std.DynLib = undefined;
+    var cached = false;
+
+    aot_cache_rwlock.lockShared();
+    for (aot_cache_entries.items) |entry| {
+        if (std.mem.eql(u8, &entry.hash, &hash)) {
+            lib = entry.lib;
+            cached = true;
+            break;
+        }
+    }
+    aot_cache_rwlock.unlockShared();
+
+    if (!cached) {
+        // Compile the entire package
+        const lib_path = try aot.compileAot(allocator, binData);
+        defer allocator.free(lib_path);
+
+        const abs_lib_path = try std.fs.cwd().realpathAlloc(allocator, lib_path);
+        defer allocator.free(abs_lib_path);
+
+        lib = try std.DynLib.open(abs_lib_path);
+        try putCachedLib(allocator, hash, lib);
+    }
+
+    // 2. Parse the package to get the list of actions/selectors
+    const pkg = try zephbinLoader.parse(allocator, binData);
+    defer {
+        var mutable_pkg = pkg;
+        mutable_pkg.deinit();
+    }
+
+    // 3. Lookup and cache all action functions
+    for (pkg.actions) |action| {
+        var is_func_cached = false;
+        aot_cache_rwlock.lockShared();
+        for (aot_func_entries.items) |entry| {
+            if (entry.selector == action.selector and std.mem.eql(u8, &entry.hash, &hash)) {
+                is_func_cached = true;
+                break;
+            }
+        }
+        aot_cache_rwlock.unlockShared();
+
+        if (!is_func_cached) {
+            var sym_name_buf: [64]u8 = undefined;
+            const sym_name = try std.fmt.bufPrintZ(&sym_name_buf, "action_{x:0>8}", .{action.selector});
+            const action_fn = lib.lookup(*const fn (*const aot.AotContext) callconv(.c) void, sym_name) orelse continue;
+            try putCachedFunc(allocator, hash, action.selector, action_fn);
+        }
+    }
+}
+
+
+threadlocal var last_action_fn: ?*const fn (*const aot.AotContext) callconv(.c) void = null;
+threadlocal var last_action_selector: u32 = 0;
+threadlocal var last_action_bin_ptr: ?[*]const u8 = null;
+threadlocal var last_action_bin_len: usize = 0;
+
+threadlocal var last_parsed_bin_ptr: ?[*]const u8 = null;
+threadlocal var last_parsed_bin_len: usize = 0;
+threadlocal var last_parsed_pkg: ?zephbinLoader.ZephBinPackage = null;
+
+fn compileAndRunAot(
+    allocator: std.mem.Allocator,
+    memory: *sandbox.SandboxMemory,
+    binData: []const u8,
+    calldata: []const u8,
+    gasLimit: u64,
+    env: *syscallDispatch.HostEnv,
+    pkg: *const zephbinLoader.ZephBinPackage,
+    action: *const zephbinLoader.ZephAction,
+) !ContractResult {
+    var action_fn: *const fn (*const aot.AotContext) callconv(.c) void = undefined;
+    if (last_action_bin_ptr == binData.ptr and last_action_bin_len == binData.len and last_action_selector == action.selector and last_action_fn != null) {
+        action_fn = last_action_fn.?;
+    } else {
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.Blake3.hash(binData, &hash, .{});
+
+        if (getCachedFunc(hash, action.selector)) |f| {
+            action_fn = f;
+        } else {
+            std.debug.print("[AOT Cache Miss] hash[0]={d}, selector={x}\n", .{ hash[0], action.selector });
+            var lib: std.DynLib = undefined;
+            if (getCachedLib(hash)) |cached_lib| {
+                std.debug.print("[AOT Cache Lib Hit]\n", .{});
+                lib = cached_lib;
+            } else {
+                std.debug.print("[AOT Cache Lib Miss] Compiling...\n", .{});
+                const lib_path = try aot.compileAot(allocator, binData);
+                defer allocator.free(lib_path);
+
+                const abs_lib_path = try std.fs.cwd().realpathAlloc(allocator, lib_path);
+                defer allocator.free(abs_lib_path);
+
+                lib = try std.DynLib.open(abs_lib_path);
+                try putCachedLib(allocator, hash, lib);
+            }
+
+            var sym_name_buf: [64]u8 = undefined;
+            const sym_name = try std.fmt.bufPrintZ(&sym_name_buf, "action_{x:0>8}", .{action.selector});
+            action_fn = lib.lookup(*const fn (*const aot.AotContext) callconv(.c) void, sym_name) orelse return error.SymbolNotFound;
+            try putCachedFunc(allocator, hash, action.selector, action_fn);
+        }
+
+        // Cache the lookup results thread-locally
+        last_action_bin_ptr = binData.ptr;
+        last_action_bin_len = binData.len;
+        last_action_selector = action.selector;
+        last_action_fn = action_fn;
+    }
+
+
+    // Load data section (string literals etc.) into heap at HEAP_START
+    if (pkg.dataSection.len > 0) {
+        const max_ds = sandbox.heapEnd - sandbox.heapStart + 1;
+        const ds_len = @min(pkg.dataSection.len, max_ds);
+        @memcpy(memory.backing[sandbox.heapStart .. sandbox.heapStart + ds_len], pkg.dataSection[0..ds_len]);
+    }
+
+    // Load calldata (skip the 4-byte selector if present)
+    const actualCalldata = if (calldata.len >= 4) calldata[4..] else calldata;
+    if (actualCalldata.len > 0) {
+        try memory.loadCalldata(actualCalldata);
+    }
+
+    const handler = syscallDispatch.createHandler(env);
+
+    const stubOffset: u32 = @intCast(action.code.len);
+    const stubEnd = stubOffset + 8;
+    if (stubEnd > sandbox.codeSize) return LoadError.CodeTooLarge;
+
+    // Load the action bytecode into the code region so that code-relative data
+    // references (e.g. error message bytes at small offsets) are readable.
+    memory.loadCode(action.code) catch return LoadError.CodeTooLarge;
+
+    // Write exit stub after the action code
+    const addiReturn: u32 = 0x05000513;
+    const ecall: u32 = 0x00000073;
+    std.mem.writeInt(u32, memory.backing[stubOffset..][0..4], addiReturn, .little);
+    std.mem.writeInt(u32, memory.backing[stubOffset + 4 ..][0..4], ecall, .little);
+
+    var vm = executor.ForgeVM.init(
+        memory,
+        stubEnd,
+        gasLimit,
+        handler,
+    );
+    vm.hostCtx = env;
+    vm.calldataLen = @intCast(actualCalldata.len);
+    vm.regs[3] = sandbox.heapStart; // GP
+    vm.regs[1] = stubOffset;        // RA
+
+    var pc: u32 = 0;
+    var status_val: u32 = 0;
+
+    const ctx = aot.AotContext{
+        .regs = &vm.regs,
+        .pc = &pc,
+        .memory_backing = memory.backing.ptr,
+        .memory_size = @intCast(memory.backing.len),
+        .gas_limit = &vm.gas.limit,
+        .gas_used = &vm.gas.used,
+        .status = &status_val,
+        .syscall_handler = aotSyscallHandler,
+        .vm_ctx = &vm,
+        .dirty_tracker = &memory.dirty_tracker,
+    };
+
+    // Execute the action natively
+    action_fn(&ctx);
+
+    // Sync PC and status back to VM structure (gas.used is already synced via pointer)
+    vm.pc = pc;
+    vm.status = std.meta.intToEnum(executor.ExecutionStatus, status_val) catch .fault;
+
+    // Extract return data — include both returned and reverted (matches interpreter behavior)
+    var returnData: []const u8 = &[_]u8{};
+    if (vm.returnDataLen > 0) {
+        const raw = memory.getReturnData(
+            vm.returnDataOffset,
+            vm.returnDataLen,
+        ) catch &[_]u8{};
+        if (raw.len > 0) {
+            returnData = try allocator.dupe(u8, raw);
+        }
+    }
+
+    return ContractResult{
+        .status = vm.status,
+        .gasUsed = vm.gas.used,
+        .gasRemaining = vm.gas.remaining(),
+        .returnData = returnData,
+        .logs = env.logs.items,
+        .faultPc = vm.pc,
+        .faultReason = vm.faultReason,
+    };
+}
+
 /// Execute a contract from a ZephBin v1 package using pre-allocated memory.
 pub fn executeFromZephBinWithMemory(
     allocator: std.mem.Allocator,
@@ -239,19 +580,37 @@ pub fn executeFromZephBinWithMemory(
     // No allocation here!
     memory.reset();
 
-    // 1. Parse ZephBin
-    var pkg = try zephbinLoader.parse(allocator, binData);
-    defer pkg.deinit();
+    // 1. Parse ZephBin (with thread-local caching to eliminate heap contention)
+    var pkg: zephbinLoader.ZephBinPackage = undefined;
+    if (last_parsed_bin_ptr == binData.ptr and last_parsed_bin_len == binData.len and last_parsed_pkg != null) {
+        pkg = last_parsed_pkg.?;
+    } else {
+        pkg = try zephbinLoader.parse(allocator, binData);
+        if (last_parsed_pkg) |*old_pkg| {
+            old_pkg.deinit();
+        }
+        last_parsed_bin_ptr = binData.ptr;
+        last_parsed_bin_len = binData.len;
+        last_parsed_pkg = pkg;
+    }
 
     // 2. Pick action: use first 4 bytes of calldata as selector if present
     const selector: u32 = if (calldata.len >= 4)
         std.mem.readInt(u32, calldata[0..4], .little)
     else
         0;
-
-    const action = pkg.pickAction(selector) orelse return LoadError.CodeTooLarge; // no actions
-
+    const action = pkg.pickAction(selector) orelse return LoadError.CodeTooLarge;
     if (action.code.len == 0) return LoadError.CodeTooLarge;
+
+    const use_aot = !isNoAotEnabled(allocator);
+
+    if (use_aot) {
+        if (compileAndRunAot(allocator, memory, binData, calldata, gasLimit, env, &pkg, action)) |aot_res| {
+            return aot_res;
+        } else |err| {
+            std.debug.print("AOT compilation/execution failed: {}, falling back to interpreter\n", .{err});
+        }
+    }
 
     // Load action bytecode into code region
     memory.loadCode(action.code) catch return LoadError.CodeTooLarge;
@@ -318,7 +677,7 @@ pub fn executeFromZephBinWithMemory(
         const pool: *@import("../vm_pool.zig").VMPool = @ptrCast(@alignCast(pool_ptr));
         const code_slice = memory.backing[0..stubEnd];
         var code_hash: [32]u8 = undefined;
-        std.crypto.hash.sha3.Keccak256.hash(code_slice, &code_hash, .{});
+        std.crypto.hash.Blake3.hash(code_slice, &code_hash, .{});
 
         if (pool.getDecodedCode(code_hash)) |cached| {
             break :blk threaded_executor.executeThreaded(&vm, cached.decoded_insns, null);

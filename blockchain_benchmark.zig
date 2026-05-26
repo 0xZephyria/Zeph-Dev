@@ -21,6 +21,7 @@ const Config = struct {
     threads: u32 = 8,
     file_path: []const u8 = "./TokenTest.fozbin",
     db_path: []const u8 = "./blockchain_bench_data_db",
+    is_polka: bool = false,
 };
 
 fn printHelp(writer: anytype) !void {
@@ -36,6 +37,7 @@ fn printHelp(writer: anytype) !void {
         \\    --threads <n>       Number of execution threads       (default: 8)
         \\    --file    <path>    Path to .fozbin contract package  (default: ./TokenTest.fozbin)
         \\    --db      <path>    Temporary DB directory path       (default: ./blockchain_bench_data_db)
+        \\    --polka             Run benchmark using PolkaVM compatible contract (default: false)
         \\
         \\  EXAMPLES
         \\    zig build bench-blockchain -- --txs 10000 --threads 8
@@ -88,6 +90,8 @@ pub fn main() !void {
                 return;
             }
             cfg.db_path = args[i];
+        } else if (std.mem.eql(u8, arg, "--polka")) {
+            cfg.is_polka = true;
         } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             try printHelp(stdout);
             return;
@@ -99,6 +103,9 @@ pub fn main() !void {
     }
 
     // Read the contract package bytecode
+    if (cfg.is_polka and std.mem.eql(u8, cfg.file_path, "./TokenTest.fozbin")) {
+        cfg.file_path = "vm/polkavm/revive-transfer-example.elf";
+    }
     try stdout.print("Loading contract package from: {s}...\n", .{cfg.file_path});
     const bytecode = loadFile(allocator, cfg.file_path) catch |err| {
         try stderr.print("Failed to load contract package: {}\n", .{err});
@@ -291,7 +298,7 @@ pub fn main() !void {
     try stdout.print("    ├─ {s}DAG Scheduling:{s}        {d:.3} ms\n", .{ DIM, RESET, @as(f64, @floatFromInt(schedule_time_ns)) / 1_000_000.0 });
     try stdout.print("    ├─ {s}Phase 1 (Parallel Lane):{s} {d:.3} ms\n", .{ DIM, RESET, @as(f64, @floatFromInt(block_res.executionTimeNs)) / 1_000_000.0 });
     try stdout.print("    ├─ {s}Phase 2 (Delta Merge):{s}   {d:.3} ms\n", .{ DIM, RESET, @as(f64, @floatFromInt(block_res.mergeTimeNs)) / 1_000_000.0 });
-    try stdout.print("    └─ {s}Phase 3 (VerkleDB(Flat) Commit):{s}  {d:.3} ms\n", .{ DIM, RESET, @as(f64, @floatFromInt(block_res.commitTimeNs)) / 1_000_000.0 });
+    try stdout.print("    └─ {s}Phase 3 (ZephyrDB(Flat) Commit):{s}  {d:.3} ms\n", .{ DIM, RESET, @as(f64, @floatFromInt(block_res.commitTimeNs)) / 1_000_000.0 });
     try stdout.print("    {s}------------------------------------{s}\n", .{ DIM, RESET });
     try stdout.print("    {s}Total Block Pipeline:{s}     {d:.3} ms\n", .{ BOLD, RESET, @as(f64, @floatFromInt(total_pipeline_ns)) / 1_000_000.0 });
     try stdout.print("\n", .{});
@@ -300,6 +307,8 @@ pub fn main() !void {
     try stdout.print("    • {s}Phase 1 (Parallel Lane VM):{s}     {d:.2} tx/sec\n", .{ BOLD, RESET, phase1_tps });
     try stdout.print("    • {s}Overall Simulated L1 Workflow:{s}  {s}{d:.2} tx/sec{s}\n", .{ BOLD ++ GREEN, RESET, BOLD ++ GREEN, overall_tps, RESET });
     try stdout.print("========================================================================\n\n", .{});
+
+    vm.contractLoader.deinitAotCache(allocator);
 }
 
 fn loadFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
