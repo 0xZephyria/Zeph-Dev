@@ -27,6 +27,7 @@ const gulf_stream_mod = @import("gulf_stream.zig");
 const discovery_mod = @import("discovery.zig");
 const compression_mod = @import("compression.zig");
 const shred_verify_mod = @import("shred_verifier.zig");
+const stun_mod = @import("stun.zig");
 
 // Optimizations
 const Packet = @import("net_utils").Packet;
@@ -54,6 +55,12 @@ pub const ServerConfig = struct {
     peersPerSubnet: u32 = types.PEERS_PER_SUBNET,
     packetPoolSize: u32 = 8192,
     pruneIntervalMs: u64 = 30_000,
+    validatorAddress: core.types.Address = core.types.Address.zero(),
+    enableStun: bool = true,
+    stunHost: []const u8 = "stun.l.google.com",
+    stunPort: u16 = 19302,
+    publicIp: ?[]const u8 = null,
+    identityKey: ?[32]u8 = null,
 };
 
 // ── Server ──────────────────────────────────────────────────────────────
@@ -168,10 +175,14 @@ pub const Server = struct {
         try poolPtr.expandCapacity(config.packetPoolSize);
 
         // Discovery
-        const discoveryPriv = try allocator.alloc(u8, 32);
-        std.crypto.random.bytes(discoveryPriv);
-        const discovery = try discovery_mod.DiscoveryService.init(allocator, discoveryPriv, config.listenPort);
-        allocator.free(discoveryPriv);
+        var discoveryPriv: [32]u8 = undefined;
+        defer @memset(&discoveryPriv, 0);
+        if (config.identityKey) |id_key| {
+            discoveryPriv = id_key;
+        } else {
+            std.crypto.random.bytes(&discoveryPriv);
+        }
+        const discovery = try discovery_mod.DiscoveryService.init(allocator, &discoveryPriv, config.listenPort);
 
         // Initialize subnet peers
         var subnetPeers: [types.GOSSIP_SUBNETS]std.ArrayListUnmanaged(*Peer) = undefined;
@@ -188,6 +199,16 @@ pub const Server = struct {
             const s2: types.SubnetID = @intCast(hash[1] % types.GOSSIP_SUBNETS);
             types.setSubnetBit(&localSubnets, s1);
             if (s1 != s2) types.setSubnetBit(&localSubnets, s2);
+        }
+
+        // Update local node and ZNR details
+        discovery.localNode.validatorAddress = config.validatorAddress;
+        discovery.localNode.subscribedSubnets = localSubnets;
+        discovery.localZnr.validatorAddr = config.validatorAddress;
+        discovery.localZnr.subnets = localSubnets;
+        if (!std.mem.eql(u8, &config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
+            discovery.localNode.stakeAmount = 100_000_000_000; // 100K ZEE
+            discovery.localZnr.stake = 100_000_000_000;
         }
 
         self.* = Self{
@@ -276,6 +297,62 @@ pub const Server = struct {
             self.config.listenPort, self.config.numWorkers, self.config.maxPeers,
         });
 
+        // Run STUN NAT Traversal / External IP Discovery if enabled, or use configured public IP
+        if (self.config.publicIp) |pub_ip| {
+            if (std.net.Address.parseIp4(pub_ip, self.config.listenPort)) |ext_addr| {
+                const ip_bytes = @as(*const [4]u8, @ptrCast(&ext_addr.in.sa.addr)).*;
+                log.debug("P2P: Using configured public IP address {d}.{d}.{d}.{d}\n", .{
+                    ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+                });
+
+                // Update discovery local node IP
+                self.discovery.localNode.address = ext_addr;
+
+                // Update local ZNR Record IP info
+                self.discovery.localZnr.ip4 = ip_bytes;
+                self.discovery.localZnr.udpPort = self.config.listenPort;
+            } else |err| {
+                log.err("P2P: Failed to parse configured public IP address '{s}': {}\n", .{ pub_ip, err });
+            }
+        } else if (self.config.enableStun) {
+            log.debug("STUN: Querying STUN server {s}:{} for external IP...\n", .{ self.config.stunHost, self.config.stunPort });
+            var resolved = false;
+            if (stun_mod.discoverExternalAddress(self.config.stunHost, self.config.stunPort)) |ext_addr| {
+                const ip_bytes = @as(*const [4]u8, @ptrCast(&ext_addr.in.sa.addr)).*;
+                log.debug("STUN: Discovered public IP address {d}.{d}.{d}.{d}\n", .{
+                    ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+                });
+
+                // Update discovery local node IP
+                self.discovery.localNode.address = ext_addr;
+                
+                // Update local ZNR Record IP info
+                self.discovery.localZnr.ip4 = ip_bytes;
+                self.discovery.localZnr.udpPort = self.config.listenPort;
+                resolved = true;
+            } else |err| {
+                log.debug("STUN: Discovery failed: {}. Trying HTTP fallback...\n", .{err});
+            }
+
+            if (!resolved) {
+                if (stun_mod.discoverExternalAddressHttp(self.allocator)) |ext_addr| {
+                    const ip_bytes = @as(*const [4]u8, @ptrCast(&ext_addr.in.sa.addr)).*;
+                    log.debug("HTTP: Discovered public IP address {d}.{d}.{d}.{d}\n", .{
+                        ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+                    });
+
+                    // Update discovery local node IP
+                    self.discovery.localNode.address = std.net.Address.initIp4(ip_bytes, self.config.listenPort);
+                    
+                    // Update local ZNR Record IP info
+                    self.discovery.localZnr.ip4 = ip_bytes;
+                    self.discovery.localZnr.udpPort = self.config.listenPort;
+                } else |err| {
+                    log.debug("HTTP: IP Discovery failed: {}. Falling back to default bindings.\n", .{err});
+                }
+            }
+        }
+
         try self.discovery.start();
         self.running = true;
         self.thread = try std.Thread.spawn(.{}, serverLoop, .{self});
@@ -302,14 +379,88 @@ pub const Server = struct {
     /// Broadcast a block using Turbine shredding (primary propagation).
     /// Shreds the block data, then sends each shred through the Turbine tree.
     pub fn broadcastBlockViaTurbine(self: *Self, blockData: []const u8, blockNumber: u64) !void {
-        // Shred the block (using zero signature — the actual sig is in the block header)
-        const zeroSig: [64]u8 = [_]u8{0} ** 64;
-        const shreds = try self.turbine.shredBlock(blockData, blockNumber, zeroSig);
-        defer self.allocator.free(shreds);
+        // Calculate average RTT of connected validators to scale coding ratio
+        var total_rtt: u64 = 0;
+        var val_count: u64 = 0;
+        
+        self.mutex.lock();
+        for (self.peers.items) |peer| {
+            if (peer.handshakeComplete and peer.peerRole == .Validator) {
+                total_rtt += peer.rtt_ms;
+                val_count += 1;
+            }
+        }
+        self.mutex.unlock();
+        
+        const avg_rtt = if (val_count > 0) total_rtt / val_count else 100;
+        var ratio: f64 = 0.25;
+        if (avg_rtt <= 50) {
+            ratio = 0.20; // 20% parity under good network
+        } else if (avg_rtt >= 300) {
+            ratio = 0.50; // 50% parity under high latency/drop rate
+        } else {
+            ratio = 0.20 + 0.30 * (@as(f64, @floatFromInt(avg_rtt - 50)) / 250.0);
+        }
 
-        // Send each shred to the first tier of the Turbine tree
+        // Generate mock signature with local validator address in the first 32 bytes
+        var sig: [64]u8 = [_]u8{0} ** 64;
+        @memcpy(sig[0..32], &self.config.validatorAddress.bytes);
+
+        const shreds = try self.turbine.shredBlock(blockData, blockNumber, sig, ratio);
+        defer self.turbine.freeShreds(shreds);
+
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        // Build deterministic tree for this broadcast
+        var validators = std.ArrayList(core.types.Address).empty;
+        defer validators.deinit(self.allocator);
+
+        if (self.shredVerifier) |verifier| {
+            var it = verifier.validators.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.active) {
+                    validators.append(self.allocator, entry.value_ptr.address) catch {};
+                }
+            }
+        }
+
+        var found_self = false;
+        for (validators.items) |addr| {
+            if (std.mem.eql(u8, &addr.bytes, &self.config.validatorAddress.bytes)) {
+                found_self = true;
+                break;
+            }
+        }
+        if (!found_self and !std.mem.eql(u8, &self.config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
+            validators.append(self.allocator, self.config.validatorAddress) catch {};
+        }
+
+        if (validators.items.len == 0) {
+            for (self.peers.items) |peer| {
+                if (peer.handshakeComplete) {
+                    validators.append(self.allocator, peer.validatorAddress) catch {};
+                }
+            }
+        }
+
+        std.mem.sort(core.types.Address, validators.items, {}, struct {
+            fn lessThan(_: void, a: core.types.Address, b: core.types.Address) bool {
+                return std.mem.lessThan(u8, &a.bytes, &b.bytes);
+            }
+        }.lessThan);
+
+        self.turbine.buildPropTree(@intCast(validators.items.len), @intCast(shreds.len)) catch {};
+
+        var our_index: u32 = 0;
+        for (validators.items, 0..) |addr, idx| {
+            if (std.mem.eql(u8, &addr.bytes, &self.config.validatorAddress.bytes)) {
+                our_index = @intCast(idx);
+                break;
+            }
+        }
+
+        const children = self.turbine.tree.getChildren(our_index);
 
         for (shreds) |shred| {
             const msg = types.ShredMsg{
@@ -320,15 +471,15 @@ pub const Server = struct {
                 .shredType = shred.shredType,
                 .payload = shred.payload,
                 .producerSignature = shred.producerSignature,
+                .treeLayer = shred.treeLayer,
+                .treeIndex = shred.treeIndex,
                 .threadId = shred.threadId,
             };
 
-            // Send to Turbine tree children (fan-out propagation)
-            const children = self.turbine.tree.getChildren(0);
             for (children) |child| {
-                if (child.peerIndex < self.peers.items.len) {
-                    const peer = self.peers.items[child.peerIndex];
-                    if (peer.handshakeComplete) {
+                if (child.peerIndex < validators.items.len) {
+                    const child_addr = validators.items[child.peerIndex];
+                    if (self.findPeerByValidatorAddress(child_addr)) |peer| {
                         peer.send(types.MsgShred, msg) catch {};
                     }
                 }
@@ -488,8 +639,10 @@ pub const Server = struct {
             types.MsgStatus => try self.handleStatus(peer, payload),
             types.MsgNewBlock => try self.handleNewBlock(peer, payload),
             types.MsgTxBatch => try self.handleTxBatch(peer, payload),
+            types.MsgVote => try self.handleVote(peer, payload),
             types.MsgAuth => try self.handleAuth(peer, payload),
             types.MsgShred => try self.handleShred(peer, payload),
+            types.MsgShredRepairRequest => try self.handleShredRepairRequest(peer, payload),
             types.MsgAttestation => try self.handleAttestation(peer, payload),
             types.MsgAggregateAttestation => try self.handleAggregateAttestation(peer, payload),
             types.MsgQuorumCertificate => try self.handleQC(peer, payload),
@@ -580,6 +733,71 @@ pub const Server = struct {
         };
 
         peer.updateScore(10);
+
+        // Advance adaptive consensus slot and sync finality state
+        self.engine.adaptive.advanceSlot(heapBlock.header.number);
+        self.engine.syncFinalityFromAdaptive();
+
+        {
+            var gs_validators = self.allocator.alloc(gulf_stream_mod.ValidatorInfo, self.engine.activeValidators.len) catch |err| {
+                log.warn("Failed to allocate validator array for Gulf Stream: {}\n", .{err});
+                return;
+            };
+            defer self.allocator.free(gs_validators);
+            for (self.engine.activeValidators, 0..) |v, idx| {
+                gs_validators[idx] = .{
+                    .index = @intCast(idx),
+                    .address = v.address,
+                    .stake = @truncate(v.stake),
+                };
+            }
+            self.gulfStream.advanceSlot(
+                self.engine.adaptive.currentSlot,
+                self.engine.currentEpoch,
+                gs_validators,
+            );
+        }
+
+        // Cast a BLS vote for this block if we have a BLS key.
+        // This is the core of the instant finality protocol:
+        // each validator that verifies a block creates a signed vote,
+        // broadcasts it, and the proposer/peers accumulate votes
+        // to form a Quorum Certificate.
+        vote_cast: {
+            const bls_key = self.engine.blsPrivKey orelse break :vote_cast;
+            _ = bls_key;
+
+            const blockHash = heapBlock.hash();
+            const view = self.engine.adaptive.currentSlot;
+            const vote_sig = self.engine.create_vote(blockHash, view) catch |err| {
+                log.warn("Failed to create BLS vote: {}\n", .{err});
+                break :vote_cast;
+            };
+
+            // Determine our validator index
+            var our_index: u32 = 0;
+            for (self.engine.activeValidators, 0..) |v, i| {
+                if (std.mem.eql(u8, &v.address.bytes, &self.config.validatorAddress.bytes)) {
+                    our_index = @intCast(i);
+                    break;
+                }
+            }
+
+            // Broadcast vote to committee
+            const vote_msg = types.VoteMsg{
+                .blockHash = blockHash,
+                .blockNumber = heapBlock.header.number,
+                .view = view,
+                .signature = vote_sig,
+                .validatorIndex = our_index,
+            };
+            const vote_payload = rlp.encode(self.allocator, vote_msg) catch |err| {
+                log.warn("Failed to encode vote: {}\n", .{err});
+                break :vote_cast;
+            };
+            defer self.allocator.free(vote_payload);
+            self.broadcastToCommittee(types.MsgVote, vote_payload) catch {};
+        }
 
         // Relay via Turbine shredding (not gossip)
         if (msg.hopCount < 2) {
@@ -675,8 +893,6 @@ pub const Server = struct {
 
         // Ed25519 signature verification (sampling-aware)
         if (self.shredVerifier) |verifier| {
-            // Derive producer address from the first 20 bytes of the signature
-            // (in production, this would come from the block header's proposer field)
             var producer_addr = core.types.Address.zero();
             @memcpy(&producer_addr.bytes, msg.producerSignature[0..32]);
 
@@ -692,33 +908,86 @@ pub const Server = struct {
             }
         }
 
-        // Insert into Turbine collector
-        const maybe_block = try self.turbine.receiveShred(&shred);
+        // Insert into Turbine collector with duplicate detection
+        const maybe_block = self.turbine.receiveShred(&shred) catch |err| {
+            if (err == error.DuplicateShred) {
+                return; // Ignore duplicate shreds gracefully, preventing broadcast storms
+            }
+            return err;
+        };
+
         if (maybe_block) |block_data| {
             defer self.allocator.free(block_data);
-            // Block fully reconstructed — process it
             log.debug("Turbine: Block {} reconstructed ({} bytes)\n", .{ shred.blockNumber, block_data.len });
             peer.updateScore(15);
         }
 
         self.stats.shredsRelayed += 1;
 
-        // Relay shred to children in propagation tree
-        const children = self.turbine.tree.getChildren(0); // Our peer_index
-        if (children.len > 0) {
-            self.relayShredToChildren(msg, children);
+        // Relay shred to children in deterministic propagation tree
+        var validators = std.ArrayList(core.types.Address).empty;
+        defer validators.deinit(self.allocator);
+
+        if (self.shredVerifier) |verifier| {
+            var it = verifier.validators.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.active) {
+                    validators.append(self.allocator, entry.value_ptr.address) catch {};
+                }
+            }
         }
-    }
 
-    fn relayShredToChildren(self: *Self, msg: types.ShredMsg, children: []const turbine_mod.TreeNode) void {
+        var found_self = false;
+        for (validators.items) |addr| {
+            if (std.mem.eql(u8, &addr.bytes, &self.config.validatorAddress.bytes)) {
+                found_self = true;
+                break;
+            }
+        }
+        if (!found_self and !std.mem.eql(u8, &self.config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
+            validators.append(self.allocator, self.config.validatorAddress) catch {};
+        }
+
+        if (validators.items.len == 0) {
+            for (self.peers.items) |p| {
+                if (p.handshakeComplete) {
+                    validators.append(self.allocator, p.validatorAddress) catch {};
+                }
+            }
+        }
+
+        std.mem.sort(core.types.Address, validators.items, {}, struct {
+            fn lessThan(_: void, a: core.types.Address, b: core.types.Address) bool {
+                return std.mem.lessThan(u8, &a.bytes, &b.bytes);
+            }
+        }.lessThan);
+
+        const total_shreds = msg.totalDataShreds + msg.totalParityShreds;
         self.mutex.lock();
-        defer self.mutex.unlock();
+        self.turbine.buildPropTree(@intCast(validators.items.len), total_shreds) catch {
+            self.mutex.unlock();
+            return;
+        };
+        self.mutex.unlock();
 
-        for (children) |child| {
-            if (child.peerIndex < self.peers.items.len) {
-                const child_peer = self.peers.items[child.peerIndex];
-                if (child_peer.handshakeComplete) {
-                    child_peer.send(types.MsgShred, msg) catch {};
+        var our_index: u32 = 0;
+        for (validators.items, 0..) |addr, idx| {
+            if (std.mem.eql(u8, &addr.bytes, &self.config.validatorAddress.bytes)) {
+                our_index = @intCast(idx);
+                break;
+            }
+        }
+
+        const children = self.turbine.tree.getChildren(our_index);
+        if (children.len > 0) {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            for (children) |child| {
+                if (child.peerIndex < validators.items.len) {
+                    const child_addr = validators.items[child.peerIndex];
+                    if (self.findPeerByValidatorAddress(child_addr)) |child_peer| {
+                        child_peer.send(types.MsgShred, msg) catch {};
+                    }
                 }
             }
         }
@@ -773,11 +1042,95 @@ pub const Server = struct {
     }
 
     fn handleViewChange(self: *Self, peer: *Peer, payload: []const u8) !void {
-        _ = try rlp.decode(self.allocator, types.ViewChangeMsg, payload);
+        const msg = try rlp.decode(self.allocator, types.ViewChangeMsg, payload);
         peer.updateScore(1);
+
+        // Validate view change message — verify the BLS signature
+        const sig_valid = try self.engine.verify_vote_signature(
+            msg.validatorIndex,
+            core.types.Hash.zero(), // View-change votes sign the view number, not a block
+            msg.view,
+            msg.signature,
+        );
+
+        if (!sig_valid) {
+            peer.updateScore(-20);
+            return;
+        }
+
+        // Accumulate the vote in the consensus engine
+        const quorum_reached = self.engine.voteViewChange();
+        if (quorum_reached) {
+            self.engine.completeViewChange();
+            self.engine.resetViewChangeBackoff();
+            log.info("View change complete — new proposer elected for view {}\n", .{msg.view});
+        }
 
         // Relay to all committee members
         try self.broadcastToCommittee(types.MsgViewChange, payload);
+    }
+
+    /// Handle incoming BLS vote for the current slot's block.
+    /// Verifies the signature, accumulates the vote in the adaptive
+    /// consensus engine, and if quorum is reached, forms a QC and
+    /// propagates it + updates finality.
+    fn handleVote(self: *Self, peer: *Peer, payload: []const u8) !void {
+        const msg = try rlp.decode(self.allocator, types.VoteMsg, payload);
+
+        // Verify BLS signature over (blockHash || view)
+        const sig_valid = try self.engine.verify_vote_signature(
+            msg.validatorIndex,
+            msg.blockHash,
+            msg.view,
+            msg.signature,
+        );
+
+        if (!sig_valid) {
+            peer.updateScore(-30); // Severe penalty for invalid vote signature
+            return;
+        }
+
+        peer.updateScore(5); // Reward for valid vote
+
+        // Get the validator's stake for weighted quorum tracking.
+        // Bounds-check the index to prevent out-of-bounds access.
+        var voter_stake: u64 = 1;
+        if (msg.validatorIndex < self.engine.activeValidators.len) {
+            voter_stake = @truncate(self.engine.activeValidators[msg.validatorIndex].stake);
+            if (voter_stake == 0) voter_stake = 1; // Minimum weight of 1
+        }
+
+        // Accumulate vote in adaptive consensus.
+        // addVote returns true if quorum (≥67% stake) is now met.
+        const quorum_reached = try self.engine.adaptive.addVote(
+            msg.validatorIndex,
+            msg.signature,
+            voter_stake,
+        );
+
+        if (quorum_reached) {
+            // Build the Woven Quorum Certificate
+            if (self.engine.adaptive.buildQC(msg.blockHash)) |qc| {
+                // Propagate finality to ZeliusEngine
+                self.engine.updateFinality(qc.slot);
+                self.engine.resetViewChangeBackoff();
+
+                log.info("QC formed for slot {} — block finalized (stake: {})\n", .{
+                    qc.slot,
+                    qc.totalAttestingStake,
+                });
+
+                // Broadcast QC to entire network
+                const qc_payload = try rlp.encode(self.allocator, qc);
+                defer self.allocator.free(qc_payload);
+                try self.broadcastRaw(types.MsgQuorumCertificate, qc_payload);
+            }
+        }
+
+        // Relay vote to committee (if not already quorum)
+        if (!quorum_reached) {
+            try self.broadcastToCommittee(types.MsgVote, payload);
+        }
     }
 
     fn handleSlashEvidence(self: *Self, peer: *Peer, payload: []const u8) !void {
@@ -914,8 +1267,14 @@ pub const Server = struct {
         try peer.send(types.MsgPong, pong);
     }
 
-    fn handlePong(_: *Self, peer: *Peer, payload: []const u8) !void {
-        _ = payload;
+    fn handlePong(self: *Self, peer: *Peer, payload: []const u8) !void {
+        const msg = try rlp.decode(self.allocator, types.PongMsg, payload);
+        const send_time = @as(i64, @bitCast(msg.nonce));
+        const now = std.time.milliTimestamp();
+        const rtt = now - send_time;
+        if (rtt > 0 and rtt < 10000) {
+            peer.rtt_ms = @intCast(rtt);
+        }
         peer.updateScore(1);
     }
 
@@ -1295,6 +1654,14 @@ pub const Server = struct {
                 const sleep_ns = @min(remaining, step_ns);
                 std.Thread.sleep(sleep_ns);
                 remaining -|= sleep_ns;
+
+                self.checkAndRequestRepairs() catch |err| {
+                    log.debug("Error in checkAndRequestRepairs: {}\n", .{err});
+                };
+
+                self.forwardGulfStream() catch |err| {
+                    log.debug("Error forwarding Gulf Stream batches: {}\n", .{err});
+                };
             }
             if (!self.running) break;
             self.prunePeers();
@@ -1350,10 +1717,10 @@ pub const Server = struct {
 
                 peer.deinit();
             } else {
-                // Keep-alive pinging: if peer has been idle for > 60 seconds, send a ping to keep it alive
-                if (now - peer.lastMessageTime > 60_000) {
+                // Keep-alive pinging: if peer has been idle for > 15 seconds, send a ping to keep it alive & track RTT
+                if (now - peer.lastMessageTime > 15_000) {
                     const ping_msg = types.PingMsg{
-                        .nonce = std.crypto.random.int(u64),
+                        .nonce = @bitCast(now),
                         .timestamp = now,
                     };
                     peer.send(types.MsgPing, ping_msg) catch {};
@@ -1472,5 +1839,255 @@ pub const Server = struct {
             health[i] = @intCast(self.subnetPeers[i].items.len);
         }
         return health;
+    }
+
+    pub fn findPeerByValidatorAddress(self: *Self, addr: core.types.Address) ?*Peer {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        for (self.peers.items) |peer| {
+            if (peer.handshakeComplete and std.mem.eql(u8, &peer.validatorAddress.bytes, &addr.bytes)) {
+                return peer;
+            }
+        }
+        return null;
+    }
+
+    fn handleShredRepairRequest(self: *Self, peer: *Peer, payload: []const u8) !void {
+        const msg = try rlp.decode(self.allocator, types.ShredRepairRequestMsg, payload);
+        defer self.allocator.free(msg.shredIndices);
+
+        for (msg.shredIndices) |idx| {
+            if (self.turbine.getCachedShred(msg.blockNumber, idx)) |shred| {
+                const resp = types.ShredMsg{
+                    .blockNumber = shred.blockNumber,
+                    .shredIndex = shred.shredIndex,
+                    .totalDataShreds = shred.totalDataShreds,
+                    .totalParityShreds = shred.totalParityShreds,
+                    .shredType = shred.shredType,
+                    .payload = shred.payload,
+                    .producerSignature = shred.producerSignature,
+                    .treeLayer = 0,
+                    .treeIndex = 0,
+                    .threadId = shred.threadId,
+                };
+                peer.send(types.MsgShred, resp) catch {};
+            }
+        }
+    }
+
+    pub fn checkAndRequestRepairs(self: *Self) !void {
+        const now = std.time.milliTimestamp();
+
+        // 1. Get active validators
+        var validators = std.ArrayList(core.types.Address).empty;
+        defer validators.deinit(self.allocator);
+
+        if (self.shredVerifier) |verifier| {
+            var it = verifier.validators.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.active) {
+                    try validators.append(self.allocator, entry.value_ptr.address);
+                }
+            }
+        }
+
+        var found_self = false;
+        for (validators.items) |addr| {
+            if (std.mem.eql(u8, &addr.bytes, &self.config.validatorAddress.bytes)) {
+                found_self = true;
+                break;
+            }
+        }
+        if (!found_self and !std.mem.eql(u8, &self.config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
+            try validators.append(self.allocator, self.config.validatorAddress);
+        }
+
+        if (validators.items.len == 0) {
+            self.mutex.lock();
+            for (self.peers.items) |peer| {
+                if (peer.handshakeComplete) {
+                    try validators.append(self.allocator, peer.validatorAddress);
+                }
+            }
+            self.mutex.unlock();
+        }
+
+        if (validators.items.len == 0) return;
+
+        std.mem.sort(core.types.Address, validators.items, {}, struct {
+            fn lessThan(_: void, a: core.types.Address, b: core.types.Address) bool {
+                return std.mem.lessThan(u8, &a.bytes, &b.bytes);
+            }
+        }.lessThan);
+
+        var our_index: u32 = 0;
+        for (validators.items, 0..) |addr, idx| {
+            if (std.mem.eql(u8, &addr.bytes, &self.config.validatorAddress.bytes)) {
+                our_index = @intCast(idx);
+                break;
+            }
+        }
+
+        // 2. Iterate collectors
+        for (&self.turbine.collectorStripes) |*stripe| {
+            stripe.mutex.lock();
+            
+            var requests = std.ArrayList(struct {
+                blockNumber: u64,
+                missing: []u32,
+                totalShreds: u32,
+            }).empty;
+            defer {
+                for (requests.items) |r| self.allocator.free(r.missing);
+                requests.deinit(self.allocator);
+            }
+
+            var it = stripe.collectors.iterator();
+            while (it.next()) |entry| {
+                const collector = entry.value_ptr.*;
+                if (collector.complete) continue;
+
+                if (now - collector.createdTime > 150 and now - collector.lastRepairTime > 300) {
+                    var missing_list = std.ArrayList(u32).empty;
+                    errdefer missing_list.deinit(self.allocator);
+
+                    for (collector.present, 0..) |p, idx| {
+                        if (!p) {
+                            try missing_list.append(self.allocator, @intCast(idx));
+                            if (missing_list.items.len >= 16) break;
+                        }
+                    }
+
+                    if (missing_list.items.len > 0) {
+                        collector.lastRepairTime = now;
+                        try requests.append(self.allocator, .{
+                            .blockNumber = collector.blockNumber,
+                            .missing = try missing_list.toOwnedSlice(self.allocator),
+                            .totalShreds = collector.totalShreds,
+                        });
+                    } else {
+                        missing_list.deinit(self.allocator);
+                    }
+                }
+            }
+            stripe.mutex.unlock();
+
+            // 3. Send requests
+            for (requests.items) |req| {
+                self.mutex.lock();
+                self.turbine.buildPropTree(@intCast(validators.items.len), req.totalShreds) catch {
+                    self.mutex.unlock();
+                    continue;
+                };
+                self.mutex.unlock();
+
+                const parent_idx_opt = self.turbine.tree.getParentIndex(our_index);
+                var target_peer: ?*Peer = null;
+
+                if (parent_idx_opt) |parent_idx| {
+                    if (parent_idx < validators.items.len) {
+                        const parent_addr = validators.items[parent_idx];
+                        target_peer = self.findPeerByValidatorAddress(parent_addr);
+                    }
+                }
+
+                // Fallback to producer (root)
+                if (target_peer == null) {
+                    target_peer = self.findPeerByValidatorAddress(validators.items[0]);
+                }
+
+                // Fallback to random peer
+                if (target_peer == null) {
+                    self.mutex.lock();
+                    if (self.peers.items.len > 0) {
+                        const rand_idx = std.crypto.random.intRangeLessThan(usize, 0, self.peers.items.len);
+                        const p = self.peers.items[rand_idx];
+                        if (p.handshakeComplete) {
+                            target_peer = p;
+                        }
+                    }
+                    self.mutex.unlock();
+                }
+
+                if (target_peer) |peer| {
+                    const repair_msg = types.ShredRepairRequestMsg{
+                        .blockNumber = req.blockNumber,
+                        .shredIndices = req.missing,
+                        .requesterAddress = self.config.validatorAddress,
+                    };
+                    peer.send(types.MsgShredRepairRequest, repair_msg) catch {};
+                }
+            }
+        }
+    }
+
+    /// Periodically drains pending ready tx batches from Gulf Stream
+    /// and forwards them to the predicted leader/proposer for the next slot.
+    fn forwardGulfStream(self: *Self) !void {
+        var drain_result = try self.gulfStream.drainBatch() orelse return;
+        defer drain_result.deinit();
+
+        const target = drain_result.target orelse return;
+
+        // Find the peer representing the predicted proposer
+        self.mutex.lock();
+        var target_peer: ?*Peer = null;
+        for (self.peers.items) |peer| {
+            if (peer.validatorAddress.eql(target.validatorAddress) and peer.connected and peer.handshakeComplete) {
+                target_peer = peer;
+                break;
+            }
+        }
+        self.mutex.unlock();
+
+        if (target_peer) |peer| {
+            for (drain_result.batches) |batch| {
+                const msg = types.TxBatchMsg{
+                    .txHashes = batch.txHashes.items,
+                    .txData = batch.txData.items,
+                    .compressed = batch.compressed,
+                    .batchId = batch.batchId,
+                    .senderSubnet = 0,
+                };
+                peer.send(types.MsgTxBatch, msg) catch |err| {
+                    log.warn("Failed to forward batch {d} to leader peer: {}\n", .{batch.batchId, err});
+                };
+            }
+            log.info("Gulf Stream: Forwarded {d} batch(es) to predicted proposer {s} (slot {d})\n", .{
+                drain_result.batches.len,
+                &std.fmt.bytesToHex(target.validatorAddress.bytes, .lower),
+                target.slot,
+            });
+        } else {
+            // Proposer not connected to us directly. Fallback: send to the most reputable peer
+            self.mutex.lock();
+            var best_peer: ?*Peer = null;
+            for (self.peers.items) |peer| {
+                if (peer.connected and peer.handshakeComplete) {
+                    if (best_peer == null or peer.score > best_peer.?.score) {
+                        best_peer = peer;
+                    }
+                }
+            }
+            self.mutex.unlock();
+
+            if (best_peer) |peer| {
+                for (drain_result.batches) |batch| {
+                    const msg = types.TxBatchMsg{
+                        .txHashes = batch.txHashes.items,
+                        .txData = batch.txData.items,
+                        .compressed = batch.compressed,
+                        .batchId = batch.batchId,
+                        .senderSubnet = 0,
+                    };
+                    peer.send(types.MsgTxBatch, msg) catch {};
+                }
+                log.debug("Gulf Stream: Proposer {s} not connected. Relayed {d} batch(es) via fallback peer {s}\n", .{
+                    &std.fmt.bytesToHex(target.validatorAddress.bytes, .lower),
+                    drain_result.batches.len,
+                    peer.ipSlice(),
+                });
+            }
+        }
     }
 };

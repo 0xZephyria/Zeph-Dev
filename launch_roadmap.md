@@ -37,8 +37,8 @@ This document outlines the essential protocol modifications, cryptographic upgra
   - Secure all peer streams using **TLS 1.3** or the **Noise Protocol Framework (IK handshake)**.
   - Implement strict mutual authentication (mTLS) where connection certificates are tied directly to the peer's network identity keys.
 
-### 🟡 Kademlia DHT Peer Discovery (discv5)
-* **Current State**: Discovery relies on hardcoded addresses and mock bootstrap peer generation.
+### 🟡 Kademlia DHT Peer Discovery & STUN NAT Traversal [STUN Done]
+* **Current State**: Discovery uses ZNR (Zephyria Node Records) over Kademlia. Added active STUN client auto-discovery for NAT Traversal.
 * **Mainnet Requirement**: 
   - Implement a standard Kademlia DHT protocol (like Ethereum's **discv5**).
   - Use signed ENRs (Ethereum Node Records) containing IP addresses, TCP/UDP ports, and cryptographic capabilities.

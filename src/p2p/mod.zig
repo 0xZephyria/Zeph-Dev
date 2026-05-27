@@ -16,6 +16,7 @@ pub const turbine = @import("turbine.zig");
 pub const gulf_stream = @import("gulf_stream.zig");
 pub const compression = @import("compression.zig");
 pub const shred_verifier = @import("shred_verifier.zig");
+pub const stun = @import("stun.zig");
 
 // Export key structs
 pub const Server = server.Server;

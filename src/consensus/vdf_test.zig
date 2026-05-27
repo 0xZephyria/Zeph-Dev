@@ -56,12 +56,7 @@ test "Zelius consensus sealing and verification" {
     const seed = [_]u8{42} ** 32;
 
     // Derive G1 public key from private key (seed is used directly in zelius.zig)
-    var pk: c.blst_p1 = undefined;
-    var sk: c.blst_scalar = undefined;
-    c.blst_scalar_from_bendian(&sk, &seed);
-    c.blst_sk_to_pk_in_g1(&pk, &sk);
-    var pk_bytes: [48]u8 = undefined;
-    c.blst_p1_compress(&pk_bytes, &pk);
+    const pk_bytes = zelius.deriveBlsPubKey(seed);
 
     const validator_addr = core.types.Address{ .bytes = [_]u8{1} ** 32 };
 

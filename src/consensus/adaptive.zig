@@ -504,11 +504,15 @@ pub const AdaptiveConsensus = struct {
 
     /// Create a BLS vote (signature) over a block header hash.
     pub fn createVote(bls_priv_key: [32]u8, header_hash: core.types.Hash) [96]u8 {
+        var mutable_key = bls_priv_key;
+        defer @memset(&mutable_key, 0);
+
         var p2: c.blst_p2 = undefined;
         c.blst_hash_to_g2(&p2, &header_hash.bytes, header_hash.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
-        c.blst_scalar_from_bendian(&sk, &bls_priv_key);
+        defer @memset(std.mem.asBytes(&sk), 0);
+        c.blst_scalar_from_bendian(&sk, &mutable_key);
 
         var sig: c.blst_p2 = undefined;
         c.blst_sign_pk_in_g1(&sig, &p2, &sk);

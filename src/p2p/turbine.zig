@@ -484,6 +484,9 @@ pub const ShredCollector = struct {
     present: []bool,
     receivedCount: u32,
     complete: bool,
+    lastRepairTime: i64,
+    createdTime: i64,
+    producerSignature: [64]u8,
 
     const Self = @This();
 
@@ -509,6 +512,9 @@ pub const ShredCollector = struct {
             .present = present,
             .receivedCount = 0,
             .complete = false,
+            .lastRepairTime = 0,
+            .createdTime = std.time.milliTimestamp(),
+            .producerSignature = [_]u8{0} ** 64,
         };
     }
 
@@ -713,6 +719,38 @@ pub const PropagationTree = struct {
         }
         return &[_]TreeNode{};
     }
+
+    /// Get the parent's peerIndex for a given peerIndex.
+    pub fn getParentIndex(self: *const Self, peerIndex: u32) ?u32 {
+        if (peerIndex == 0 or self.nodes.items.len == 0) return null;
+
+        var node_idx_opt: ?usize = null;
+        for (self.nodes.items, 0..) |node, i| {
+            if (node.peerIndex == peerIndex) {
+                node_idx_opt = i;
+                break;
+            }
+        }
+        const node_idx = node_idx_opt orelse return null;
+
+        for (self.nodes.items) |parent| {
+            if (parent.childrenCount > 0) {
+                const start = parent.childrenStart;
+                const end = start + parent.childrenCount;
+                if (node_idx >= start and node_idx < end) {
+                    return parent.peerIndex;
+                }
+            }
+        }
+        return null;
+    }
+};
+
+// Cache of recently completed/shredded block shreds
+pub const CachedBlockShreds = struct {
+    blockNumber: u64,
+    shreds: []Shred,
+    timestamp: i64,
 };
 
 // ── Turbine Engine ──────────────────────────────────────────────────────
@@ -732,6 +770,10 @@ pub const TurbineEngine = struct {
     shredsReceived: std.atomic.Value(u64),
     reconstructionFailures: std.atomic.Value(u64),
     corruptedShreds: std.atomic.Value(u64),
+
+    shredCache: [8]?CachedBlockShreds,
+    shredCacheIdx: usize,
+    shredCacheMutex: std.Thread.Mutex,
 
     const CollectorStripe = struct {
         collectors: std.AutoHashMap(u64, *ShredCollector),
@@ -759,6 +801,9 @@ pub const TurbineEngine = struct {
             .shredsReceived = std.atomic.Value(u64).init(0),
             .reconstructionFailures = std.atomic.Value(u64).init(0),
             .corruptedShreds = std.atomic.Value(u64).init(0),
+            .shredCache = [_]?CachedBlockShreds{null} ** 8,
+            .shredCacheIdx = 0,
+            .shredCacheMutex = .{},
         };
     }
 
@@ -772,6 +817,74 @@ pub const TurbineEngine = struct {
             stripe.collectors.deinit();
         }
         self.tree.deinit();
+
+        // Free cache
+        self.shredCacheMutex.lock();
+        defer self.shredCacheMutex.unlock();
+        for (&self.shredCache) |*maybe_entry| {
+            if (maybe_entry.*) |*entry| {
+                for (entry.shreds) |s| {
+                    self.allocator.free(s.payload);
+                }
+                self.allocator.free(entry.shreds);
+                maybe_entry.* = null;
+            }
+        }
+    }
+
+    pub fn cacheShreds(self: *Self, blockNumber: u64, shreds: []const Shred) !void {
+        self.shredCacheMutex.lock();
+        defer self.shredCacheMutex.unlock();
+
+        if (self.shredCache[self.shredCacheIdx]) |*old| {
+            for (old.shreds) |s| {
+                self.allocator.free(s.payload);
+            }
+            self.allocator.free(old.shreds);
+            self.shredCache[self.shredCacheIdx] = null;
+        }
+
+        const cached_shreds = try self.allocator.alloc(Shred, shreds.len);
+        errdefer self.allocator.free(cached_shreds);
+
+        for (shreds, 0..) |s, i| {
+            cached_shreds[i] = .{
+                .blockNumber = s.blockNumber,
+                .shredIndex = s.shredIndex,
+                .totalDataShreds = s.totalDataShreds,
+                .totalParityShreds = s.totalParityShreds,
+                .shredType = s.shredType,
+                .payload = try self.allocator.dupe(u8, s.payload),
+                .producerSignature = s.producerSignature,
+                .threadId = s.threadId,
+                .crc32 = s.crc32,
+            };
+        }
+
+        self.shredCache[self.shredCacheIdx] = .{
+            .blockNumber = blockNumber,
+            .shreds = cached_shreds,
+            .timestamp = std.time.milliTimestamp(),
+        };
+        self.shredCacheIdx = (self.shredCacheIdx + 1) % 8;
+    }
+
+    pub fn getCachedShred(self: *Self, blockNumber: u64, shredIndex: u32) ?Shred {
+        self.shredCacheMutex.lock();
+        defer self.shredCacheMutex.unlock();
+
+        for (self.shredCache) |maybe_entry| {
+            if (maybe_entry) |entry| {
+                if (entry.blockNumber == blockNumber) {
+                    for (entry.shreds) |s| {
+                        if (s.shredIndex == shredIndex) {
+                            return s;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     fn getStripe(self: *Self, blockNumber: u64) *CollectorStripe {
@@ -780,12 +893,13 @@ pub const TurbineEngine = struct {
 
     /// Shred a block into data + parity shreds with Reed-Solomon encoding.
     /// Each shred includes a CRC32 integrity tag for corruption detection.
-    pub fn shredBlock(self: *Self, block_data: []const u8, blockNumber: u64, signature: [64]u8) ![]Shred {
+    pub fn shredBlock(self: *Self, block_data: []const u8, blockNumber: u64, signature: [64]u8, parity_ratio: ?f64) ![]Shred {
         if (block_data.len > MAX_BLOCK_SIZE) return error.BlockTooLarge;
         if (block_data.len == 0) return error.EmptyBlock;
 
+        const ratio = parity_ratio orelse DEFAULT_PARITY_RATIO;
         const dataShreds = @as(u32, @intCast(@divTrunc(block_data.len + MAX_SHRED_PAYLOAD - 1, MAX_SHRED_PAYLOAD)));
-        const parityShreds = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(dataShreds)) * DEFAULT_PARITY_RATIO)));
+        const parityShreds = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(dataShreds)) * ratio)));
         const totalShreds = dataShreds + parityShreds;
 
         const shard_bufs = try self.allocator.alloc([]u8, totalShreds);
@@ -830,6 +944,8 @@ pub const TurbineEngine = struct {
         _ = self.blocksShredded.fetchAdd(1, .monotonic);
         _ = self.shredsSent.fetchAdd(totalShreds, .monotonic);
 
+        try self.cacheShreds(blockNumber, shreds);
+
         return shreds;
     }
 
@@ -870,6 +986,16 @@ pub const TurbineEngine = struct {
         }
         const collector = entry.value_ptr.*;
 
+        // Duplicate check
+        if (collector.present[shred.shredIndex]) {
+            return error.DuplicateShred;
+        }
+
+        // Store producer signature on first shred
+        if (collector.receivedCount == 0) {
+            collector.producerSignature = shred.producerSignature;
+        }
+
         if (collector.insertShred(shred)) {
             const block_data = collector.reconstruct() catch |err| {
                 _ = self.reconstructionFailures.fetchAdd(1, .monotonic);
@@ -878,6 +1004,29 @@ pub const TurbineEngine = struct {
             };
 
             _ = self.blocksReconstructed.fetchAdd(1, .monotonic);
+
+            // Re-encode all shards (including parity) to cache the complete block
+            const rs = ReedSolomon.init(collector.dataShreds, collector.parityShreds);
+            rs.encode(collector.shards);
+
+            // Create shreds list for caching
+            var shreds_list = try self.allocator.alloc(Shred, collector.totalShreds);
+            for (0..collector.totalShreds) |i| {
+                shreds_list[i] = .{
+                    .blockNumber = collector.blockNumber,
+                    .shredIndex = @intCast(i),
+                    .totalDataShreds = collector.dataShreds,
+                    .totalParityShreds = collector.parityShreds,
+                    .shredType = if (i < collector.dataShreds) .Data else .Parity,
+                    .payload = collector.shards[i],
+                    .producerSignature = collector.producerSignature,
+                    .threadId = 0,
+                    .crc32 = 0,
+                };
+                shreds_list[i].crc32 = shreds_list[i].computeCrc();
+            }
+            try self.cacheShreds(collector.blockNumber, shreds_list);
+            self.allocator.free(shreds_list);
 
             collector.deinit();
             self.allocator.destroy(collector);
@@ -1130,7 +1279,7 @@ test "TurbineEngine shred-reconstruct round-trip" {
     for (0..5500) |i| block[i] = @intCast(i % 256);
 
     const sig = [_]u8{0xAA} ** 64;
-    const shreds = try engine.shredBlock(block, 1, sig);
+    const shreds = try engine.shredBlock(block, 1, sig, null);
     defer engine.freeShreds(shreds);
 
     // Feed all shreds to a second engine (simulating receiver)

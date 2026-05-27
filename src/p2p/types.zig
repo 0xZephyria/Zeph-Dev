@@ -45,6 +45,7 @@ pub const MsgSubnetSubscribe: u64 = 0x17;
 pub const MsgSubnetUnsubscribe: u64 = 0x18;
 pub const MsgPing: u64 = 0x19;
 pub const MsgPong: u64 = 0x1A;
+pub const MsgShredRepairRequest: u64 = 0x1B;
 
 // Loom Genesis Adaptive Consensus Messages
 pub const MsgThreadAttestation: u64 = 0x20;
@@ -240,6 +241,12 @@ pub const ShredMsg = struct {
     treeIndex: u16,
     /// Thread ID (Loom Genesis: which thread this shred belongs to)
     threadId: u8,
+};
+
+pub const ShredRepairRequestMsg = struct {
+    blockNumber: u64,
+    shredIndices: []const u32,
+    requesterAddress: core.types.Address,
 };
 
 // ── Attestation Types ───────────────────────────────────────────────────

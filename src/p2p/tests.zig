@@ -279,7 +279,7 @@ test "ShredCollector - collect and reconstruct" {
     const sig = [_]u8{0xAB} ** 64;
 
     // Shred the block
-    const shreds = try engine.shredBlock(block_data, 42, sig);
+    const shreds = try engine.shredBlock(block_data, 42, sig, null);
     defer engine.freeShreds(shreds);
 
     try testing.expect(shreds.len > 0);
@@ -424,6 +424,47 @@ test "Discovery - ZNR serialize/deserialize roundtrip" {
     try testing.expectEqual(@as(u16, 30303), decoded.?.udpPort);
     try testing.expectEqual(@as(u64, 1000000), decoded.?.stake);
     try testing.expectEqualSlices(u8, "znr1", &decoded.?.id);
+}
+
+test "Discovery - ZNR connection string roundtrip" {
+    const pubkey = [_]u8{0xBB} ** 33;
+    var znr = discovery.ZnrRecord.init(pubkey, [4]u8{ 8, 8, 8, 8 }, 30303);
+    znr.seq = 100;
+    znr.stake = 50000;
+    znr.subnets = [_]u8{0x55} ** 8;
+    
+    // Set a dummy validator address
+    var val_addr_bytes = [_]u8{0xCC} ** 32;
+    @memcpy(&znr.validatorAddr.bytes, &val_addr_bytes);
+
+    var buf: [256]u8 = undefined;
+    const conn_str = try znr.toConnectionString(&buf);
+    
+    const parsed = try discovery.ZnrRecord.fromConnectionString(conn_str);
+    try testing.expectEqual(znr.seq, parsed.seq);
+    try testing.expectEqualSlices(u8, &znr.pubkey, &parsed.pubkey);
+    try testing.expectEqualSlices(u8, &znr.ip4, &parsed.ip4);
+    try testing.expectEqual(znr.udpPort, parsed.udpPort);
+    try testing.expectEqual(znr.stake, parsed.stake);
+    try testing.expectEqualSlices(u8, &znr.subnets, &parsed.subnets);
+    try testing.expectEqualSlices(u8, &znr.validatorAddr.bytes, &parsed.validatorAddr.bytes);
+}
+
+test "Discovery - Secure Identity Derivation" {
+    const priv_key = [_]u8{0x42} ** 32;
+    var d = try discovery.DiscoveryService.init(testing.allocator, &priv_key, 30303);
+    defer d.deinit();
+
+    // Verify node ID does not equal private key (to prevent leakage)
+    try testing.expect(!std.mem.eql(u8, d.localNode.id[0..32], &priv_key));
+    // Verify ZNR public key does not equal private key
+    try testing.expect(!std.mem.eql(u8, d.localZnr.pubkey[0..32], &priv_key));
+
+    // Verify they equal the derived Ed25519 public key
+    const key_pair = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(priv_key);
+    const expected_pub = key_pair.public_key.toBytes();
+    try testing.expectEqualSlices(u8, &expected_pub, d.localNode.id[0..32]);
+    try testing.expectEqualSlices(u8, &expected_pub, d.localZnr.pubkey[0..32]);
 }
 
 test "Discovery - stats" {
@@ -593,3 +634,200 @@ test "GulfStream - stats" {
     const stats = gs.getStats();
     try testing.expectEqual(@as(u64, 0), stats.batchesForwarded);
 }
+
+test "Turbine - parent index resolution" {
+    var tree = turbine.PropagationTree.init(testing.allocator);
+    defer tree.deinit();
+
+    try tree.build(5, 100);
+
+    try testing.expectEqual(@as(?u32, null), tree.getParentIndex(0));
+
+    try testing.expectEqual(@as(?u32, 0), tree.getParentIndex(1));
+    try testing.expectEqual(@as(?u32, 0), tree.getParentIndex(2));
+    try testing.expectEqual(@as(?u32, 0), tree.getParentIndex(3));
+    try testing.expectEqual(@as(?u32, 0), tree.getParentIndex(4));
+}
+
+test "Turbine - mock network propagation with 30% packet loss and repair recovery" {
+    const allocator = testing.allocator;
+    const shred_verifier = @import("shred_verifier.zig");
+
+    var addrs: [5]core.types.Address = undefined;
+    for (0..5) |i| {
+        addrs[i] = core.types.Address.zero();
+        addrs[i].bytes[0] = @intCast(i + 1);
+    }
+
+    var verifiers: [5]shred_verifier.ShredVerifier = undefined;
+    var engines: [5]turbine.TurbineEngine = undefined;
+
+    for (0..5) |i| {
+        verifiers[i] = shred_verifier.ShredVerifier.init(allocator, .{
+            .sampleRate = 1.0,
+            .enabled = true,
+        });
+        engines[i] = turbine.TurbineEngine.init(allocator);
+
+        for (addrs) |addr| {
+            try verifiers[i].addValidator(.{
+                .address = addr,
+                .pubkey = [_]u8{0} ** 32,
+                .stake = 1000,
+                .active = true,
+            });
+        }
+    }
+    defer {
+        for (0..5) |i| {
+            verifiers[i].deinit();
+            engines[i].deinit();
+        }
+    }
+
+    const block_size = 8000;
+    const block_data = try allocator.alloc(u8, block_size);
+    defer allocator.free(block_data);
+    for (0..block_size) |i| block_data[i] = @intCast(i % 256);
+
+    var producer_sig: [64]u8 = [_]u8{0} ** 64;
+    @memcpy(producer_sig[0..32], &addrs[0].bytes);
+
+    const shreds = try engines[0].shredBlock(block_data, 1, producer_sig, 0.25);
+    defer engines[0].freeShreds(shreds);
+
+    var prng = std.Random.DefaultPrng.init(0xABC123);
+    const random = prng.random();
+
+    for (shreds) |s| {
+        for (1..5) |child_idx| {
+            if (random.float(f32) < 0.30) {
+                continue;
+            }
+            var child_shred = s;
+            child_shred.payload = try allocator.dupe(u8, s.payload);
+            defer allocator.free(child_shred.payload);
+
+            const maybe_block = try engines[child_idx].receiveShred(&child_shred);
+            if (maybe_block) |data| {
+                allocator.free(data);
+            }
+        }
+    }
+
+    for (1..5) |child_idx| {
+        var stripe = &engines[child_idx].collectorStripes[1 % 16];
+        var missing_shreds = std.ArrayList(u32).empty;
+        defer missing_shreds.deinit(allocator);
+
+        stripe.mutex.lock();
+        if (stripe.collectors.get(1)) |collector| {
+            for (collector.present, 0..) |p, s_idx| {
+                if (!p) {
+                    try missing_shreds.append(allocator, @intCast(s_idx));
+                }
+            }
+        }
+        stripe.mutex.unlock();
+
+        for (missing_shreds.items) |s_idx| {
+            if (engines[0].getCachedShred(1, s_idx)) |cached_shred| {
+                var recovered_shred = cached_shred;
+                recovered_shred.payload = try allocator.dupe(u8, cached_shred.payload);
+                defer allocator.free(recovered_shred.payload);
+
+                const maybe_block = try engines[child_idx].receiveShred(&recovered_shred);
+                if (maybe_block) |data| {
+                    allocator.free(data);
+                }
+            }
+        }
+    }
+
+    for (1..5) |i| {
+        const stats = engines[i].getStats();
+        try testing.expectEqual(@as(u64, 1), stats.blocksReconstructed);
+    }
+}
+
+test "STUN - response parsing & decryption" {
+    const stun = @import("stun.zig");
+    
+    // Construct a mock STUN Binding Success Response
+    var response: [100]u8 = undefined;
+    @memset(&response, 0);
+
+    // Header: Type = 0x0101 (Success response), length = 12 (XOR-MAPPED-ADDRESS attribute length + header (4 bytes))
+    std.mem.writeInt(u16, response[0..2], 0x0101, .big);
+    std.mem.writeInt(u16, response[2..4], 12, .big);
+    std.mem.writeInt(u32, response[4..8], stun.STUN_MAGIC_COOKIE, .big);
+    
+    const transaction_id = [_]u8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    @memcpy(response[8..20], &transaction_id);
+
+    // Attribute: Type = 0x0020 (XOR-MAPPED-ADDRESS), Length = 8
+    std.mem.writeInt(u16, response[20..22], 0x0020, .big);
+    std.mem.writeInt(u16, response[22..24], 8, .big);
+
+    // Value: Reserved (1 byte), Family = 0x01 (IPv4, 1 byte), Port XOR-ed (2 bytes), IP XOR-ed (4 bytes)
+    response[24] = 0x00; // Reserved
+    response[25] = 0x01; // Family IPv4
+
+    // Target Port: 12345
+    // Target IP: 192.168.1.50 -> 0xC0A80132
+    const target_port: u16 = 12345;
+    const target_ip_u32: u32 = 0xC0A80132;
+
+    const cookie_high = @as(u16, @intCast(stun.STUN_MAGIC_COOKIE >> 16));
+    const xor_port = target_port ^ cookie_high;
+    const xor_ip = target_ip_u32 ^ stun.STUN_MAGIC_COOKIE;
+
+    std.mem.writeInt(u16, response[26..28], xor_port, .big);
+    std.mem.writeInt(u32, response[28..32], xor_ip, .big);
+
+    const parsed_addr = try stun.parseStunResponse(response[0..32], transaction_id);
+    
+    // Check decrypted port and IP
+    try testing.expectEqual(target_port, parsed_addr.getPort());
+    
+    const parsed_ip_bytes = @as(*const [4]u8, @ptrCast(&parsed_addr.in.sa.addr)).*;
+    try testing.expectEqual(@as(u8, 192), parsed_ip_bytes[0]);
+    try testing.expectEqual(@as(u8, 168), parsed_ip_bytes[1]);
+    try testing.expectEqual(@as(u8, 1), parsed_ip_bytes[2]);
+    try testing.expectEqual(@as(u8, 50), parsed_ip_bytes[3]);
+}
+
+test "STUN - mapped address parsing" {
+    const stun = @import("stun.zig");
+    
+    var response: [100]u8 = undefined;
+    @memset(&response, 0);
+
+    std.mem.writeInt(u16, response[0..2], 0x0101, .big);
+    std.mem.writeInt(u16, response[2..4], 12, .big);
+    std.mem.writeInt(u32, response[4..8], stun.STUN_MAGIC_COOKIE, .big);
+    
+    const transaction_id = [_]u8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    @memcpy(response[8..20], &transaction_id);
+
+    // Attribute: Type = 0x0001 (MAPPED-ADDRESS), Length = 8
+    std.mem.writeInt(u16, response[20..22], 0x0001, .big);
+    std.mem.writeInt(u16, response[22..24], 8, .big);
+
+    response[24] = 0x00;
+    response[25] = 0x01; // Family IPv4
+
+    const target_port: u16 = 54321;
+    const target_ip_bytes = [_]u8{8, 8, 8, 8};
+
+    std.mem.writeInt(u16, response[26..28], target_port, .big);
+    @memcpy(response[28..32], &target_ip_bytes);
+
+    const parsed_addr = try stun.parseStunResponse(response[0..32], transaction_id);
+    
+    try testing.expectEqual(target_port, parsed_addr.getPort());
+    
+    const parsed_ip_bytes = @as(*const [4]u8, @ptrCast(&parsed_addr.in.sa.addr)).*;
+    try testing.expectEqualSlices(u8, &target_ip_bytes, &parsed_ip_bytes);
+}
+

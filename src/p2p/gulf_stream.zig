@@ -373,4 +373,68 @@ pub const GulfStream = struct {
         const pending: usize = if (self.pendingBatch != null and self.pendingBatch.?.txCount > 0) 1 else 0;
         return self.queue.items.len + pending;
     }
+
+    // ── Drain API ────────────────────────────────────────────────────────
+    //
+    // drainBatch() is the production forwarding path: called periodically
+    // by the P2P server loop to forward ready batches to the predicted
+    // proposer. Returns an owned slice of ForwardBatch items that the
+    // caller encodes and transmits. Caller must call deinit() on each
+    // returned batch and free the slice with the provided allocator.
+
+    pub const DrainResult = struct {
+        batches: []ForwardBatch,
+        target: ?LeaderSlot,
+        allocator: std.mem.Allocator,
+
+        pub fn deinit(self: *DrainResult) void {
+            for (self.batches) |*b| {
+                b.deinit(self.allocator);
+            }
+            self.allocator.free(self.batches);
+        }
+    };
+
+    /// Drain all ready forward batches for the current leader.
+    /// Returns null if no batches are ready or no leader is predicted.
+    /// The caller is responsible for calling DrainResult.deinit().
+    pub fn drainBatch(self: *Self) !?DrainResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Flush any pending partial batch first
+        self.flushPendingBatch() catch {};
+
+        if (self.queue.items.len == 0) return null;
+
+        // Get the current forward target
+        const target = self.schedule.currentLeader();
+
+        // Drain all queued batches into an owned slice
+        const batch_count = self.queue.items.len;
+        const batches = try self.allocator.alloc(ForwardBatch, batch_count);
+        for (0..batch_count) |i| {
+            batches[i] = self.queue.items[i];
+        }
+        // Clear the queue (items moved to caller ownership)
+        self.queue.clearRetainingCapacity();
+
+        return DrainResult{
+            .batches = batches,
+            .target = target,
+            .allocator = self.allocator,
+        };
+    }
+
+    /// Drop all pending and queued batches (used on leader change or shutdown).
+    pub fn drainAll(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.pendingBatch) |*b| {
+            b.deinit(self.allocator);
+            self.pendingBatch = null;
+        }
+        for (self.queue.items) |*b| b.deinit(self.allocator);
+        self.queue.clearRetainingCapacity();
+    }
 };

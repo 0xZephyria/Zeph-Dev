@@ -48,7 +48,6 @@ const C_BOX = "\x1b[38;5;240m";
 
 // ── Entry Point ──────────────────────────────────────────────────────────
 
-
 /// Main entry point for the Zephyria blockchain node.
 /// Parses CLI commands and dispatches to the appropriate handlers.
 pub fn main() !void {
@@ -122,6 +121,7 @@ fn printUsage() void {
         "    " ++ C_YEL ++ "--network" ++ RST ++ " " ++ C_DIM ++ "<name>  Network: devnet|testnet   (default: devnet)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--bootstrap" ++ RST ++ " " ++ C_DIM ++ "<ip:port> Bootstrap node address(es)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--mine" ++ RST ++ "            " ++ C_DIM ++ "Enable block production" ++ RST ++ "\n" ++
+        "    " ++ C_YEL ++ "--passive" ++ RST ++ "         " ++ C_DIM ++ "Disable block production on devnet" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--miner.key" ++ RST ++ " " ++ C_DIM ++ "<hex> Validator private key (hex)" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--keystore" ++ RST ++ " " ++ C_DIM ++ "<path> Keystore file for validator" ++ RST ++ "\n" ++
         "    " ++ C_YEL ++ "--password" ++ RST ++ " " ++ C_DIM ++ "<pw>   Keystore password" ++ RST ++ "\n\n", .{});
@@ -281,11 +281,17 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var dataDir: []const u8 = "./node_data";
     var networkName: []const u8 = "devnet";
     var shouldMine: bool = false;
+    var passive: bool = false;
     var minerKeyHex: ?[]const u8 = null;
     var minerKeystorePath: ?[]const u8 = null;
     var password: []const u8 = "password";
     var bootstrapAddrs = std.ArrayListUnmanaged([]const u8){};
     defer bootstrapAddrs.deinit(allocator);
+
+    var publicIp: ?[]const u8 = null;
+    var enableStun: bool = true;
+    var stunHost: []const u8 = "stun.l.google.com";
+    var stunPort: u16 = 19302;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -338,6 +344,25 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
                 }
                 i += 1;
             }
+        } else if (std.mem.eql(u8, args[i], "--public-ip")) {
+            if (i + 1 < args.len) {
+                publicIp = args[i + 1];
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--disable-stun")) {
+            enableStun = false;
+        } else if (std.mem.eql(u8, args[i], "--stun-host")) {
+            if (i + 1 < args.len) {
+                stunHost = args[i + 1];
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--stun-port")) {
+            if (i + 1 < args.len) {
+                stunPort = try std.fmt.parseInt(u16, args[i + 1], 10);
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--passive")) {
+            passive = true;
         }
     }
 
@@ -345,8 +370,8 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     printBanner();
     std.debug.print("  " ++ BOLD ++ C_CYAN ++ "◆ INITIALIZING" ++ RST ++ "\n", .{});
 
-    // Auto-enable mining for devnet
-    if (std.mem.eql(u8, networkName, "devnet") and !shouldMine) {
+    // Auto-enable mining for devnet unless explicitly set to passive
+    if (std.mem.eql(u8, networkName, "devnet") and !shouldMine and !passive) {
         shouldMine = true;
     }
 
@@ -377,6 +402,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     // Determine Miner Identity
     var minerPrivKey: [32]u8 = undefined;
+    defer @memset(&minerPrivKey, 0);
     var validatorAddr: Address = undefined;
 
     if (minerKeyHex) |hex_str| {
@@ -399,8 +425,12 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         std.crypto.random.bytes(&minerPrivKey);
         validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
     } else {
-        // Generate a random identity key (for either mining or standby mode)
-        std.crypto.random.bytes(&minerPrivKey);
+        if (std.mem.eql(u8, networkName, "devnet")) {
+            _ = std.fmt.hexToBytes(&minerPrivKey, core.genesis.default_dev_key) catch unreachable;
+        } else {
+            // Generate a random identity key (for either mining or standby mode)
+            std.crypto.random.bytes(&minerPrivKey);
+        }
         validatorAddr = try core.accounts.eoa.addressFromPrivKey(minerPrivKey);
     }
 
@@ -413,12 +443,20 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         genesisHash = head.hash();
         printComponentFmt("├─", "Chain         ", "Block #{d}", head.header.number);
     } else {
-        const alloc = core.genesis.getDefaultAlloc();
-        const sysContracts = core.genesis.getDefaultSystemContracts();
+        const alloc = core.genesis.getGenesisAllocations(allocator, networkName) catch |err| {
+            log.err("Failed to get genesis allocations: {}", .{err});
+            return;
+        };
+        defer allocator.free(alloc);
+        const sysContracts = core.genesis.getGenesisSystemContracts(allocator, networkName) catch |err| {
+            log.err("Failed to get system contracts: {}", .{err});
+            return;
+        };
+        defer allocator.free(sysContracts);
         const genesis = core.genesis.Genesis{
             .config = network,
-            .alloc = &alloc,
-            .systemContracts = &sysContracts,
+            .alloc = alloc,
+            .systemContracts = sysContracts,
         };
         const genesisBlock = core.genesis.applyGenesis(allocator, db_adapter, genesis) catch |err| {
             log.err("Failed to create genesis block: {}", .{err});
@@ -430,29 +468,63 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     }
 
     // 4. Consensus Engine (Zelius PoS)
-    const validatorInfo = consensus.types.ValidatorInfo{
-        .address = validatorAddr,
-        .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
-        .status = .Active,
-        .blsPubKey = consensus.zelius.deriveBlsPubKey(minerPrivKey),
-        .commission = 500, // 5%
-        .activationBlock = 0,
-        .slashCount = 0,
-        .totalRewards = 0,
-        .name = "validator-0",
-        .website = "",
-    };
-    const validators = [_]consensus.types.ValidatorInfo{validatorInfo};
-    const engine = try consensus.ZeliusEngine.init(allocator, &validators);
+    const val_count: usize = 1;
+    const validators = try allocator.alloc(consensus.types.ValidatorInfo, val_count);
+    defer {
+        for (validators) |v| {
+            allocator.free(v.name);
+        }
+        allocator.free(validators);
+    }
+
+    if (std.mem.eql(u8, networkName, "devnet")) {
+        // Devnet always uses the first standard dev key as the sole consensus validator
+        var seed_bytes: [32]u8 = undefined;
+        defer @memset(&seed_bytes, 0);
+        _ = std.fmt.hexToBytes(&seed_bytes, core.genesis.default_dev_key) catch unreachable;
+        const val_addr = try core.accounts.eoa.addressFromPrivKey(seed_bytes);
+
+        validators[0] = .{
+            .address = val_addr,
+            .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
+            .status = .Active,
+            .blsPubKey = consensus.zelius.deriveBlsPubKey(seed_bytes),
+            .commission = 500, // 5%
+            .activationBlock = 0,
+            .slashCount = 0,
+            .totalRewards = 0,
+            .name = try allocator.dupe(u8, "validator-0"),
+            .website = "",
+        };
+    } else {
+        validators[0] = .{
+            .address = validatorAddr,
+            .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
+            .status = .Active,
+            .blsPubKey = consensus.zelius.deriveBlsPubKey(minerPrivKey),
+            .commission = 500, // 5%
+            .activationBlock = 0,
+            .slashCount = 0,
+            .totalRewards = 0,
+            .name = try allocator.dupe(u8, "validator-0"),
+            .website = "",
+        };
+    }
+
+    const engine = try consensus.ZeliusEngine.init(allocator, validators);
     defer engine.deinit();
+    engine.vdfIterations = @as(u32, @intCast(network.systemParams.vdfIterations));
+    engine.vdfCheckpointInterval = @max(@as(u32, 1), @as(u32, @intCast(network.systemParams.vdfIterations / 10)));
     engine.setPrivKey(minerPrivKey);
     engine.setBlsPrivKey(&minerPrivKey);
     printComponentLine("├─", "Consensus     ", "Loom Genesis Adaptive PoS");
 
     // Initial epoch rotation to seed adaptive consensus
     {
-        const initial_stakes = [_]u64{100_000_000_000};
-        engine.rotateEpoch(0, genesisHash.bytes, &initial_stakes) catch |err| {
+        const initial_stakes = try allocator.alloc(u64, validators.len);
+        defer allocator.free(initial_stakes);
+        @memset(initial_stakes, 100_000_000_000);
+        engine.rotateEpoch(0, genesisHash.bytes, initial_stakes) catch |err| {
             log.err("Initial epoch rotation failed: {}", .{err});
         };
     }
@@ -516,10 +588,20 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     producer.setAsyncRoot(&asyncRoot);
     printComponentLine("├─", "BlockProducer ", "DAG-native + async root");
 
+    //Don't hardcode idx, as everyone's idx will become 9999
+
+    var our_val_idx: u32 = 9999;
+    for (validators, 0..) |v, idx| {
+        if (std.mem.eql(u8, &v.address.bytes, &validatorAddr.bytes)) {
+            our_val_idx = @intCast(idx);
+            break;
+        }
+    }
+
     // 5c. Consensus subsystems
     var pipeline = consensus.Pipeline.init(allocator, .{
-        .validatorCount = 1,
-        .ourIndex = 0,
+        .validatorCount = @intCast(validators.len),
+        .ourIndex = our_val_idx,
         .ourAddress = validatorAddr,
         .threadCount = engine.getThreadCount(),
         .tier = engine.getCurrentTier(),
@@ -529,13 +611,29 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var staking = consensus.Staking.init(allocator, .{});
     defer staking.deinit();
 
-    // Register initial validator in staking
-    staking.registerValidator(
-        validatorAddr,
-        100_000_000_000_000_000_000_000, // 100k ZEE self-stake
-        500, // 5% commission
-        0, // registered at genesis
-    ) catch {};
+    // Restore persisted staking state from DB (no-op on fresh node).
+    // Must run before genesis validator registration — persisted state
+    // takes precedence over config-file validators on a restarting node.
+    const staking_restored = blk: {
+        staking.restore(db_adapter) catch |err| {
+            std.log.warn("Staking restore failed (starting fresh): {}", .{err});
+            break :blk false;
+        };
+        break :blk true;
+    };
+    _ = staking_restored; // Informational — always register genesis validators below
+
+    // Register validators from config (genesis set or reconnecting validators).
+    // On restart these calls are idempotent: registerValidator returns
+    // error.AlreadyRegistered for validators already loaded from DB, which we ignore.
+    for (validators) |v| {
+        staking.registerValidator(
+            v.address,
+            v.stake,
+            v.commission,
+            0,
+        ) catch {};
+    }
 
     // Loom Genesis Adaptive Consensus subsystems
     var threadAttestPool = consensus.ThreadAttestationPool.init(allocator);
@@ -582,7 +680,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     nodeMiner.setPipeline(&pipeline);
     nodeMiner.setStaking(&staking);
-    nodeMiner.setValidatorIndex(0);
+    nodeMiner.setValidatorIndex(our_val_idx);
 
     // 8. Epoch Integration
     const epochIntegration = try node.EpochIntegration.init(
@@ -602,8 +700,33 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     defer historicalState.deinit();
     historicalState.setHead(chain.getHeadNumber());
 
+    // P2: Shred Signature Verifier — Ed25519 + 10% sampling
+    var shredVerifier = p2p.shred_verifier.ShredVerifier.init(allocator, .{
+        .sampleRate = 0.10,
+        .enabled = true,
+    });
+    defer shredVerifier.deinit();
+
+    // Register all validators in shredVerifier
+    for (validators) |v| {
+        try shredVerifier.addValidator(.{
+            .address = v.address,
+            .pubkey = [_]u8{0} ** 32,
+            .stake = 100_000_000_000,
+            .active = true,
+        });
+    }
+
     // 10. P2P Server
-    var p2pServer = try p2p.Server.init(allocator, chain, engine, dagPool, .{ .listenPort = p2pPort });
+    var p2pServer = try p2p.Server.init(allocator, chain, engine, dagPool, .{
+        .listenPort = p2pPort,
+        .validatorAddress = validatorAddr,
+        .identityKey = minerPrivKey,
+        .publicIp = publicIp,
+        .enableStun = enableStun,
+        .stunHost = stunHost,
+        .stunPort = stunPort,
+    });
     defer p2pServer.deinit();
     nodeMiner.setP2p(p2pServer);
     p2pServer.setThreadAttestPool(&threadAttestPool);
@@ -611,22 +734,33 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     // Register bootstrap nodes
     for (bootstrapAddrs.items) |addr_str| {
-        var ip_part = addr_str;
-        var port_part: u16 = 30303;
-        if (std.mem.indexOfScalar(u8, addr_str, ':')) |colon_idx| {
-            ip_part = addr_str[0..colon_idx];
-            port_part = std.fmt.parseInt(u16, addr_str[colon_idx + 1 ..], 10) catch |err| {
-                log.err("Invalid bootstrap port in '{s}': {}", .{ addr_str, err });
+        var address: std.net.Address = undefined;
+        var mock_id: [64]u8 = [_]u8{0} ** 64;
+
+        if (std.mem.startsWith(u8, addr_str, "znr:")) {
+            const znr = p2p.discovery.ZnrRecord.fromConnectionString(addr_str) catch |err| {
+                log.err("Invalid ZNR record bootstrap string '{s}': {}", .{ addr_str, err });
                 return err;
             };
+            address = std.net.Address.initIp4(znr.ip4, znr.udpPort);
+            @memcpy(mock_id[0..33], &znr.pubkey);
+        } else {
+            var ip_part = addr_str;
+            var port_part: u16 = 30303;
+            if (std.mem.indexOfScalar(u8, addr_str, ':')) |colon_idx| {
+                ip_part = addr_str[0..colon_idx];
+                port_part = std.fmt.parseInt(u16, addr_str[colon_idx + 1 ..], 10) catch |err| {
+                    log.err("Invalid bootstrap port in '{s}': {}", .{ addr_str, err });
+                    return err;
+                };
+            }
+            address = std.net.Address.parseIp4(ip_part, port_part) catch |err| {
+                log.err("Invalid bootstrap IP/port '{s}': {}", .{ addr_str, err });
+                return err;
+            };
+            std.crypto.random.bytes(mock_id[0..32]); // Generate a bootstrap peer ID
         }
-        const address = std.net.Address.parseIp4(ip_part, port_part) catch |err| {
-            log.err("Invalid bootstrap IP/port '{s}': {}", .{ addr_str, err });
-            return err;
-        };
 
-        var mock_id: [64]u8 = [_]u8{0} ** 64;
-        std.crypto.random.bytes(mock_id[0..32]); // Generate a bootstrap peer ID
         var mock_hash: [32]u8 = undefined;
         std.crypto.hash.Blake3.hash(&mock_id, &mock_hash, .{});
 
@@ -645,24 +779,23 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         try p2pServer.discovery.addBootstrapNode(node_entry);
     }
 
-    // P2: Shred Signature Verifier — Ed25519 + 10% sampling
-    var shredVerifier = p2p.shred_verifier.ShredVerifier.init(allocator, .{
-        .sampleRate = 0.10,
-        .enabled = true,
-    });
-    defer shredVerifier.deinit();
-
-    // Register our own validator for self-verification
-    try shredVerifier.addValidator(.{
-        .address = validatorAddr,
-        .pubkey = [_]u8{0} ** 32, // Populated from BLS/Ed25519 key in production
-        .stake = 100_000_000_000, // 100K ZEE (in gwei units)
-        .active = true,
-    });
     p2pServer.setShredVerifier(&shredVerifier);
 
     try p2pServer.start();
-    printComponentFmt("├─", "P2P           ", "Port {d} + shred verification", p2pPort);
+
+    var p2p_boot_buf: [80]u8 = undefined;
+    var p2p_boot_str: []const u8 = "";
+    const p2p_local_addr = p2pServer.discovery.localNode.address;
+    const p2p_ip_bytes = @as(*const [4]u8, @ptrCast(&p2p_local_addr.in.sa.addr)).*;
+    if (p2p_ip_bytes[0] == 0 and p2p_ip_bytes[1] == 0 and p2p_ip_bytes[2] == 0 and p2p_ip_bytes[3] == 0) {
+        p2p_boot_str = try std.fmt.bufPrint(&p2p_boot_buf, "Port {d} (Local)", .{p2pPort});
+    } else {
+        p2p_boot_str = try std.fmt.bufPrint(&p2p_boot_buf, "Address {d}.{d}.{d}.{d}:{d}", .{
+            p2p_ip_bytes[0], p2p_ip_bytes[1], p2p_ip_bytes[2], p2p_ip_bytes[3],
+            p2pPort,
+        });
+    }
+    printComponentFmt("├─", "P2P           ", "{s} + shred verification", p2p_boot_str);
 
     // 11. JSON-RPC Server
     const rpcServer = try rpc.Server.init(allocator, httpPort, chain, dagPool, &dagExecutor, &worldState);
@@ -676,6 +809,19 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // ── Node Dashboard ──
     var addr_buf: [66]u8 = undefined;
     const addr_hex = try @import("utils").hex.encodeBuffer(&addr_buf, &validatorAddr.bytes);
+
+    var p2p_addr_buf: [40]u8 = undefined;
+    var p2p_addr_str: []const u8 = "";
+    const local_node_addr = p2pServer.discovery.localNode.address;
+    const ip_bytes = @as(*const [4]u8, @ptrCast(&local_node_addr.in.sa.addr)).*;
+    if (ip_bytes[0] == 0 and ip_bytes[1] == 0 and ip_bytes[2] == 0 and ip_bytes[3] == 0) {
+        p2p_addr_str = try std.fmt.bufPrint(&p2p_addr_buf, "127.0.0.1:{d}", .{p2pPort});
+    } else {
+        p2p_addr_str = try std.fmt.bufPrint(&p2p_addr_buf, "{d}.{d}.{d}.{d}:{d}", .{
+            ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3],
+            p2pPort,
+        });
+    }
 
     // Top border
     std.debug.print("\n  " ++ C_GLW ++ "╔══════════════════════════════════════════════════════════╗" ++ RST ++ "\n", .{});
@@ -692,12 +838,19 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Endpoints section
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ BOLD ++ C_PUR ++ "ENDPOINTS" ++ RST ++ "                                               " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "P2P" ++ RST ++ "           " ++ C_BLUE ++ ":{d: <39}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{p2pPort});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "P2P Address" ++ RST ++ "   " ++ C_BLUE ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{p2p_addr_str});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "JSON-RPC" ++ RST ++ "      " ++ C_BLUE ++ "http://127.0.0.1:{d: <23}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{httpPort});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Data Dir" ++ RST ++ "      " ++ C_DIM ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{dataDir});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Bottom border
     std.debug.print("  " ++ C_GLW ++ "╚══════════════════════════════════════════════════════════╝" ++ RST ++ "\n\n", .{});
+
+    // ZNR Connection String
+    var znr_buf: [200]u8 = undefined;
+    if (p2pServer.discovery.localZnr.toConnectionString(&znr_buf)) |znr_str| {
+        std.debug.print("  " ++ C_CYAN ++ "● ZNR Node Record: " ++ C_BLUE ++ "{s}" ++ RST ++ "\n", .{znr_str});
+        std.debug.print("    " ++ C_DIM ++ "Share this record with other nodes so they can resolve your public IP/ports." ++ RST ++ "\n\n", .{});
+    } else |_| {}
 
     // ── Start Block Production ──
     if (shouldMine) {

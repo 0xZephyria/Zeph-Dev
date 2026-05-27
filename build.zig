@@ -57,6 +57,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/consensus/mod.zig"),
     });
     consensus_mod.addImport("core", core_mod);
+    consensus_mod.addImport("storage", storage_mod);
     consensus_mod.addImport("rlp", rlp_mod);
 
     // Net utilities
@@ -257,6 +258,9 @@ pub fn build(b: *std.Build) void {
     p2p_test.root_module.addImport("rlp", rlp_mod);
     p2p_test.root_module.addImport("encoding", encoding_mod);
     node_test_step.dependOn(&b.addRunArtifact(p2p_test).step);
+
+    const p2p_test_step = b.step("test-p2p", "Run P2P unit tests");
+    p2p_test_step.dependOn(&b.addRunArtifact(p2p_test).step);
 
     // Consensus tests
     const consensus_test = b.addTest(.{

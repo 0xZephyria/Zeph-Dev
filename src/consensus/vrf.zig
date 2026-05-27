@@ -36,6 +36,7 @@ pub const VRF = struct {
 
         // 2. Deserialize scalar (SK)
         var sk: c.blst_scalar = undefined;
+        defer @memset(std.mem.asBytes(&sk), 0);
         c.blst_scalar_from_bendian(&sk, sk_bytes.ptr);
 
         // 3. Scalar multiplication: res = p1 * sk

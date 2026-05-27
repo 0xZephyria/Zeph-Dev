@@ -166,6 +166,13 @@ pub const ZeliusEngine = struct {
     }
 
     pub fn deinit(self: *ZeliusEngine) void {
+        // Zero out private keys in memory to prevent key leakage
+        if (self.privKey) |*k| {
+            @memset(k, 0);
+        }
+        if (self.blsPrivKey) |*k| {
+            @memset(k, 0);
+        }
         self.adaptive.deinit();
         self.proposalsSeen.deinit();
         self.slashEvents.deinit(self.allocator);
@@ -181,7 +188,14 @@ pub const ZeliusEngine = struct {
         if (seed.len >= 32) {
             var key: [32]u8 = undefined;
             @memcpy(&key, seed[0..32]);
-            self.blsPrivKey = key;
+            defer @memset(&key, 0);
+            var sk: c.blst_scalar = undefined;
+            defer @memset(std.mem.asBytes(&sk), 0);
+            c.blst_keygen(&sk, &key, key.len, null, 0);
+            var sk_bytes: [32]u8 = undefined;
+            defer @memset(&sk_bytes, 0);
+            c.blst_bendian_from_scalar(&sk_bytes, &sk);
+            self.blsPrivKey = sk_bytes;
         }
     }
 
@@ -386,6 +400,48 @@ pub const ZeliusEngine = struct {
         self.consecutiveViewChanges = 0;
     }
 
+    // ── Finality Tracking ───────────────────────────────────────────
+    //
+    // The adaptive consensus layer (AdaptiveConsensus.buildQC) sets
+    // lastFinalizedSlot when a Woven Quorum Certificate forms with
+    // ≥67% attesting stake. These methods bridge that value into
+    // ZeliusEngine so the P2P layer, RPC, and sync protocol can
+    // query finality state through a single reference.
+
+    /// Update the finality tracker after a QC has been formed.
+    /// Called by the P2P layer once buildQC() succeeds.
+    /// The block/slot number must be monotonically increasing —
+    /// stale finality updates are silently ignored to prevent
+    /// finality regression attacks.
+    pub fn updateFinality(self: *ZeliusEngine, finalized_block: u64) void {
+        if (finalized_block > self.lastFinalizedBlock) {
+            self.lastFinalizedBlock = finalized_block;
+        }
+    }
+
+    /// Synchronize finality state from the adaptive consensus layer.
+    /// This is the primary mechanism: read adaptive.lastFinalizedSlot
+    /// and propagate it. Safe to call on every slot tick.
+    pub fn syncFinalityFromAdaptive(self: *ZeliusEngine) void {
+        const adaptive_finalized = self.adaptive.lastFinalizedSlot;
+        if (adaptive_finalized > self.lastFinalizedBlock) {
+            self.lastFinalizedBlock = adaptive_finalized;
+        }
+    }
+
+    /// Get the last finalized block number.
+    /// Returns 0 if no block has been finalized yet.
+    pub fn getLastFinalizedBlock(self: *const ZeliusEngine) u64 {
+        return self.lastFinalizedBlock;
+    }
+
+    /// Check whether a given block number has been finalized.
+    /// Useful for RPC endpoints (eth_getBlockByNumber with "finalized" tag)
+    /// and for the sync protocol to determine safe head.
+    pub fn isFinalized(self: *const ZeliusEngine, blockNumber: u64) bool {
+        return blockNumber <= self.lastFinalizedBlock;
+    }
+
     /// Drain pending slash events for P2P broadcast.
     /// The P2P server polls this to broadcast equivocation/downtime evidence.
     /// Returns owned slice — caller must free.
@@ -464,6 +520,7 @@ pub const ZeliusEngine = struct {
         c.blst_hash_to_g2(&p2, &msg, msg.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
+        defer @memset(std.mem.asBytes(&sk), 0);
         c.blst_scalar_from_bendian(&sk, &self.blsPrivKey.?);
 
         var sig: c.blst_p2 = undefined;
@@ -529,12 +586,20 @@ pub const ZeliusEngine = struct {
         const original_extra = header.extraData;
         header.extraData = preserved_data[0..sig_offset];
         const h_bytes = block.hash();
+
+        if (header.number == 1) {
+            const encoded = header.rlpEncode(std.heap.page_allocator) catch unreachable;
+            defer std.heap.page_allocator.free(encoded);
+            printHex("SEAL RLP HEX", encoded);
+        }
+
         header.extraData = original_extra;
 
         var p2: c.blst_p2 = undefined;
         c.blst_hash_to_g2(&p2, &h_bytes.bytes, h_bytes.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
+        defer @memset(std.mem.asBytes(&sk), 0);
         c.blst_scalar_from_bendian(&sk, &self.blsPrivKey.?);
 
         var sig: c.blst_p2 = undefined;
@@ -561,6 +626,17 @@ pub const ZeliusEngine = struct {
             }
             try self.rotateEpoch(header.number, h_bytes.bytes, stakes);
         }
+    }
+
+    fn printHex(prefix_str: []const u8, bytes: []const u8) void {
+        const hex_charset = "0123456789abcdef";
+        var buf: [2048]u8 = undefined;
+        const len = @min(bytes.len, buf.len / 2);
+        for (bytes[0..len], 0..) |b, idx| {
+            buf[idx * 2] = hex_charset[b >> 4];
+            buf[idx * 2 + 1] = hex_charset[b & 15];
+        }
+        std.log.err("{s}: {s}", .{ prefix_str, buf[0..len * 2] });
     }
 
     // ── Block Verification ──────────────────────────────────────────
@@ -598,6 +674,12 @@ pub const ZeliusEngine = struct {
         const h_bytes = block.hash();
         block.header.extraData = original_extra;
 
+        if (block.header.number == 1) {
+            const encoded = block.header.rlpEncode(std.heap.page_allocator) catch unreachable;
+            defer std.heap.page_allocator.free(encoded);
+            printHex("VERIFY RLP HEX", encoded);
+        }
+
         var p2: c.blst_p2 = undefined;
         c.blst_hash_to_g2(&p2, &h_bytes.bytes, h_bytes.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
         var msg_affine: c.blst_p2_affine = undefined;
@@ -622,7 +704,20 @@ pub const ZeliusEngine = struct {
             null,
             0,
         );
-        if (result != c.BLST_SUCCESS) return error.InvalidSignature;
+        if (result != c.BLST_SUCCESS) {
+            const hash_hex = std.fmt.bytesToHex(h_bytes.bytes, .lower);
+            const pk_hex = std.fmt.bytesToHex(pk_bytes, .lower);
+            const coinbase_hex = std.fmt.bytesToHex(block.header.coinbase.bytes, .lower);
+            const sig_hex = std.fmt.bytesToHex(sig_bytes[0..96].*, .lower);
+            std.log.err("BLS signature verify failed: result={}, coinbase={s}, hash={s}, pk={s}, sig={s}", .{
+                result,
+                &coinbase_hex,
+                &hash_hex,
+                &pk_hex,
+                &sig_hex,
+            });
+            return error.InvalidSignature;
+        }
 
         // 4. Double-signing check
         const blockHash = block.hash();
@@ -759,6 +854,8 @@ pub const ZeliusEngine = struct {
         tier: types.ConsensusTier,
         thread_count: u8,
         validatorCount: u32,
+        lastFinalizedBlock: u64,
+        qcsFormed: u64,
     } {
         return .{
             .sealed = self.blocksSealed,
@@ -770,14 +867,19 @@ pub const ZeliusEngine = struct {
             .tier = self.adaptive.currentTier,
             .thread_count = self.adaptive.currentThreadCount,
             .validatorCount = self.adaptive.validatorCount,
+            .lastFinalizedBlock = self.lastFinalizedBlock,
+            .qcsFormed = self.adaptive.qcsFormed,
         };
     }
 };
 
 pub fn deriveBlsPubKey(seed: [32]u8) [48]u8 {
-    var pk: c.blst_p1 = undefined;
+    var mutable_seed = seed;
+    defer @memset(&mutable_seed, 0);
     var sk: c.blst_scalar = undefined;
-    c.blst_scalar_from_bendian(&sk, &seed);
+    defer @memset(std.mem.asBytes(&sk), 0);
+    c.blst_keygen(&sk, &mutable_seed, mutable_seed.len, null, 0);
+    var pk: c.blst_p1 = undefined;
     c.blst_sk_to_pk_in_g1(&pk, &sk);
     var pk_compressed: [48]u8 = undefined;
     c.blst_p1_compress(&pk_compressed, &pk);

@@ -142,12 +142,16 @@ pub const BlockProducer = struct {
         const txs = try self.allocator.alloc(types.Transaction, all_txs.items.len);
         @memcpy(txs, all_txs.items);
 
+        const parentTime = if (parent) |p| p.header.time else 0;
+        const now = @as(u64, @intCast(std.time.timestamp()));
+        const blockTime = @max(now, parentTime + 1);
+
         const block = try self.allocator.create(types.Block);
         block.* = types.Block{
             .header = types.Header{
                 .parentHash = parentHash,
                 .number = parentNumber + 1,
-                .time = @intCast(std.time.timestamp()),
+                .time = blockTime,
                 .verkleRoot = blockResult.stateRoot,
                 .txHash = computeTxRoot(txs),
                 .coinbase = self.coinbase,

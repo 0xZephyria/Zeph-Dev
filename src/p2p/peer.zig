@@ -75,6 +75,9 @@ pub const Peer = struct {
     rateTokens: f64,
     rateLastUpdate: i64,
 
+    // Latency tracking
+    rtt_ms: u32,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, ip: []const u8, port: u16) !*Self {
@@ -120,6 +123,7 @@ pub const Peer = struct {
             .connectTime = now,
             .rateTokens = 20.0, // types.RateLimitConfig default baseCapacity
             .rateLastUpdate = now,
+            .rtt_ms = 100, // default 100ms
         };
         return self;
     }

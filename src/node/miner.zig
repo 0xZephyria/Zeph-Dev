@@ -129,6 +129,9 @@ pub const Miner = struct {
             BLOCK_TIME_MS, tier_name, thread_count,
         });
 
+        // Delay block production slightly to allow P2P peers to connect and complete handshake
+        std.Thread.sleep(3000 * std.time.ns_per_ms);
+
         while (self.running.load(.seq_cst)) {
             const blockStartNs = std.time.nanoTimestamp();
 
@@ -326,6 +329,17 @@ pub const Miner = struct {
             log.err("Epoch rotation failed: {}", .{err});
             return;
         };
+
+        // Persist staking state to HybridDB at epoch boundary.
+        // This ensures validators, delegations, and unbondings survive
+        // node restarts. Runs synchronously before broadcasting epoch
+        // transition — durability before network announcement.
+        if (self.staking) |stk| {
+            stk.persist(self.state.db) catch |err| {
+                log.warn("Staking persist failed at epoch boundary: {}", .{err});
+                // Non-fatal: in-memory state is still valid. Will retry next epoch.
+            };
+        }
 
         // Update pipeline with new adaptive parameters
         if (self.pipeline) |pipe| {

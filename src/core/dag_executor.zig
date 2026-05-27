@@ -436,6 +436,82 @@ pub const DAGExecutor = struct {
 
         const exec_end = std.time.nanoTimestamp();
 
+        // ── Phase 1.5: Block-STM-Lite Conflict Detection & Re-execution ─
+        //
+        // After all lanes execute in parallel, scan for read-write conflicts
+        // across overlays. A conflict exists when lane A wrote to a key that
+        // lane B read — meaning B may have read a stale value.
+        //
+        // Only global/shared storage reads are tracked (per-sender keys are
+        // conflict-free by design of the DAG mempool). Expected rate: <1%
+        // of blocks have any conflict (only DEX/lending txs touching the
+        // same pool). Re-execution is sequential and deterministic.
+        //
+        // Algorithm: O(N²) pair scan over N lanes. N is bounded by the
+        // block gas limit (typically 10-200 lanes per block), making this
+        // fast in practice. A bitset could optimize to O(N) but adds
+        // complexity not yet justified.
+
+        var conflict_stats: u32 = 0;
+        if (overlays.len > 1) {
+            // Pass 1: find conflicting lane pairs
+            var conflicted = try self.allocator.alloc(bool, overlays.len);
+            defer self.allocator.free(conflicted);
+            @memset(conflicted, false);
+
+            for (0..overlays.len) |b| {
+                for (0..b) |a| {
+                    if (overlays[b].hasReadConflictWith(&overlays[a])) {
+                        conflicted[b] = true;
+                        conflict_stats += 1;
+                        break; // Lane b is conflicted, no need to check other parent lanes
+                    }
+                }
+            }
+
+            // Pass 2: re-execute conflicting lanes sequentially on fresh overlays.
+            // First, commit non-conflicting lanes so conflicting lanes read correct state.
+            for (0..overlays.len) |i| {
+                if (!conflicted[i]) {
+                    overlays[i].commit() catch {};
+                }
+            }
+
+            // Re-execute each conflicting lane in deterministic order (lane index order).
+            for (0..overlays.len) |i| {
+                if (!conflicted[i]) continue;
+
+                // Deinit the stale overlay and create a fresh one
+                overlays[i].deinit();
+                overlays[i] = state_mod.Overlay.init(self.allocator, self.state);
+                overlays[i].finalizeInit();
+
+                // Clear the lane's delta and receipt queues — stale results
+                delta_queues[i].clear();
+                receipt_queues[i].clear();
+
+                // Re-execute sequentially. Results overwrite the stale parallel results.
+                const lane = &plan.lanes[i];
+                self.executeLaneSequential(
+                    lane,
+                    &overlays[i],
+                    tx_results[lane_offsets[i]..lane_offsets[i] + lane.txs.len],
+                    &delta_queues[i],
+                    &receipt_queues[i],
+                    @intCast(i),
+                    lane_offsets[i],
+                );
+
+                // Commit the re-executed overlay immediately so the next
+                // conflicting lane reads the correct updated state.
+                overlays[i].commit() catch {};
+            }
+
+            if (conflict_stats > 0) {
+                log.info("Block-STM: {} cross-lane conflict(s) detected and re-executed\n", .{conflict_stats});
+            }
+        }
+
         // ── Phase 2: Delta Merge (deterministic) ────────────────────────
 
         const merge_start = std.time.nanoTimestamp();
@@ -496,9 +572,14 @@ pub const DAGExecutor = struct {
             }
         }
 
-        // Commit all lane overlays to state
-        for (overlays) |*overlay| {
-            overlay.commit() catch {};
+        // Commit all lane overlays to state.
+        // Note: conflicting overlays were already committed in Phase 1.5
+        // sequentially. Non-conflicting overlays were committed there too
+        // when conflicts were present. Only commit here when no conflicts ran.
+        if (conflict_stats == 0) {
+            for (overlays) |*overlay| {
+                overlay.commit() catch {};
+            }
         }
 
         const merge_end = std.time.nanoTimestamp();

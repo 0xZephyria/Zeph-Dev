@@ -116,6 +116,36 @@ pub const ZnrRecord = struct {
         znr.stake = std.mem.readInt(u64, data[93..101], .big);
         return znr;
     }
+
+    /// Format ZnrRecord as a copy-pastable base64 string prefixed with "znr:"
+    pub fn toConnectionString(self: *const ZnrRecord, buf: []u8) ![]const u8 {
+        var temp_bin: [101]u8 = undefined;
+        _ = self.serialize(&temp_bin);
+
+        const prefix = "znr:";
+        if (buf.len < prefix.len + std.base64.standard_no_pad.Encoder.calcSize(101)) {
+            return error.BufferTooSmall;
+        }
+
+        @memcpy(buf[0..prefix.len], prefix);
+        const encoded = std.base64.standard_no_pad.Encoder.encode(buf[prefix.len..], &temp_bin);
+        return buf[0..prefix.len + encoded.len];
+    }
+
+    /// Parse a copy-pastable connection string prefixed with "znr:" back to ZnrRecord
+    pub fn fromConnectionString(str: []const u8) !ZnrRecord {
+        const prefix = "znr:";
+        if (str.len < prefix.len) return error.InvalidFormat;
+        if (!std.mem.startsWith(u8, str, prefix)) return error.InvalidFormat;
+
+        const b64_str = str[prefix.len..];
+        var temp_bin: [101]u8 = undefined;
+        const decoded_len = try std.base64.standard_no_pad.Decoder.calcSizeForSlice(b64_str);
+        if (decoded_len != 101) return error.InvalidFormat;
+
+        try std.base64.standard_no_pad.Decoder.decode(&temp_bin, b64_str);
+        return deserialize(&temp_bin) orelse error.InvalidFormat;
+    }
 };
 
 // ── Routing Table Bucket ────────────────────────────────────────────────
@@ -249,10 +279,24 @@ pub const DiscoveryService = struct {
     pub fn init(allocator: Allocator, priv_key: []const u8, port: u16) !*Self {
         const self = try allocator.create(Self);
 
-        // Derive node ID from private key
+        // Derive node ID and ZNR public key from private key using Ed25519 (prevents private key leakage)
         var id: NodeID = [_]u8{0} ** ID_SIZE;
-        const key_len = @min(priv_key.len, 32);
-        @memcpy(id[0..key_len], priv_key[0..key_len]);
+        var compressed_pubkey: [33]u8 = [_]u8{0} ** 33;
+
+        if (priv_key.len == 32) {
+            var priv_key_arr: [32]u8 = undefined;
+            @memcpy(&priv_key_arr, priv_key[0..32]);
+            defer @memset(&priv_key_arr, 0);
+            var key_pair = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(priv_key_arr);
+            defer @memset(std.mem.asBytes(&key_pair), 0);
+            const pub_key_bytes = key_pair.public_key.toBytes();
+            @memcpy(id[0..32], &pub_key_bytes);
+            @memcpy(compressed_pubkey[0..32], &pub_key_bytes);
+        } else {
+            const key_len = @min(priv_key.len, 32);
+            @memcpy(id[0..key_len], priv_key[0..key_len]);
+            @memcpy(compressed_pubkey[0..key_len], priv_key[0..key_len]);
+        }
 
         // Hash node ID for XOR distance
         var hash: NodeHash = undefined;
@@ -267,8 +311,6 @@ pub const DiscoveryService = struct {
         }
 
         // Create local ZNR
-        var compressed_pubkey: [33]u8 = [_]u8{0} ** 33;
-        @memcpy(compressed_pubkey[0..key_len], priv_key[0..key_len]);
         const znr = ZnrRecord.init(compressed_pubkey, [4]u8{ 0, 0, 0, 0 }, port);
 
         self.* = Self{
