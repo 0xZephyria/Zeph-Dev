@@ -21,19 +21,19 @@ pub const Hash = [32]u8;
 pub const AccountDelta = extern struct {
     address: Address, // 32 bytes
     balance_delta: i128, // 16 bytes (signed for debits)
-    nonce_delta: i64, // 8 bytes (usually +1)
+    sequence_delta: i64, // 8 bytes (usually +1)
     code_hash: Hash, // 32 bytes (zero if unchanged)
     // Total: 88 bytes, padded to 96
 
     pub fn isEmpty(self: *const AccountDelta) bool {
         return self.balance_delta == 0 and
-            self.nonce_delta == 0 and
+            self.sequence_delta == 0 and
             std.mem.eql(u8, &self.code_hash, &[_]u8{0} ** 32);
     }
 
     pub fn merge(self: *AccountDelta, other: *const AccountDelta) void {
         self.balance_delta +|= other.balance_delta; // Saturating add
-        self.nonce_delta +|= other.nonce_delta;
+        self.sequence_delta +|= other.sequence_delta;
         // Code hash: take latest non-zero
         if (!std.mem.eql(u8, &other.code_hash, &[_]u8{0} ** 32)) {
             self.code_hash = other.code_hash;
@@ -243,7 +243,7 @@ pub const BlockSummary = struct {
     receipts_root: Hash,
     timestamp: u64,
     gas_used: u64,
-    gas_limit: u64,
+    execution_budget: u64,
     base_fee: u64,
 
     // Signature data
@@ -251,10 +251,10 @@ pub const BlockSummary = struct {
     signature: [96]u8, // Individual BLS signature
 
     pub fn fromHeader(header: anytype) BlockSummary {
-        // Compute header hash from verkleRoot (approximation without full RLP encoding)
+        // Compute header hash from stateRoot (approximation without full RLP encoding)
         var header_hash: Hash = [_]u8{0} ** 32;
         var hasher = std.crypto.hash.Blake3.init(.{});
-        hasher.update(&header.verkleRoot.bytes);
+        hasher.update(&header.stateRoot.bytes);
         hasher.update(std.mem.asBytes(&header.number));
         hasher.update(std.mem.asBytes(&header.time));
         var hash_res: [32]u8 = undefined;
@@ -265,14 +265,14 @@ pub const BlockSummary = struct {
             .number = header.number,
             .hash = header_hash,
             .parent_hash = header.parentHash.bytes,
-            .state_root = header.verkleRoot.bytes, // Use verkleRoot as state root
+            .state_root = header.stateRoot.bytes, // Use stateRoot as state root
             .tx_root = header.txHash.bytes,
             .receipts_root = [_]u8{0} ** 32, // Not available in header
             .timestamp = header.time, // time field maps to timestamp
             .gas_used = header.gasUsed,
-            .gas_limit = header.gasLimit,
-            .base_fee = @truncate(header.baseFee), // Truncate u256 to u64
-            .proposer = header.coinbase.bytes, // coinbase maps to proposer
+            .execution_budget = header.executionBudget,
+            .base_fee = 0, // No base fee in Zephyria
+            .proposer = header.producer.bytes, // producer maps to proposer
             .signature = [_]u8{0} ** 96, // Signature not available in basic header
         };
     }
@@ -283,21 +283,21 @@ test "AccountDelta merge" {
     var d1 = AccountDelta{
         .address = [_]u8{1} ** 32,
         .balance_delta = 100,
-        .nonce_delta = 1,
+        .sequence_delta = 1,
         .code_hash = [_]u8{0} ** 32,
     };
 
     const d2 = AccountDelta{
         .address = [_]u8{1} ** 32,
         .balance_delta = -50,
-        .nonce_delta = 1,
+        .sequence_delta = 1,
         .code_hash = [_]u8{0xAB} ** 32,
     };
 
     d1.merge(&d2);
 
     try std.testing.expectEqual(@as(i128, 50), d1.balance_delta);
-    try std.testing.expectEqual(@as(i64, 2), d1.nonce_delta);
+    try std.testing.expectEqual(@as(i64, 2), d1.sequence_delta);
     try std.testing.expectEqual([_]u8{0xAB} ** 32, d1.code_hash);
 }
 

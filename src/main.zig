@@ -147,7 +147,7 @@ fn printVersion() void {
     std.debug.print("  " ++ BOLD ++ C_MAG ++ "◆ FEATURES" ++ RST ++ "\n" ++
         "  " ++ C_DIM ++ "├─" ++ RST ++ " " ++ C_PUR ++ "DAG Mempool" ++ RST ++ "     " ++ C_DIM ++ "256-shard, zero-conflict lanes" ++ RST ++ "\n" ++
         "  " ++ C_DIM ++ "├─" ++ RST ++ " " ++ C_PUR ++ "Execution" ++ RST ++ "       " ++ C_DIM ++ "Parallel isolated accounts" ++ RST ++ "\n" ++
-        "  " ++ C_DIM ++ "├─" ++ RST ++ " " ++ C_PUR ++ "State" ++ RST ++ "           " ++ C_DIM ++ "Verkle Trie (IPA commitments)" ++ RST ++ "\n" ++
+        "  " ++ C_DIM ++ "├─" ++ RST ++ " " ++ C_PUR ++ "State" ++ RST ++ "           " ++ C_DIM ++ "Flat KV (in-memory FlatTable + persistent LSM)" ++ RST ++ "\n" ++
         "  " ++ C_DIM ++ "└─" ++ RST ++ " " ++ C_PUR ++ "EVM Compatible" ++ RST ++ "  " ++ C_DIM ++ "ethers.js • web3.js • Hardhat" ++ RST ++ "\n\n", .{});
 }
 
@@ -513,15 +513,13 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     const engine = try consensus.ZeliusEngine.init(allocator, validators);
     defer engine.deinit();
-    engine.vdfIterations = @as(u32, @intCast(network.systemParams.vdfIterations));
-    engine.vdfCheckpointInterval = @max(@as(u32, 1), @as(u32, @intCast(network.systemParams.vdfIterations / 10)));
     engine.setPrivKey(minerPrivKey);
     engine.setBlsPrivKey(&minerPrivKey);
     printComponentLine("├─", "Consensus     ", "Loom Genesis Adaptive PoS");
 
     // Initial epoch rotation to seed adaptive consensus
     {
-        const initial_stakes = try allocator.alloc(u64, validators.len);
+        const initial_stakes = try allocator.alloc(u256, validators.len);
         defer allocator.free(initial_stakes);
         @memset(initial_stakes, 100_000_000_000);
         engine.rotateEpoch(0, genesisHash.bytes, initial_stakes) catch |err| {
@@ -535,46 +533,14 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     var dagExecutor = core.dag_executor.DAGExecutor.init(allocator, &worldState, .{
         .numThreads = 8,
-        .blockGasLimit = @as(u64, @intCast(network.gasLimit)),
-        .coinbase = validatorAddr,
-        .baseFee = network.baseFee orelse 1_000_000_000,
+        .blockExecutionBudget = @as(u64, @intCast(network.executionBudget)),
+        .producer = validatorAddr,
         .transferFastPath = true,
     });
 
     // ── Performance Optimization Modules (P0-P2) ────────────────────
 
-    // P0: Async State Root — background Verkle trie commitment
-    var asyncRoot = core.async_state_root.AsyncStateRootComputer.init(
-        allocator,
-        &worldState,
-        .{ .rootLag = 2, .maxQueueDepth = 8 },
-    );
-    defer asyncRoot.deinit();
-    // NOTE: Do NOT start the async root background thread here.
-    // The miner already calls trie.commit() + rootHash() directly in
-    // its block production loop. Starting the bg thread causes a race
-    // where it clears dirty_count before the miner can commit, resulting
-    // in stale (unchanging) state roots. The async root computer object
-    // is still registered with DAGExecutor for future use when the DAG
-    // path handles its own commits independently.
-    dagExecutor.setAsyncRoot(&asyncRoot);
-
-    // P1: State Prefetcher — trie cache warming before lane execution
-    var statePrefetcher = core.state_prefetcher.StatePrefetcher.init(
-        allocator,
-        &worldState,
-        .{ .maxAddresses = 1_000_000, .prefetchCode = true },
-    );
-    defer statePrefetcher.deinit();
-    dagExecutor.setPrefetcher(&statePrefetcher);
-
-    // P1: Lock-Free Delta Merger — parallel merge of lane deltas
-    var deltaMerger = core.delta_merge.DeltaMerger.init(allocator);
-    defer deltaMerger.deinit();
-    dagExecutor.setDeltaMerger(&deltaMerger);
-
     printComponentLine("├─", "DAG Pipeline  ", "256-shard mempool + parallel executor");
-    printComponentLine("├─", "Optimizations ", "AsyncRoot + Prefetch + DeltaMerge");
 
     // 5b. BlockProducer — unified production interface (DAG primary)
     var producer = core.block_producer.BlockProducer.init(
@@ -582,11 +548,10 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         chain,
         &worldState,
         validatorAddr,
-        @as(u64, @intCast(network.gasLimit)),
+        @as(u64, @intCast(network.executionBudget)),
     );
     producer.setDAGPipeline(dagPool, &dagExecutor);
-    producer.setAsyncRoot(&asyncRoot);
-    printComponentLine("├─", "BlockProducer ", "DAG-native + async root");
+    printComponentLine("├─", "BlockProducer ", "DAG-native + inline root");
 
     //Don't hardcode idx, as everyone's idx will become 9999
 
@@ -656,7 +621,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         .timestamp = @intCast(@max(0, std.time.timestamp())),
         .blockNumber = 0,
         .chainId = 99999,
-        .coinbase = validatorAddr.bytes,
+        .producer = validatorAddr.bytes,
         .prevRandao = genesisHash.bytes,
     });
 

@@ -392,7 +392,7 @@ fn runSingleExecution(
 ) !SingleResult {
     var env = HostEnv.init(allocator);
     defer env.deinit();
-    env.gasLimit = gasLimit;
+    env.executionBudget = gasLimit;
     env.chainId = 99999;
     env.blockNumber = 1;
     env.timestamp = @intCast(std.time.timestamp());
@@ -557,7 +557,7 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
     };
     defer ctx.pool.release(mem);
 
-    env.gasLimit = ctx.gasLimit;
+    env.executionBudget = ctx.gasLimit;
     env.chainId = 99999;
     env.blockNumber = 1;
     env.timestamp = 1_700_000_000;
@@ -655,7 +655,7 @@ fn runBenchmark(
 
         var i: u64 = 0;
         while (i < iterations) : (i += 1) {
-            env.gasLimit = gasLimit;
+    env.executionBudget = gasLimit;
             env.chainId = 99999;
             env.blockNumber = 1;
             env.timestamp = 1_700_000_000;

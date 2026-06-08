@@ -6,12 +6,12 @@
 // that exploits Zephyria's isolated account model.
 //
 // Key insight: Since every TX's write set is isolated per-sender (unique
-// nonce key + balance key + per-user derived storage keys), the ONLY
-// dependency is same-sender nonce ordering. This means:
+// sequence key + balance key + per-user derived storage keys), the ONLY
+// dependency is same-sender sequence ordering. This means:
 //
 //   • Each sender forms an independent execution lane
 //   • All lanes can execute in parallel with ZERO coordination
-//   • Within each lane, TXs execute sequentially in nonce order
+//   • Within each lane, TXs execute sequentially in sequence order
 //   • No wavefront computation needed — lanes ARE the parallel schedule
 //
 // Scheduling cost: O(n) where n = number of TXs (just group by sender)
@@ -61,12 +61,12 @@ pub const ExecutionPlan = struct {
     }
 };
 
-/// A single execution lane — all TXs from one sender, nonce-ordered.
+/// A single execution lane — all TXs from one sender, sequence-ordered.
 /// Guaranteed no write-set overlap with any other lane.
 pub const ExecutionLane = struct {
     sender: types.Address,
     txs: []types.Transaction,
-    baseNonce: u64,
+    baseSequence: u64,
     totalGas: u64,
     priority: u256, // Max gas price in this lane (for ordering)
 };
@@ -92,12 +92,10 @@ pub const SchedulerConfig = struct {
     minTxsPerThread: u32 = 4,
     /// Maximum lanes per thread (load balancing)
     maxLanesPerThread: u32 = 10_000,
-    /// Block gas limit
-    blockGasLimit: u64 = 1_000_000_000, // 1B gas
-    /// Coinbase address for fee collection
-    coinbase: types.Address = types.Address.zero(),
-    /// Base fee for EIP-1559 style pricing
-    baseFee: u256 = 0,
+    /// Block execution budget
+    blockExecutionBudget: u64 = 1_000_000_000, // 1B gas
+    /// Producer address for fee collection
+    producer: types.Address = types.Address.zero(),
 };
 
 // ── DAG Scheduler ───────────────────────────────────────────────────────
@@ -130,7 +128,7 @@ pub fn schedule(
 
     var total_txs: u32 = 0;
     var total_gas: u64 = 0;
-    var remaining_gas = config.blockGasLimit;
+    var remaining_gas = config.blockExecutionBudget;
 
     for (extraction.lanes) |*extracted| {
         if (extracted.txs.len == 0) continue;
@@ -141,10 +139,10 @@ pub fn schedule(
         var valid_count: usize = 0;
 
         for (extracted.txs) |*tx| {
-            if (tx.gasLimit > remaining_gas) break;
+            if (tx.executionBudget > remaining_gas) break;
             if (tx.gasPrice > max_price) max_price = tx.gasPrice;
-            lane_gas += tx.gasLimit;
-            remaining_gas -= tx.gasLimit;
+            lane_gas += tx.executionBudget;
+            remaining_gas -= tx.executionBudget;
             valid_count += 1;
         }
 
@@ -156,7 +154,7 @@ pub fn schedule(
         try exec_lanes.append(allocator, ExecutionLane{
             .sender = extracted.sender,
             .txs = txs,
-            .baseNonce = extracted.baseNonce,
+            .baseSequence = extracted.baseSequence,
             .totalGas = lane_gas,
             .priority = max_price,
         });
@@ -224,12 +222,12 @@ pub fn scheduleFromTxs(
         try gop.value_ptr.append(allocator, tx);
     }
 
-    // Sort each sender's TXs by nonce
+    // Sort each sender's TXs by sequence
     var it = sender_txs.iterator();
     while (it.next()) |entry| {
         std.mem.sortUnstable(types.Transaction, entry.value_ptr.items, {}, struct {
             pub fn lessThan(_: void, a: types.Transaction, b: types.Transaction) bool {
-                return a.nonce < b.nonce;
+                return a.sequence < b.sequence;
             }
         }.lessThan);
     }
@@ -254,7 +252,7 @@ pub fn scheduleFromTxs(
         var lane_gas: u64 = 0;
         for (txs_list) |*tx| {
             if (tx.gasPrice > max_price) max_price = tx.gasPrice;
-            lane_gas += tx.gasLimit;
+            lane_gas += tx.executionBudget;
         }
 
         const start_offset = current_tx_offset;
@@ -265,7 +263,7 @@ pub fn scheduleFromTxs(
         try exec_lanes.append(allocator, ExecutionLane{
             .sender = entry.key_ptr.*,
             .txs = all_txs_contig[start_offset..end_offset],
-            .baseNonce = txs_list[0].nonce,
+            .baseSequence = txs_list[0].sequence,
             .totalGas = lane_gas,
             .priority = max_price,
         });
@@ -370,14 +368,14 @@ pub fn validatePlan(plan: *const ExecutionPlan) !void {
         }
     }
 
-    // 2. Check that nonces are contiguous within each lane
+    // 2. Check that sequences are contiguous within each lane
     for (plan.lanes) |*lane| {
-        var expected_nonce = lane.baseNonce;
+        var expected_sequence = lane.baseSequence;
         for (lane.txs) |*tx| {
-            if (tx.nonce != expected_nonce) {
-                return error.NonContiguousNonce;
+            if (tx.sequence != expected_sequence) {
+                return error.NonContiguousSequence;
             }
-            expected_nonce += 1;
+            expected_sequence += 1;
         }
     }
 
@@ -406,9 +404,9 @@ pub fn computeDAGRoot(plan: *const ExecutionPlan) types.Hash {
 
     for (plan.lanes) |*lane| {
         hasher.update(&lane.sender.bytes);
-        var nonce_buf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &nonce_buf, lane.baseNonce, .big);
-        hasher.update(&nonce_buf);
+        var sequence_buf: [8]u8 = undefined;
+        std.mem.writeInt(u64, &sequence_buf, lane.baseSequence, .big);
+        hasher.update(&sequence_buf);
 
         for (lane.txs) |*tx| {
             const tx_hash = tx.hash();

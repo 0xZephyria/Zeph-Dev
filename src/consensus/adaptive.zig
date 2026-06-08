@@ -20,7 +20,7 @@ const committees_mod = @import("committees.zig");
 const blst_mod = core.crypto.blst;
 const c = blst_mod.c;
 
-const BLS_DST = "FORGEYRIA_BLS_DST_V01";
+const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
 
 // ── Configuration ───────────────────────────────────────────────────────
 
@@ -65,8 +65,8 @@ pub const AdaptiveConsensus = struct {
     // ── QC Formation ────────────────────────────────────────────────
     /// Pending votes for the current slot: validator_index → BLS signature
     pendingVotes: std.AutoHashMap(u32, [96]u8),
-    pendingVoteStake: u64,
-    totalVotingStake: u64,
+    pendingVoteStake: u256,
+    totalVotingStake: u256,
 
     // ── Thread Certificates ─────────────────────────────────────────
     /// Thread certificates for the current slot
@@ -153,7 +153,7 @@ pub const AdaptiveConsensus = struct {
         new_epoch: u64,
         validatorCount: u32,
         new_seed: [32]u8,
-        validator_stakes: []const u64,
+        validator_stakes: []const u256,
     ) !void {
         self.lock.lock();
         defer self.lock.unlock();
@@ -176,7 +176,7 @@ pub const AdaptiveConsensus = struct {
         // Recompute committees for Tier 2
         if (new_tier == .CommitteeLoom) {
             const committee_seed = vrf_mod.VRF.committee_seed(new_seed, new_epoch);
-            self.committeeManager.recompute(
+            try self.committeeManager.recompute(
                 committee_seed,
                 validatorCount,
                 new_thread_count,
@@ -199,9 +199,9 @@ pub const AdaptiveConsensus = struct {
         self: *Self,
         slot: u64,
         sk_bytes: [32]u8,
-        my_stake: u64,
-        total_stake: u64,
-    ) !?struct { proposer_index: u32, proof: [48]u8, vrf_hash: [32]u8 } {
+        my_stake: u256,
+        total_stake: u256,
+    ) !?struct { proposer_index: u32, proof: [96]u8, vrf_hash: [32]u8 } {
         const result = try vrf_mod.VRF.sortition_proposer(
             sk_bytes,
             self.epochSeed,
@@ -269,7 +269,7 @@ pub const AdaptiveConsensus = struct {
         self: *Self,
         validator_index: u32,
         signature: [96]u8,
-        stake: u64,
+        stake: u256,
     ) !bool {
         self.lock.lock();
         defer self.lock.unlock();
@@ -286,11 +286,11 @@ pub const AdaptiveConsensus = struct {
     /// Check if voting quorum (≥67% stake) is met.
     pub fn hasVotingQuorum(self: *const Self) bool {
         if (self.totalVotingStake == 0) return false;
-        return self.pendingVoteStake * 3 > self.totalVotingStake * 2;
+        return @as(u512, self.pendingVoteStake) * 3 > @as(u512, self.totalVotingStake) * 2;
     }
 
     /// Set the total voting stake for quorum calculations.
-    pub fn setTotalVotingStake(self: *Self, total: u64) void {
+    pub fn setTotalVotingStake(self: *Self, total: u256) void {
         self.totalVotingStake = total;
     }
 
@@ -365,6 +365,7 @@ pub const AdaptiveConsensus = struct {
             var sig_affine = std.mem.zeroes(c.blst_p2_affine);
             const res = c.blst_p2_uncompress(&sig_affine, &entry.value_ptr.*);
             if (res != c.BLST_SUCCESS) continue;
+            if (!c.blst_p2_affine_in_g2(&sig_affine)) continue;
 
             var sig_jac = std.mem.zeroes(c.blst_p2);
             c.blst_p2_from_affine(&sig_jac, &sig_affine);
@@ -418,13 +419,13 @@ pub const AdaptiveConsensus = struct {
     pub fn recordMissedSlot(self: *Self) void {
         self.lock.lock();
         defer self.lock.unlock();
-        self.consecutive_misses += 1;
+        self.consecutiveMisses += 1;
         self.slotsMissed += 1;
     }
 
     /// Check if a view change should be triggered.
     pub fn shouldTriggerViewChange(self: *const Self) bool {
-        return self.consecutive_misses >= self.config.maxConsecutiveMisses;
+        return self.consecutiveMisses >= self.config.maxConsecutiveMisses;
     }
 
     // ── Block Header Construction ───────────────────────────────────
@@ -434,7 +435,7 @@ pub const AdaptiveConsensus = struct {
         self: *Self,
         parent_hash: core.types.Hash,
         proposer_index: u32,
-        proposer_vrf_proof: [48]u8,
+        proposer_vrf_proof: [96]u8,
         thread_roots: []const core.types.Hash,
         thread_tx_counts: []const u32,
         state_root: core.types.Hash,
@@ -459,9 +460,9 @@ pub const AdaptiveConsensus = struct {
         // Copy thread data
         const count = @min(thread_roots.len, @as(usize, self.currentThreadCount));
         for (0..count) |idx| {
-            header.thread_roots[idx] = thread_roots[idx];
+            header.threadRoots[idx] = thread_roots[idx];
             if (idx < thread_tx_counts.len) {
-                header.thread_tx_counts[idx] = thread_tx_counts[idx];
+                header.threadTxCounts[idx] = thread_tx_counts[idx];
             }
         }
 
@@ -503,16 +504,17 @@ pub const AdaptiveConsensus = struct {
     // ── BLS Vote Creation ───────────────────────────────────────────
 
     /// Create a BLS vote (signature) over a block header hash.
-    pub fn createVote(bls_priv_key: [32]u8, header_hash: core.types.Hash) [96]u8 {
+    pub fn createVote(bls_priv_key: [32]u8, header_hash: core.types.Hash) ![96]u8 {
         var mutable_key = bls_priv_key;
-        defer @memset(&mutable_key, 0);
+        defer secureZero(mutable_key[0..]);
 
         var p2: c.blst_p2 = undefined;
         c.blst_hash_to_g2(&p2, &header_hash.bytes, header_hash.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
-        defer @memset(std.mem.asBytes(&sk), 0);
+        defer secureZero(std.mem.asBytes(&sk));
         c.blst_scalar_from_bendian(&sk, &mutable_key);
+        if (!c.blst_sk_check(&sk)) return error.InvalidSecretKey;
 
         var sig: c.blst_p2 = undefined;
         c.blst_sign_pk_in_g1(&sig, &p2, &sk);
@@ -553,3 +555,8 @@ pub const AdaptiveConsensus = struct {
         };
     }
 };
+
+fn secureZero(buf: []u8) void {
+    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
+    for (0..buf.len) |i| ptr[i] = 0;
+}

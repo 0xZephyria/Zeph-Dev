@@ -176,7 +176,7 @@ pub const Server = struct {
 
         // Discovery
         var discoveryPriv: [32]u8 = undefined;
-        defer @memset(&discoveryPriv, 0);
+        defer secureZero(discoveryPriv[0..]);
         if (config.identityKey) |id_key| {
             discoveryPriv = id_key;
         } else {
@@ -748,7 +748,7 @@ pub const Server = struct {
                 gs_validators[idx] = .{
                     .index = @intCast(idx),
                     .address = v.address,
-                    .stake = @truncate(v.stake),
+                    .stake = v.stake,
                 };
             }
             self.gulfStream.advanceSlot(
@@ -769,7 +769,7 @@ pub const Server = struct {
 
             const blockHash = heapBlock.hash();
             const view = self.engine.adaptive.currentSlot;
-            const vote_sig = self.engine.create_vote(blockHash, view) catch |err| {
+            const vote_sig = self.engine.createVote(blockHash, view) catch |err| {
                 log.warn("Failed to create BLS vote: {}\n", .{err});
                 break :vote_cast;
             };
@@ -1046,7 +1046,7 @@ pub const Server = struct {
         peer.updateScore(1);
 
         // Validate view change message — verify the BLS signature
-        const sig_valid = try self.engine.verify_vote_signature(
+        const sig_valid = try self.engine.verifyVoteSignature(
             msg.validatorIndex,
             core.types.Hash.zero(), // View-change votes sign the view number, not a block
             msg.view,
@@ -1078,7 +1078,7 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.VoteMsg, payload);
 
         // Verify BLS signature over (blockHash || view)
-        const sig_valid = try self.engine.verify_vote_signature(
+        const sig_valid = try self.engine.verifyVoteSignature(
             msg.validatorIndex,
             msg.blockHash,
             msg.view,
@@ -1094,9 +1094,9 @@ pub const Server = struct {
 
         // Get the validator's stake for weighted quorum tracking.
         // Bounds-check the index to prevent out-of-bounds access.
-        var voter_stake: u64 = 1;
+        var voter_stake: u256 = 1;
         if (msg.validatorIndex < self.engine.activeValidators.len) {
-            voter_stake = @truncate(self.engine.activeValidators[msg.validatorIndex].stake);
+            voter_stake = self.engine.activeValidators[msg.validatorIndex].stake;
             if (voter_stake == 0) voter_stake = 1; // Minimum weight of 1
         }
 
@@ -1261,7 +1261,7 @@ pub const Server = struct {
         const msg = try rlp.decode(self.allocator, types.PingMsg, payload);
 
         const pong = types.PongMsg{
-            .nonce = msg.nonce,
+            .sequence = msg.sequence,
             .timestamp = std.time.milliTimestamp(),
         };
         try peer.send(types.MsgPong, pong);
@@ -1269,7 +1269,7 @@ pub const Server = struct {
 
     fn handlePong(self: *Self, peer: *Peer, payload: []const u8) !void {
         const msg = try rlp.decode(self.allocator, types.PongMsg, payload);
-        const send_time = @as(i64, @bitCast(msg.nonce));
+        const send_time = @as(i64, @bitCast(msg.sequence));
         const now = std.time.milliTimestamp();
         const rtt = now - send_time;
         if (rtt > 0 and rtt < 10000) {
@@ -1324,7 +1324,7 @@ pub const Server = struct {
 
         // Validate quorum: attestingStake must be > 2/3 total
         if (msg.totalEligibleStake > 0) {
-            if (msg.attestingStake * 3 <= msg.totalEligibleStake * 2) {
+            if (@as(u512, msg.attestingStake) * 3 <= @as(u512, msg.totalEligibleStake) * 2) {
                 peer.updateScore(-10);
                 return;
             }
@@ -1720,7 +1720,7 @@ pub const Server = struct {
                 // Keep-alive pinging: if peer has been idle for > 15 seconds, send a ping to keep it alive & track RTT
                 if (now - peer.lastMessageTime > 15_000) {
                     const ping_msg = types.PingMsg{
-                        .nonce = @bitCast(now),
+                        .sequence = @bitCast(now),
                         .timestamp = now,
                     };
                     peer.send(types.MsgPing, ping_msg) catch {};
@@ -2029,8 +2029,9 @@ pub const Server = struct {
 
         const target = drain_result.target orelse return;
 
-        // Find the peer representing the predicted proposer
+        // Find the peer representing the predicted proposer (lock held to prevent concurrent pruning)
         self.mutex.lock();
+        defer self.mutex.unlock();
         var target_peer: ?*Peer = null;
         for (self.peers.items) |peer| {
             if (peer.validatorAddress.eql(target.validatorAddress) and peer.connected and peer.handshakeComplete) {
@@ -2038,7 +2039,6 @@ pub const Server = struct {
                 break;
             }
         }
-        self.mutex.unlock();
 
         if (target_peer) |peer| {
             for (drain_result.batches) |batch| {
@@ -2060,7 +2060,7 @@ pub const Server = struct {
             });
         } else {
             // Proposer not connected to us directly. Fallback: send to the most reputable peer
-            self.mutex.lock();
+            // (mutex already held from above)
             var best_peer: ?*Peer = null;
             for (self.peers.items) |peer| {
                 if (peer.connected and peer.handshakeComplete) {
@@ -2069,7 +2069,6 @@ pub const Server = struct {
                     }
                 }
             }
-            self.mutex.unlock();
 
             if (best_peer) |peer| {
                 for (drain_result.batches) |batch| {
@@ -2091,3 +2090,8 @@ pub const Server = struct {
         }
     }
 };
+
+fn secureZero(buf: []u8) void {
+    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
+    for (0..buf.len) |i| ptr[i] = 0;
+}

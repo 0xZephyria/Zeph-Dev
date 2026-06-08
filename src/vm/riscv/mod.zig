@@ -12,7 +12,7 @@
 //                         CALL: msg.sender = caller, storage = target
 //                         DELEGATECALL: msg.sender = original caller, storage = caller
 //                         STATICCALL: read-only execution, no state mutation
-//       createFn       → derive address via blake3(sender, nonce), execute initcode
+//       createFn       → derive address via blake3(sender, sequence), execute initcode
 //       ecrecoverFn    → secp256k1 ECDSA signature recovery
 //       selfDestructFn → transfer balance + mark for deletion via StateBridge
 //
@@ -47,7 +47,7 @@ fn executePolkaContract(
     allocator: std.mem.Allocator,
     bytecode: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    executionBudget: u64,
     stateBridge: *anyopaque,
 ) !ExecutionResult {
     const sb: *StateBridge = @ptrCast(@alignCast(stateBridge));
@@ -110,14 +110,13 @@ fn executePolkaContract(
     host.caller = sb.caller;
     host.selfAddress = sb.selfAddress;
     host.callValue = sb.value;
-    host.gasLimit = gasLimit;
+    host.executionBudget = executionBudget;
     host.blockNumber = sb.blockNumber;
     host.chainId = sb.chainId;
     host.timestamp = sb.timestamp;
     host.txOrigin = sb.txOrigin;
     host.gasPrice = sb.gasPrice;
-    host.coinbase = sb.coinbase;
-    host.baseFee = sb.baseFee;
+    host.producer = sb.producer;
     host.prevrandao = sb.prevRandao;
 
     // ── Wire VM execution pool (threaded executor + code cache) ─────
@@ -253,20 +252,20 @@ fn executePolkaContract(
         ) polkavm.syscallDispatch.CreateProviderResult {
             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
-            const nonce = state.getNonce(senderAddr);
+            const sequence = state.getSequence(senderAddr);
 
-            var nonceBytes: [8]u8 = undefined;
-            std.mem.writeInt(u64, &nonceBytes, nonce, .big);
+            var sequenceBytes: [8]u8 = undefined;
+            std.mem.writeInt(u64, &sequenceBytes, sequence, .big);
             var createInput: [40]u8 = undefined;
             @memcpy(createInput[0..32], &bridge.selfAddress);
-            @memcpy(createInput[32..40], &nonceBytes);
+            @memcpy(createInput[32..40], &sequenceBytes);
             var newAddr: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(&createInput, &newAddr, .{});
 
-            state.setNonce(senderAddr, nonce + 1) catch {};
+            state.setSequence(senderAddr, sequence + 1) catch {};
 
             const newAddrTyped = core.types.Address{ .bytes = newAddr };
-            state.markCreated(newAddrTyped) catch {};
+            state.markCreated(newAddrTyped, .ContractRoot) catch {};
 
             if (!isZero(value)) {
                 bridge.transfer(newAddr, value) catch {
@@ -347,10 +346,10 @@ fn executePolkaContract(
             }
 
             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
-            const nonce = state.getNonce(senderAddr);
-            state.setNonce(senderAddr, nonce + 1) catch {};
+            const sequence = state.getSequence(senderAddr);
+            state.setSequence(senderAddr, sequence + 1) catch {};
 
-            state.markCreated(newAddrTyped) catch {};
+            state.markCreated(newAddrTyped, .ContractRoot) catch {};
 
             if (!isZero(value)) {
                 bridge.transfer(newAddr, value) catch {
@@ -459,7 +458,7 @@ fn executePolkaContract(
         allocator,
         bytecode,
         calldata,
-        gasLimit,
+        executionBudget,
         &host,
     ) catch |err| {
         std.debug.print("DEBUG executePolkaContract: executeFromElf failed with error={}\n", .{err});
@@ -467,7 +466,7 @@ fn executePolkaContract(
         return ExecutionResult{
             .success = false,
             .gasUsed = 0,
-            .gasRemaining = gasLimit,
+            .gasRemaining = executionBudget,
             .returnData = &[_]u8{},
             .logs = &[_]vm.LogEntry{},
             .status = .fault,
@@ -526,11 +525,11 @@ pub fn executeContract(
     allocator: std.mem.Allocator,
     bytecode: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    executionBudget: u64,
     stateBridge: *anyopaque,
 ) !ExecutionResult {
     if (detectPolkaVM(bytecode)) {
-        return executePolkaContract(allocator, bytecode, calldata, gasLimit, stateBridge);
+        return executePolkaContract(allocator, bytecode, calldata, executionBudget, stateBridge);
     }
 
     var sb: *StateBridge = @ptrCast(@alignCast(stateBridge));
@@ -579,14 +578,13 @@ pub fn executeContract(
     host.caller = sb.caller;
     host.selfAddress = sb.selfAddress;
     host.callValue = sb.value;
-    host.gasLimit = gasLimit;
+    host.executionBudget = executionBudget;
     host.blockNumber = sb.blockNumber;
     host.chainId = sb.chainId;
     host.timestamp = sb.timestamp;
     host.txOrigin = sb.txOrigin;
     host.gasPrice = sb.gasPrice;
-    host.coinbase = sb.coinbase;
-    host.baseFee = sb.baseFee;
+    host.producer = sb.producer;
     host.prevrandao = sb.prevRandao;
 
     // ── Wire VM execution pool (threaded executor + code cache) ─────
@@ -714,7 +712,7 @@ pub fn executeContract(
 
     // ── Wire create provider ────────────────────────────────────────
     // Routes CREATE_CONTRACT syscall to: derive address → execute initcode → store runtime code.
-    // Address derivation follows: blake3(sender || nonce)
+    // Address derivation follows: blake3(sender || sequence)
     const CreateProvider = struct {
         var bridge: *StateBridge = undefined;
         var alloc: std.mem.Allocator = undefined;
@@ -727,25 +725,25 @@ pub fn executeContract(
             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
 
-            // Get sender nonce for deterministic address derivation
-            const nonce = state.getNonce(senderAddr);
+            // Get sender sequence for deterministic address derivation
+            const sequence = state.getSequence(senderAddr);
 
             // Derive new contract address using BLAKE3:
-            // newAddr = blake3(sender_address || nonce_bytes)
-            var nonceBytes: [8]u8 = undefined;
-            std.mem.writeInt(u64, &nonceBytes, nonce, .big);
+            // newAddr = blake3(sender_address || sequence_bytes)
+            var sequenceBytes: [8]u8 = undefined;
+            std.mem.writeInt(u64, &sequenceBytes, sequence, .big);
             var createInput: [40]u8 = undefined;
             @memcpy(createInput[0..32], &bridge.selfAddress);
-            @memcpy(createInput[32..40], &nonceBytes);
+            @memcpy(createInput[32..40], &sequenceBytes);
             var newAddr: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(&createInput, &newAddr, .{});
 
-            // Increment sender nonce
-            state.setNonce(senderAddr, nonce + 1) catch {};
+            // Increment sender sequence
+            state.setSequence(senderAddr, sequence + 1) catch {};
 
             // Mark as created
             const newAddrTyped = core.types.Address{ .bytes = newAddr };
-            state.markCreated(newAddrTyped) catch {};
+            state.markCreated(newAddrTyped, .ContractRoot) catch {};
 
             // Transfer value to new contract
             if (!isZero(value)) {
@@ -798,7 +796,7 @@ pub fn executeContract(
     // ── Wire create2 provider ───────────────────────────────────────
     // Routes CREATE2 syscall to: hash initcode → derive salt-based address → execute initcode.
     // Address derivation follows: blake3(0x02 || sender || salt || blake3(initcode))
-    // This produces deterministic addresses independent of sender nonce.
+    // This produces deterministic addresses independent of sender sequence.
     const Create2Provider = struct {
         var bridge: *StateBridge = undefined;
         var alloc: std.mem.Allocator = undefined;
@@ -817,7 +815,7 @@ pub fn executeContract(
 
             // Step 2: Derive CREATE2 address using BLAKE3:
             // newAddr = blake3(0x02 || sender || salt || blake3(initcode))
-            // 0x02 prefix differentiates from CREATE (nonce-based)
+            // 0x02 prefix differentiates from CREATE (sequence-based)
             var create2Input: [97]u8 = undefined;
             create2Input[0] = 0x02;
             @memcpy(create2Input[1..33], &bridge.selfAddress);
@@ -837,13 +835,13 @@ pub fn executeContract(
                 return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
             }
 
-            // Step 4: Increment sender nonce (same as CREATE)
+            // Step 4: Increment sender sequence (same as CREATE)
             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
-            const nonce = state.getNonce(senderAddr);
-            state.setNonce(senderAddr, nonce + 1) catch {};
+            const sequence = state.getSequence(senderAddr);
+            state.setSequence(senderAddr, sequence + 1) catch {};
 
             // Step 5: Mark as created
-            state.markCreated(newAddrTyped) catch {};
+            state.markCreated(newAddrTyped, .ContractRoot) catch {};
 
             // Step 6: Transfer value to new contract
             if (!isZero(value)) {
@@ -940,14 +938,14 @@ pub fn executeContract(
             allocator,
             bytecode,
             calldata,
-            gasLimit,
+            executionBudget,
             &host,
         ) catch |err| {
             std.log.err("executeFromZeph failed: {}", .{err});
             return ExecutionResult{
                 .success = false,
                 .gasUsed = 0,
-                .gasRemaining = gasLimit,
+                .gasRemaining = executionBudget,
                 .returnData = &[_]u8{},
                 .logs = &[_]vm.syscallDispatch.LogEntry{},
                 .status = .fault,
@@ -958,14 +956,14 @@ pub fn executeContract(
             allocator,
             bytecode,
             calldata,
-            gasLimit,
+            executionBudget,
             &host,
         ) catch |err| {
             std.log.err("executeFromElf failed: {}", .{err});
             return ExecutionResult{
                 .success = false,
                 .gasUsed = 0,
-                .gasRemaining = gasLimit,
+                .gasRemaining = executionBudget,
                 .returnData = &[_]u8{},
                 .logs = &[_]vm.syscallDispatch.LogEntry{},
                 .status = .fault,
@@ -994,14 +992,14 @@ pub fn executeContract(
 pub fn deployContract(
     allocator: std.mem.Allocator,
     initcode: []const u8,
-    gasLimit: u64,
+    executionBudget: u64,
     stateBridge: *anyopaque,
 ) !DeployResult {
     const result = try executeContract(
         allocator,
         initcode,
         &[_]u8{},
-        gasLimit,
+        executionBudget,
         stateBridge,
     );
 

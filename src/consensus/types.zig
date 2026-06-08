@@ -148,7 +148,7 @@ pub const AdaptiveBlockHeader = struct {
     /// Proposer's validator index in the active set
     proposerIndex: u32,
     /// Proposer's VRF proof (proves legitimate selection)
-    proposerVrfProof: [48]u8,
+    proposerVrfProof: [96]u8,
 
     // ── Thread structure (the Loom) ─────────────────────────────────
     /// Number of active threads in this block (1 at Tier 1, up to MAX_THREADS)
@@ -260,11 +260,11 @@ pub const ThreadAttestation = struct {
     /// Validator index of the weaver
     validatorIndex: u32,
     /// Weaver's VRF proof (Tier 3) or committee membership proof (Tier 2)
-    roleProof: [48]u8,
+    roleProof: [96]u8,
     /// BLS signature over (slot, threadId, thread_root)
     blsSignature: [96]u8,
     /// Stake of the attesting validator
-    attestingStake: u64,
+    attestingStake: u256,
 };
 
 /// Signing message for thread attestation: Blake3(slot ‖ threadId ‖ thread_root)
@@ -296,14 +296,14 @@ pub const ThreadCertificate = struct {
     /// Bitmap of which weavers/committee members signed (up to 256)
     weaverBitmap: [32]u8,
     /// Total stake of attesting weavers
-    attestingStake: u64,
+    attestingStake: u256,
     /// Total stake of all eligible weavers for this thread
-    totalEligibleStake: u64,
+    totalEligibleStake: u256,
 
     /// Check if the certificate has sufficient quorum (≥67% of eligible stake).
     pub fn hasQuorum(self: *const ThreadCertificate) bool {
         if (self.totalEligibleStake == 0) return false;
-        return self.attestingStake * 3 > self.totalEligibleStake * 2;
+        return @as(u512, self.attestingStake) * 3 > @as(u512, self.totalEligibleStake) * 2;
     }
 };
 
@@ -324,7 +324,7 @@ pub const WovenQuorumCertificate = struct {
     /// Bitmap of which validators signed (up to 256 validators for Tier 1-2)
     voterBitmap: [32]u8,
     /// Total attesting stake
-    totalAttestingStake: u64,
+    totalAttestingStake: u256,
     /// Randomness seed for next slot
     randomnessSeed: [32]u8,
     /// Which tier produced this QC
@@ -337,9 +337,9 @@ pub const WovenQuorumCertificate = struct {
     }
 
     /// Check if voting quorum is met (≥67% of total voting stake).
-    pub fn hasVotingQuorum(self: *const WovenQuorumCertificate, total_stake: u64) bool {
+    pub fn hasVotingQuorum(self: *const WovenQuorumCertificate, total_stake: u256) bool {
         if (total_stake == 0) return false;
-        return self.totalAttestingStake * 3 > total_stake * 2;
+        return @as(u512, self.totalAttestingStake) * 3 > @as(u512, total_stake) * 2;
     }
 
     /// Compute the randomness seed for the next slot.
@@ -367,7 +367,7 @@ pub const ThreadCommitteeAssignment = struct {
     /// Validator index in the active set
     validatorIndex: u32,
     /// Validator's stake weight
-    stake: u64,
+    stake: u256,
 };
 
 // ── Proposer Schedule Entry ─────────────────────────────────────────────

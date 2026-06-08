@@ -25,7 +25,7 @@ pub const AccountHeader = struct {
     /// Program that owns this account (zero for EOAs)
     owner_program: types.Address = types.Address.zero(),
     /// Transaction count (EOA) or update counter (contract)
-    nonce: u64 = 0,
+    sequence: u64 = 0,
     /// Native token balance (in wei)
     balance: u128 = 0,
     /// Hash of the account's data payload
@@ -37,7 +37,7 @@ pub const AccountHeader = struct {
         buf[1] = @intFromEnum(self.account_type);
         std.mem.writeInt(u16, buf[2..4], self.flags, .big);
         @memcpy(buf[4..36], &self.owner_program.bytes);
-        std.mem.writeInt(u64, buf[36..44], self.nonce, .big);
+        std.mem.writeInt(u64, buf[36..44], self.sequence, .big);
         std.mem.writeInt(u128, buf[44..60], self.balance, .big);
         @memcpy(buf[60..92], &self.data_hash.bytes);
         var h: types.Hash = undefined;

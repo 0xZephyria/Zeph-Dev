@@ -91,13 +91,13 @@ pub const HistoricalState = struct {
         return balance;
     }
 
-    pub fn getNonceAt(self: *Self, address: types.Address, block: u64) !u64 {
+    pub fn getSequenceAt(self: *Self, address: types.Address, block: u64) !u64 {
         if (block >= self.head_block) {
-            return self.current_state.getNonce(address);
+            return self.current_state.getSequence(address);
         }
 
         const target_epoch = block / EPOCH_SIZE;
-        var nonce = self.current_state.getNonce(address);
+        var sequence = self.current_state.getSequence(address);
 
         var epoch = self.head_epoch;
         while (epoch > target_epoch) {
@@ -106,27 +106,27 @@ pub const HistoricalState = struct {
             defer delta.deinit();
 
             if (delta.getAccountDelta(address.bytes)) |account_delta| {
-                if (account_delta.nonce_delta >= 0) {
-                    nonce -|= @intCast(account_delta.nonce_delta);
+                if (account_delta.sequence_delta >= 0) {
+                    sequence -|= @intCast(account_delta.sequence_delta);
                 } else {
-                    nonce +|= @intCast(-account_delta.nonce_delta);
+                    sequence +|= @intCast(-account_delta.sequence_delta);
                 }
             }
             epoch -= 1;
         }
-        return nonce;
+        return sequence;
     }
 
     pub const AccountSnapshot = struct {
         balance: u256,
-        nonce: u64,
+        sequence: u64,
         block: u64,
     };
 
     pub fn getAccountAt(self: *Self, address: types.Address, block: u64) !AccountSnapshot {
         return AccountSnapshot{
             .balance = try self.getBalanceAt(address, block),
-            .nonce = try self.getNonceAt(address, block),
+            .sequence = try self.getSequenceAt(address, block),
             .block = block,
         };
     }
@@ -198,7 +198,7 @@ pub const HistoricalProof = struct {
     epoch_number: u64,
     account: types.Address,
     epoch_end_balance: u256,
-    epoch_end_nonce: u64,
+    epoch_end_sequence: u64,
     aggregated_sig: [96]u8,
     mmr_proof_siblings: std.ArrayListUnmanaged([32]u8),
 

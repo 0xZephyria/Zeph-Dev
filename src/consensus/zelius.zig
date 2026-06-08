@@ -15,14 +15,12 @@
 //   • Double-signing detection + slashing
 //   • View-change protocol for offline proposer failover
 //   • VRF-based leader election (stake-weighted, domain-separated)
-//   • VDF time proof for slot ordering
 //   • Adaptive tier detection at epoch boundaries
 //   • Thread-aware block construction and verification
 
 const std = @import("std");
 const core = @import("core");
 const types = @import("types.zig");
-const vdf = @import("vdf.zig");
 const vrf = @import("vrf.zig");
 const staking_mod = @import("staking.zig");
 const adaptive_mod = @import("adaptive.zig");
@@ -30,7 +28,7 @@ const adaptive_mod = @import("adaptive.zig");
 const blst_mod = core.crypto.blst;
 const c = blst_mod.c;
 
-const BLS_DST = "FORGEYRIA_BLS_DST_V01";
+const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
 
 // ── Epoch Configuration ─────────────────────────────────────────────────
 
@@ -95,6 +93,7 @@ pub const ZeliusEngine = struct {
     activeValidators: []const types.ValidatorInfo,
     privKey: ?[32]u8,
     blsPrivKey: ?[32]u8,
+    vrfPrivKey: ?[32]u8,
 
     // Epoch management
     epochConfig: EpochConfig,
@@ -112,12 +111,14 @@ pub const ZeliusEngine = struct {
     viewChange: ?ViewChange,
     viewChangeTimeoutMs: u64,
 
-    // VDF parameters
-    vdfIterations: u32,
-    vdfCheckpointInterval: u32,
-
     // Missed block tracking
     missedBlocks: std.AutoHashMap(core.types.Address, u32),
+
+    // Fast O(1) validator lookup by address
+    validatorIndexByAddr: std.AutoHashMap(core.types.Address, usize),
+
+    // Cached total active stake for O(1) quorum checks
+    totalActiveStake: u256,
 
     // Finality tracker
     lastFinalizedBlock: u64,
@@ -143,6 +144,7 @@ pub const ZeliusEngine = struct {
             .activeValidators = validators,
             .privKey = null,
             .blsPrivKey = null,
+            .vrfPrivKey = null,
             .epochConfig = .{},
             .currentEpoch = 0,
             .epochSeed = [_]u8{0} ** 32,
@@ -151,9 +153,9 @@ pub const ZeliusEngine = struct {
             .slashEvents = .{},
             .viewChange = null,
             .viewChangeTimeoutMs = types.VIEW_CHANGE_TIMEOUT_MS,
-            .vdfIterations = 1000,
-            .vdfCheckpointInterval = 100,
             .missedBlocks = std.AutoHashMap(core.types.Address, u32).init(allocator),
+            .validatorIndexByAddr = std.AutoHashMap(core.types.Address, usize).init(allocator),
+            .totalActiveStake = 0,
             .lastFinalizedBlock = 0,
             .blocksVerified = 0,
             .blocksSealed = 0,
@@ -162,21 +164,27 @@ pub const ZeliusEngine = struct {
             .consecutiveViewChanges = 0,
             .pendingEvidenceBroadcasts = 0,
         };
+
+        // Populate validator address index and compute total stake
+        var total_stake: u256 = 0;
+        for (validators, 0..) |v, i| {
+            try self.validatorIndexByAddr.put(v.address, i);
+            total_stake += v.stake;
+        }
+        self.totalActiveStake = total_stake;
+
         return self;
     }
 
     pub fn deinit(self: *ZeliusEngine) void {
-        // Zero out private keys in memory to prevent key leakage
-        if (self.privKey) |*k| {
-            @memset(k, 0);
-        }
-        if (self.blsPrivKey) |*k| {
-            @memset(k, 0);
-        }
+        if (self.privKey) |*k| secureZero(k[0..]);
+        if (self.blsPrivKey) |*k| secureZero(k[0..]);
+        if (self.vrfPrivKey) |*k| secureZero(k[0..]);
         self.adaptive.deinit();
         self.proposalsSeen.deinit();
         self.slashEvents.deinit(self.allocator);
         self.missedBlocks.deinit();
+        self.validatorIndexByAddr.deinit();
         self.allocator.destroy(self);
     }
 
@@ -185,18 +193,23 @@ pub const ZeliusEngine = struct {
     }
 
     pub fn setBlsPrivKey(self: *ZeliusEngine, seed: []const u8) void {
-        if (seed.len >= 32) {
-            var key: [32]u8 = undefined;
-            @memcpy(&key, seed[0..32]);
-            defer @memset(&key, 0);
-            var sk: c.blst_scalar = undefined;
-            defer @memset(std.mem.asBytes(&sk), 0);
-            c.blst_keygen(&sk, &key, key.len, null, 0);
-            var sk_bytes: [32]u8 = undefined;
-            defer @memset(&sk_bytes, 0);
-            c.blst_bendian_from_scalar(&sk_bytes, &sk);
-            self.blsPrivKey = sk_bytes;
-        }
+        if (seed.len < 32) return;
+        var key: [32]u8 = undefined;
+        @memcpy(&key, seed[0..32]);
+        defer secureZero(key[0..]);
+
+        // Derive BLS signing key via blst_keygen (HKDF)
+        var sk: c.blst_scalar = undefined;
+        defer secureZero(std.mem.asBytes(&sk));
+        c.blst_keygen(&sk, &key, key.len, null, 0);
+        var sk_bytes: [32]u8 = undefined;
+        defer secureZero(sk_bytes[0..]);
+        c.blst_bendian_from_scalar(&sk_bytes, &sk);
+        self.blsPrivKey = sk_bytes;
+
+        // VRF uses the same key (domain-separated by DST in hash-to-curve).
+        // A separate VRF public key would need on-chain registration.
+        self.vrfPrivKey = self.blsPrivKey;
     }
 
     // ── Adaptive Tier Access ────────────────────────────────────────
@@ -233,7 +246,7 @@ pub const ZeliusEngine = struct {
         self: *ZeliusEngine,
         blockNumber: u64,
         newSeed: [32]u8,
-        validatorStakes: []const u64,
+        validatorStakes: []const u256,
     ) !void {
         self.currentEpoch = self.epochForBlock(blockNumber);
         self.epochSeed = newSeed;
@@ -249,6 +262,17 @@ pub const ZeliusEngine = struct {
             newSeed,
             validatorStakes,
         );
+    }
+
+    /// Rebuild the validator address index (call when activeValidators changes).
+    pub fn rebuildValidatorIndex(self: *ZeliusEngine) void {
+        self.validatorIndexByAddr.clearRetainingCapacity();
+        var total_stake: u256 = 0;
+        for (self.activeValidators, 0..) |v, i| {
+            self.validatorIndexByAddr.put(v.address, i) catch {};
+            total_stake += v.stake;
+        }
+        self.totalActiveStake = total_stake;
     }
 
     // ── Proposer Selection (Adaptive) ───────────────────────────────
@@ -457,7 +481,7 @@ pub const ZeliusEngine = struct {
 
     // ── BLS Voting ──────────────────────────────────────────────────
 
-    pub fn verify_vote_signature(self: *ZeliusEngine, validatorIndex: u64, blockHash: core.types.Hash, view: u64, sig_bytes: [96]u8) !bool {
+    pub fn verifyVoteSignature(self: *ZeliusEngine, validatorIndex: u64, blockHash: core.types.Hash, view: u64, sig_bytes: [96]u8) !bool {
         // Validate index range
         if (validatorIndex >= self.activeValidators.len) return false;
 
@@ -465,19 +489,16 @@ pub const ZeliusEngine = struct {
         const validator = self.activeValidators[@intCast(validatorIndex)];
         const pk_bytes = validator.blsPubKey;
 
-        // Check if public key is not zero (validator has registered BLS key)
+        // Reject zero public keys — validator must have registered BLS key
         const zero_pk = [_]u8{0} ** 48;
-        if (std.mem.eql(u8, &pk_bytes, &zero_pk)) {
-            // Validator hasn't registered BLS key — allow during bootstrapping
-            return true;
-        }
+        if (std.mem.eql(u8, &pk_bytes, &zero_pk)) return false;
 
         // Construct the vote message: blockHash (32 bytes) || view (8 bytes, big endian)
         var msg: [40]u8 = undefined;
         @memcpy(msg[0..32], &blockHash.bytes);
         std.mem.writeInt(u64, msg[32..40], view, .big);
 
-        // Hash message to G2 (same as create_vote)
+        // Hash message to G2 (same as createVote)
         var msg_point: c.blst_p2 = undefined;
         c.blst_hash_to_g2(&msg_point, &msg, msg.len, BLS_DST.ptr, BLS_DST.len, null, 0);
         var msg_affine: c.blst_p2_affine = undefined;
@@ -487,11 +508,13 @@ pub const ZeliusEngine = struct {
         var sig_affine: c.blst_p2_affine = undefined;
         const sig_rc = c.blst_p2_uncompress(&sig_affine, &sig_bytes);
         if (sig_rc != c.BLST_SUCCESS) return false;
+        if (!c.blst_p2_affine_in_g2(&sig_affine)) return false;
 
         // Decompress public key
         var pk_affine: c.blst_p1_affine = undefined;
         const pk_rc = c.blst_p1_uncompress(&pk_affine, &pk_bytes);
         if (pk_rc != c.BLST_SUCCESS) return false;
+        if (!c.blst_p1_affine_in_g1(&pk_affine)) return false;
 
         // Core verification: e(pk, H(msg)) == e(G1, sig)
         const result = c.blst_core_verify_pk_in_g1(
@@ -509,7 +532,7 @@ pub const ZeliusEngine = struct {
         return result == c.BLST_SUCCESS;
     }
 
-    pub fn create_vote(self: *ZeliusEngine, blockHash: core.types.Hash, view: u64) ![96]u8 {
+    pub fn createVote(self: *ZeliusEngine, blockHash: core.types.Hash, view: u64) ![96]u8 {
         if (self.blsPrivKey == null) return error.NoBLSKey;
 
         var msg: [40]u8 = undefined;
@@ -520,8 +543,9 @@ pub const ZeliusEngine = struct {
         c.blst_hash_to_g2(&p2, &msg, msg.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
-        defer @memset(std.mem.asBytes(&sk), 0);
+        defer secureZero(std.mem.asBytes(&sk));
         c.blst_scalar_from_bendian(&sk, &self.blsPrivKey.?);
+        if (!c.blst_sk_check(&sk)) return error.InvalidSecretKey;
 
         var sig: c.blst_p2 = undefined;
         c.blst_sign_pk_in_g1(&sig, &p2, &sk);
@@ -533,7 +557,7 @@ pub const ZeliusEngine = struct {
     }
 
     /// Create a BLS vote for an adaptive block header.
-    pub fn create_adaptive_vote(self: *ZeliusEngine, header_hash: core.types.Hash) ![96]u8 {
+    pub fn createAdaptiveVote(self: *ZeliusEngine, header_hash: core.types.Hash) ![96]u8 {
         if (self.blsPrivKey == null) return error.NoBLSKey;
         return adaptive_mod.AdaptiveConsensus.createVote(self.blsPrivKey.?, header_hash);
     }
@@ -542,87 +566,63 @@ pub const ZeliusEngine = struct {
 
     pub fn seal(self: *ZeliusEngine, block: *core.types.Block) !void {
         if (self.blsPrivKey == null) return error.NoBLSKey;
+        if (self.vrfPrivKey == null) return error.NoVRFKey;
 
         const header = &block.header;
 
-        // VDF computation
-        const expected_checkpoints = self.vdfIterations / self.vdfCheckpointInterval;
-        const vdf_size = expected_checkpoints * 32;
-        const total_size = vdf_size + 48 + 96;
+        // Extra data layout (192 bytes total, fixed size):
+        //   0 –  96: VRF proof (96 bytes, G2 compressed)
+        //  96 – 192: BLS signature over block hash (96 bytes, not included in hash)
+        const VRF_OFFSET: usize = 0;
+        const BLS_OFFSET: usize = 96;
+        const TOTAL_SIZE: usize = 192;
 
-        var preserved_data = try self.allocator.alloc(u8, total_size);
+        var preserved_data = try self.allocator.alloc(u8, TOTAL_SIZE);
         errdefer self.allocator.free(preserved_data);
 
-        // VDF
-        var vdf_input: [32]u8 = undefined;
-        @memcpy(&vdf_input, &header.parentHash.bytes);
-        
-        const checkpoints = try vdf.VDF.compute_checkpoints(
-            self.allocator, 
-            &vdf_input, 
-            self.vdfIterations, 
-            self.vdfCheckpointInterval
+        // VRF proof — domain-separated proposer sortition, bound to slot
+        const vrf_input = vrf.VRF.buildSortitionInput(
+            vrf.DOMAIN_PROPOSER,
+            self.epochSeed,
+            header.number,
+            null,
         );
-        defer {
-            for (checkpoints) |c_slice| {
-                self.allocator.free(c_slice);
-            }
-            self.allocator.free(checkpoints);
-        }
+        const vrf_proof = try vrf.VRF.prove(&self.vrfPrivKey.?, &vrf_input);
+        @memcpy(preserved_data[VRF_OFFSET..BLS_OFFSET], &vrf_proof);
 
-        for (checkpoints, 0..) |c_slice, idx| {
-            @memcpy(preserved_data[idx * 32 ..][0..32], c_slice[0..32]);
-        }
-
-        // VRF proof
-        var vrf_input: [40]u8 = undefined;
-        @memcpy(vrf_input[0..32], &self.epochSeed);
-        std.mem.writeInt(u64, vrf_input[32..40], header.number, .big);
-        const proof = try vrf.VRF.prove(&self.blsPrivKey.?, &vrf_input);
-        @memcpy(preserved_data[vdf_size .. vdf_size + 48], &proof);
-
-        // BLS signature over block hash
-        const sig_offset = vdf_size + 48;
-        const original_extra = header.extraData;
-        header.extraData = preserved_data[0..sig_offset];
+        // Hash includes VRF proof (96 bytes); BLS sig at [96..192] is excluded by EXTRA_DATA_HASH_LEN
+        header.extraData = preserved_data;
         const h_bytes = block.hash();
 
         if (header.number == 1) {
-            const encoded = header.rlpEncode(std.heap.page_allocator) catch unreachable;
-            defer std.heap.page_allocator.free(encoded);
-            printHex("SEAL RLP HEX", encoded);
+            printHex("SEAL HASH", &h_bytes.bytes);
         }
-
-        header.extraData = original_extra;
 
         var p2: c.blst_p2 = undefined;
         c.blst_hash_to_g2(&p2, &h_bytes.bytes, h_bytes.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
-        defer @memset(std.mem.asBytes(&sk), 0);
+        defer secureZero(std.mem.asBytes(&sk));
         c.blst_scalar_from_bendian(&sk, &self.blsPrivKey.?);
+        if (!c.blst_sk_check(&sk)) return error.InvalidSecretKey;
 
         var sig: c.blst_p2 = undefined;
         c.blst_sign_pk_in_g1(&sig, &p2, &sk);
 
         var sig_out: [96]u8 = undefined;
         c.blst_p2_compress(&sig_out, &sig);
-        @memcpy(preserved_data[vdf_size + 48 ..][0..96], &sig_out);
+        @memcpy(preserved_data[BLS_OFFSET..][0..96], &sig_out);
 
-        const final_payload = try self.allocator.alloc(u8, total_size);
-        @memcpy(final_payload, preserved_data);
-        header.extraData = final_payload;
-
-        self.allocator.free(preserved_data);
+        header.extraData = preserved_data;
+        header.quorumCertificate = null; // QC is formed by vote aggregation after proposal
         self.blocksSealed += 1;
 
         // Rotate epoch if at boundary
         if (self.isEpochBoundary(header.number)) {
-            // Collect validator stakes for epoch transition
-            const stakes = try self.allocator.alloc(u64, self.activeValidators.len);
+            const stakes = try self.allocator.alloc(u256, self.activeValidators.len);
             defer self.allocator.free(stakes);
             for (self.activeValidators, 0..) |v, i| {
-                stakes[i] = @truncate(v.stake);
+                stakes[i] = v.stake;
             }
             try self.rotateEpoch(header.number, h_bytes.bytes, stakes);
         }
@@ -642,42 +642,23 @@ pub const ZeliusEngine = struct {
     // ── Block Verification ──────────────────────────────────────────
 
     pub fn verify(self: *ZeliusEngine, block: *core.types.Block, parent: *core.types.Header) !void {
-        const expected_checkpoints = self.vdfIterations / self.vdfCheckpointInterval;
-        const vdf_size = expected_checkpoints * 32;
-        const min_extra_size = vdf_size + 48 + 96;
+        const VRF_OFFSET: usize = 0;
+        const BLS_OFFSET: usize = 96;
+        const MIN_EXTRA_SIZE: usize = 192;
 
-        // 1. Check ExtraData length
-        if (block.header.extraData.len < min_extra_size) return error.InvalidExtraData;
+        // 1. Check ExtraData length — enforce exact 192 bytes (VRF proof + BLS signature)
+        if (block.header.extraData.len != MIN_EXTRA_SIZE) return error.InvalidExtraData;
 
-        // 2. Verify VDF
-        var vdf_input: [32]u8 = undefined;
-        @memcpy(&vdf_input, &block.header.parentHash.bytes);
-        const checkpoints = block.header.extraData[0..vdf_size];
-        const vdf_valid = try vdf.VDF.verify_parallel(self.allocator, &vdf_input, checkpoints, self.vdfCheckpointInterval);
-        if (!vdf_valid) return error.InvalidVDF;
+        // 2. Verify BLS signature (Block.hash() strips BLS suffix via EXTRA_DATA_HASH_LEN)
+        const sig_bytes = block.header.extraData[BLS_OFFSET..][0..96];
 
-        // 3. Verify BLS signature
-        const sig_offset = vdf_size + 48;
-        const sig_bytes = block.header.extraData[sig_offset..][0..96];
+        const proposer_idx = self.validatorIndexByAddr.get(block.header.producer) orelse return error.ValidatorNotFound;
+        const pk_bytes = self.activeValidators[proposer_idx].blsPubKey;
 
-        var proposer_pk: ?[48]u8 = null;
-        for (self.activeValidators) |v| {
-            if (std.mem.eql(u8, &v.address.bytes, &block.header.coinbase.bytes)) {
-                proposer_pk = v.blsPubKey;
-                break;
-            }
-        }
-        const pk_bytes = proposer_pk orelse return error.ValidatorNotFound;
-
-        const original_extra = block.header.extraData;
-        block.header.extraData = original_extra[0..sig_offset];
         const h_bytes = block.hash();
-        block.header.extraData = original_extra;
 
         if (block.header.number == 1) {
-            const encoded = block.header.rlpEncode(std.heap.page_allocator) catch unreachable;
-            defer std.heap.page_allocator.free(encoded);
-            printHex("VERIFY RLP HEX", encoded);
+            printHex("VERIFY HASH", &h_bytes.bytes);
         }
 
         var p2: c.blst_p2 = undefined;
@@ -688,10 +669,12 @@ pub const ZeliusEngine = struct {
         var sig_affine: c.blst_p2_affine = undefined;
         const sig_rc = c.blst_p2_uncompress(&sig_affine, sig_bytes.ptr);
         if (sig_rc != c.BLST_SUCCESS) return error.InvalidSignature;
+        if (!c.blst_p2_affine_in_g2(&sig_affine)) return error.InvalidSignature;
 
         var pk_affine: c.blst_p1_affine = undefined;
         const pk_rc = c.blst_p1_uncompress(&pk_affine, &pk_bytes);
         if (pk_rc != c.BLST_SUCCESS) return error.InvalidPublicKey;
+        if (!c.blst_p1_affine_in_g1(&pk_affine)) return error.InvalidPublicKey;
 
         const result = c.blst_core_verify_pk_in_g1(
             &pk_affine,
@@ -705,37 +688,119 @@ pub const ZeliusEngine = struct {
             0,
         );
         if (result != c.BLST_SUCCESS) {
-            const hash_hex = std.fmt.bytesToHex(h_bytes.bytes, .lower);
-            const pk_hex = std.fmt.bytesToHex(pk_bytes, .lower);
-            const coinbase_hex = std.fmt.bytesToHex(block.header.coinbase.bytes, .lower);
-            const sig_hex = std.fmt.bytesToHex(sig_bytes[0..96].*, .lower);
-            std.log.err("BLS signature verify failed: result={}, coinbase={s}, hash={s}, pk={s}, sig={s}", .{
+            const producer_hex = std.fmt.bytesToHex(block.header.producer.bytes, .lower);
+            std.log.err("BLS signature verify failed: result={}, producer={s}", .{
                 result,
-                &coinbase_hex,
-                &hash_hex,
-                &pk_hex,
-                &sig_hex,
+                &producer_hex,
             });
             return error.InvalidSignature;
         }
 
-        // 4. Double-signing check
+        // 3. Verify VRF proof (proposer sortition — same input as sortition_proposer)
+        const vrf_proof_bytes = block.header.extraData[VRF_OFFSET..][0..96];
+        const vrf_input = vrf.VRF.buildSortitionInput(
+            vrf.DOMAIN_PROPOSER,
+            self.epochSeed,
+            block.header.number,
+            null,
+        );
+        if (!vrf.VRF.verify(pk_bytes, vrf_proof_bytes.*, &vrf_input)) {
+            return error.InvalidVRF;
+        }
+
+        // 4. Proposer must be in active validator set and meet stake-weighted threshold.
+        //    Zero-stake proposers are always rejected (cannot be eligible).
+        const proposer_stake = self.activeValidators[proposer_idx].stake;
+        if (proposer_stake == 0) return error.ZeroStakeProposer;
+        if (!vrf.VRF.checkProposerEligibility(
+            vrf_proof_bytes.*,
+            proposer_stake,
+            self.totalActiveStake,
+            types.EXPECTED_PROPOSERS,
+        )) return error.ProposerNotEligible;
+
+        // 4b. Verify the block producer is the expected proposer for this slot.
+        //     At Tier 1 the proposer is deterministic; at Tier 2-3 the VRF sortition
+        //     (verified above) determines eligibility, and deterministicProposer
+        //     serves as the fallback when the proposer schedule is unpopulated.
+        const expected_proposer = self.adaptive.deterministicProposer(block.header.number);
+        if (proposer_idx != expected_proposer) return error.WrongProposerForSlot;
+
+        // 5. Double-signing check
         const blockHash = block.hash();
-        if (try self.recordProposal(block.header.number, blockHash, block.header.coinbase)) |slash_event| {
+        if (try self.recordProposal(block.header.number, blockHash, block.header.producer)) |slash_event| {
             _ = slash_event;
             return error.DoubleSigningDetected;
         }
 
-        // 5. Timestamp sanity
+        // 6. Timestamp sanity
         if (block.header.time <= parent.time) return error.TimestampTooOld;
 
-        // 6. Block number monotonicity
+        // 7. Block number monotonicity
         if (block.header.number != parent.number + 1) return error.InvalidBlockNumber;
 
-        // 7. Parent hash linkage
+        // 8. Parent hash linkage
         const parentHash = computeHeaderHash(parent);
         if (!std.mem.eql(u8, &block.header.parentHash.bytes, &parentHash.bytes)) {
             return error.InvalidParentHash;
+        }
+
+        // 9. Validate QuorumCertificate if present.
+        //     During sync, blocks carry a QC; during initial proposal it is null
+        //     (formed after vote aggregation by the pipeline).
+        if (block.header.quorumCertificate) |qc| {
+            // Aggregate signer public keys from the bitmap
+            var agg_pk: c.blst_p1 = undefined;
+            var first = true;
+            var computed_attesting_stake: u256 = 0;
+            for (0..256) |i| {
+                const byte_idx = i / 8;
+                const bit_idx = @as(u3, @intCast(i % 8));
+                if (byte_idx >= qc.voterBitmap.len) break;
+                if ((qc.voterBitmap[byte_idx] >> @as(u3, @intCast(bit_idx))) & 1 == 1) {
+                    if (i >= self.activeValidators.len) return error.InvalidQC;
+                    const v_pk_bytes = self.activeValidators[i].blsPubKey;
+                    var v_pk_affine: c.blst_p1_affine = undefined;
+                    if (c.blst_p1_uncompress(&v_pk_affine, &v_pk_bytes) != c.BLST_SUCCESS) return error.InvalidQC;
+                    if (!c.blst_p1_affine_in_g1(&v_pk_affine)) return error.InvalidQC;
+                    var v_pk_jac: c.blst_p1 = undefined;
+                    c.blst_p1_from_affine(&v_pk_jac, &v_pk_affine);
+                    if (first) {
+                        agg_pk = v_pk_jac;
+                        first = false;
+                    } else {
+                        c.blst_p1_add_or_double(&agg_pk, &agg_pk, &v_pk_jac);
+                    }
+                    computed_attesting_stake += self.activeValidators[i].stake;
+                }
+            }
+            if (first) return error.InvalidQC; // No signers in bitmap
+
+            // Verify aggregate signature against the block hash (same hashed message as BLS sig)
+            var agg_pk_affine: c.blst_p1_affine = undefined;
+            c.blst_p1_to_affine(&agg_pk_affine, &agg_pk);
+
+            var qc_sig_affine: c.blst_p2_affine = undefined;
+            if (c.blst_p2_uncompress(&qc_sig_affine, &qc.aggregateSignature) != c.BLST_SUCCESS) return error.InvalidQC;
+            if (!c.blst_p2_affine_in_g2(&qc_sig_affine)) return error.InvalidQC;
+
+            const qc_result = c.blst_core_verify_pk_in_g1(
+                &agg_pk_affine,
+                &qc_sig_affine,
+                true,
+                &h_bytes.bytes,
+                h_bytes.bytes.len,
+                BLS_DST.ptr,
+                BLS_DST.len,
+                null,
+                0,
+            );
+            if (qc_result != c.BLST_SUCCESS) return error.InvalidQC;
+
+            // Check 2/3+ stake threshold using u512 to avoid overflow
+            if (@as(u512, computed_attesting_stake) * 3 <= @as(u512, self.totalActiveStake) * 2) {
+                return error.InsufficientQCMajority;
+            }
         }
 
         self.blocksVerified += 1;
@@ -776,12 +841,12 @@ pub const ZeliusEngine = struct {
 
             std.mem.sortUnstable(core.types.Transaction, txs, {}, struct {
                 pub fn lessThan(_: void, a: core.types.Transaction, b: core.types.Transaction) bool {
-                    return a.nonce < b.nonce;
+                    return a.sequence < b.sequence;
                 }
             }.lessThan);
 
             for (1..txs.len) |idx| {
-                if (txs[idx].nonce != txs[idx - 1].nonce + 1) {
+                if (txs[idx].sequence != txs[idx - 1].sequence + 1) {
                     return error.NonContiguousNonceInBlock;
                 }
             }
@@ -832,13 +897,24 @@ pub const ZeliusEngine = struct {
         }
     }
 
-    fn computeHeaderHash(header: *core.types.Header) core.types.Hash {
+    /// Compute the Blake3 hash of a block header for parent-chain linking.
+    pub fn computeHeaderHash(header: *core.types.Header) core.types.Hash {
         var h_res = core.types.Hash.zero();
-        const ally = std.heap.page_allocator;
-        const encoded = header.rlpEncode(ally) catch return h_res;
-        defer ally.free(encoded);
         var hasher = std.crypto.hash.Blake3.init(.{});
-        hasher.update(encoded);
+        var buf8: [8]u8 = undefined;
+        std.mem.writeInt(u64, &buf8, header.number, .big);
+        hasher.update(&buf8);
+        hasher.update(&header.parentHash.bytes);
+        std.mem.writeInt(u64, &buf8, header.time, .big);
+        hasher.update(&buf8);
+        hasher.update(&header.stateRoot.bytes);
+        hasher.update(&header.txHash.bytes);
+        hasher.update(&header.producer.bytes);
+        std.mem.writeInt(u64, &buf8, header.executionBudget, .big);
+        hasher.update(&buf8);
+        std.mem.writeInt(u64, &buf8, header.gasUsed, .big);
+        hasher.update(&buf8);
+        hasher.update(header.extraData);
         hasher.final(&h_res.bytes);
         return h_res;
     }
@@ -875,9 +951,9 @@ pub const ZeliusEngine = struct {
 
 pub fn deriveBlsPubKey(seed: [32]u8) [48]u8 {
     var mutable_seed = seed;
-    defer @memset(&mutable_seed, 0);
+    defer secureZero(mutable_seed[0..]);
     var sk: c.blst_scalar = undefined;
-    defer @memset(std.mem.asBytes(&sk), 0);
+    defer secureZero(std.mem.asBytes(&sk));
     c.blst_keygen(&sk, &mutable_seed, mutable_seed.len, null, 0);
     var pk: c.blst_p1 = undefined;
     c.blst_sk_to_pk_in_g1(&pk, &sk);
@@ -885,3 +961,10 @@ pub fn deriveBlsPubKey(seed: [32]u8) [48]u8 {
     c.blst_p1_compress(&pk_compressed, &pk);
     return pk_compressed;
 }
+
+fn secureZero(buf: []u8) void {
+    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
+    for (0..buf.len) |i| ptr[i] = 0;
+}
+
+

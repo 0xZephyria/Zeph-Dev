@@ -74,7 +74,7 @@ pub const StateDelta = struct {
         self: *Self,
         addr: Address,
         balance_delta: i128,
-        nonce_delta: i64,
+        sequence_delta: i64,
         code_hash: ?Hash,
     ) !void {
         const shard_idx = getShardIndex(addr);
@@ -87,7 +87,7 @@ pub const StateDelta = struct {
         if (gop.found_existing) {
             // Merge with existing delta
             gop.value_ptr.balance_delta +|= balance_delta;
-            gop.value_ptr.nonce_delta +|= nonce_delta;
+            gop.value_ptr.sequence_delta +|= sequence_delta;
             if (code_hash) |ch| {
                 gop.value_ptr.code_hash = ch;
             }
@@ -96,7 +96,7 @@ pub const StateDelta = struct {
             gop.value_ptr.* = AccountDelta{
                 .address = addr,
                 .balance_delta = balance_delta,
-                .nonce_delta = nonce_delta,
+                .sequence_delta = sequence_delta,
                 .code_hash = code_hash orelse [_]u8{0} ** 32,
             };
             _ = self.total_accounts.fetchAdd(1, .monotonic);
@@ -301,7 +301,7 @@ pub const StateDelta = struct {
                 try dst_shard.accounts.put(delta.address, AccountDelta{
                     .address = delta.address,
                     .balance_delta = -delta.balance_delta,
-                    .nonce_delta = -delta.nonce_delta,
+                    .sequence_delta = -delta.sequence_delta,
                     .code_hash = delta.code_hash, // Cannot reverse code changes easily
                 });
             }

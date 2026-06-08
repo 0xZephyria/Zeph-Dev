@@ -147,14 +147,14 @@ pub const ZephyrDB = struct {
         try self.wal.appendAccountPut(address, balance);
     }
 
-    pub fn getNonce(self: *Self, address: [32]u8) u64 {
-        return self.accounts.getNonce(address);
+    pub fn getSequence(self: *Self, address: [32]u8) u64 {
+        return self.accounts.getSequence(address);
     }
 
-    pub fn setNonce(self: *Self, address: [32]u8, nonce: u64) !void {
-        try self.accounts.setNonce(address, nonce);
+    pub fn setSequence(self: *Self, address: [32]u8, sequence: u64) !void {
+        try self.accounts.setSequence(address, sequence);
         var val: [32]u8 = [_]u8{0} ** 32;
-        @memcpy(val[0..8], std.mem.asBytes(&nonce));
+        @memcpy(val[0..8], std.mem.asBytes(&sequence));
         try self.wal.append(.AccountPut, address, val);
     }
 

@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const crypto = @import("crypto");
 const blst = crypto.blst;
 
-pub const BLS_DST = "FORGEYRIA_EPOCH_SIG_V01";
+pub const BLS_DST = "ZEPHYRIA_EPOCH_SIG_V01";
 
 /// Aggregated BLS signature result
 pub const AggregatedSignature = struct {

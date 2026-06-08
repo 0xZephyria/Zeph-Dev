@@ -24,7 +24,7 @@ const types = @import("types.zig");
 const blst_mod = core.crypto.blst;
 const blst_c = blst_mod.c;
 
-const BLS_DST = "FORGEYRIA_BLS_DST_V01";
+const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
 
 // ── Thread Attestation Pool ─────────────────────────────────────────────
 
@@ -39,9 +39,9 @@ pub const ThreadAttestationPool = struct {
     /// Thread ID → set of validator indices that have attested (dedup)
     attested_validators: [types.MAX_THREADS]std.AutoHashMap(u32, void),
     /// Thread ID → accumulated attesting stake
-    attested_stake: [types.MAX_THREADS]u64,
+    attested_stake: [types.MAX_THREADS]u256,
     /// Thread ID → total eligible stake (set externally)
-    eligible_stake: [types.MAX_THREADS]u64,
+    eligible_stake: [types.MAX_THREADS]u256,
 
     /// Produced certificates
     certificates: [types.MAX_THREADS]?types.ThreadCertificate,
@@ -102,7 +102,7 @@ pub const ThreadAttestationPool = struct {
     }
 
     /// Set the total eligible stake for a thread (needed for quorum check).
-    pub fn setEligibleStake(self: *Self, thread_id: u8, stake: u64) void {
+    pub fn setEligibleStake(self: *Self, thread_id: u8, stake: u256) void {
         if (thread_id >= types.MAX_THREADS) return;
         self.eligible_stake[thread_id] = stake;
     }
@@ -150,7 +150,7 @@ pub const ThreadAttestationPool = struct {
     fn hasThreadQuorum(self: *const Self, thread_id: u8) bool {
         const tid: usize = thread_id;
         if (self.eligible_stake[tid] == 0) return false;
-        return self.attested_stake[tid] * 3 > self.eligible_stake[tid] * 2;
+        return @as(u512, self.attested_stake[tid]) * 3 > @as(u512, self.eligible_stake[tid]) * 2;
     }
 
     /// Build a ThreadCertificate from collected attestations.
@@ -180,6 +180,7 @@ pub const ThreadAttestationPool = struct {
             var sig_affine = std.mem.zeroes(blst_c.blst_p2_affine);
             const res = blst_c.blst_p2_uncompress(&sig_affine, &att.blsSignature);
             if (res != blst_c.BLST_SUCCESS) continue;
+            if (!blst_c.blst_p2_affine_in_g2(&sig_affine)) continue;
 
             var sig_jac = std.mem.zeroes(blst_c.blst_p2);
             blst_c.blst_p2_from_affine(&sig_jac, &sig_affine);
@@ -230,13 +231,18 @@ pub const ThreadAttestationPool = struct {
         thread_id: u8,
         thread_root: core.types.Hash,
     ) [96]u8 {
+        var mutable_key = bls_priv_key;
+        defer secureZero(mutable_key[0..]);
+
         const msg = types.threadAttestationMessage(slot, thread_id, thread_root);
 
         var p2: blst_c.blst_p2 = undefined;
         blst_c.blst_hash_to_g2(&p2, &msg, msg.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: blst_c.blst_scalar = undefined;
-        blst_c.blst_scalar_from_bendian(&sk, &bls_priv_key);
+        defer secureZero(std.mem.asBytes(&sk));
+        blst_c.blst_scalar_from_bendian(&sk, &mutable_key);
+        if (!blst_c.blst_sk_check(&sk)) return error.InvalidSecretKey;
 
         var sig: blst_c.blst_p2 = undefined;
         blst_c.blst_sign_pk_in_g1(&sig, &p2, &sk);
@@ -245,6 +251,11 @@ pub const ThreadAttestationPool = struct {
         blst_c.blst_p2_compress(&sig_bytes, &sig);
 
         return sig_bytes;
+    }
+
+    fn secureZero(buf: []u8) void {
+        const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
+        for (0..buf.len) |i| ptr[i] = 0;
     }
 
     /// Get statistics.

@@ -286,9 +286,9 @@ pub const DiscoveryService = struct {
         if (priv_key.len == 32) {
             var priv_key_arr: [32]u8 = undefined;
             @memcpy(&priv_key_arr, priv_key[0..32]);
-            defer @memset(&priv_key_arr, 0);
+            defer secureZero(priv_key_arr[0..]);
             var key_pair = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(priv_key_arr);
-            defer @memset(std.mem.asBytes(&key_pair), 0);
+            defer secureZero(std.mem.asBytes(&key_pair));
             const pub_key_bytes = key_pair.public_key.toBytes();
             @memcpy(id[0..32], &pub_key_bytes);
             @memcpy(compressed_pubkey[0..32], &pub_key_bytes);
@@ -590,4 +590,9 @@ fn xorDist(a: NodeHash, b: NodeHash) NodeHash {
 
 fn compareDist(a: NodeHash, b: NodeHash) std.math.Order {
     return std.mem.order(u8, &a, &b);
+}
+
+fn secureZero(buf: []u8) void {
+    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
+    for (0..buf.len) |i| ptr[i] = 0;
 }

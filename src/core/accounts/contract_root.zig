@@ -1,26 +1,16 @@
-// ============================================================================
-// Zephyria — Contract Root Account (Type 1)
-// ============================================================================
-//
-// Metadata account for a deployed contract. Externally, this presents as
-// a single Ethereum-style address. Internally, it maps to:
-//   ContractRoot → CodeAccount (immutable)
-//                → ConfigAccount (rare-write)
-//                → VaultAccount (balance)
-//                → StorageCellAccount[] (N per-slot accounts)
-//
-// The storage_root field is virtual — used ONLY for ETH JSON-RPC
-// compatibility (eth_getProof). Actual commitment uses the global Verkle trie.
-
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Blake3 = std.crypto.hash.Blake3;
+const common = @import("common.zig");
 
+/// Contract Root Account (Type 1).
+/// Metadata for a deployed contract.
 pub const ContractRoot = struct {
     header: AccountHeader,
     code_hash: types.Hash,
-    storage_root: types.Hash, // Virtual — for RPC compatibility only
+    /// Virtual — for eth_getProof RPC compatibility only.
+    /// Actual commitment uses the global trie.
+    storage_root: types.Hash,
 
     pub fn init(address: types.Address, code_hash: types.Hash) ContractRoot {
         return .{
@@ -41,44 +31,49 @@ pub const ContractRoot = struct {
     pub fn isDeployed(self: *const ContractRoot) bool {
         return !self.code_hash.eql(types.Hash.zero());
     }
+
+    /// Serialize to bytes: header(60) + code_hash(32) + storage_root(32) = 124 bytes
+    pub fn serialize(self: *const ContractRoot, buf: []u8) []u8 {
+        const hdr = std.mem.asBytes(&self.header);
+        @memcpy(buf[0..60], hdr);
+        @memcpy(buf[60..92], &self.code_hash.bytes);
+        @memcpy(buf[92..124], &self.storage_root.bytes);
+        return buf[0..124];
+    }
+
+    /// Deserialize from bytes.
+    pub fn deserialize(data: []const u8) ?ContractRoot {
+        if (data.len < 124) return null;
+        var header: AccountHeader = undefined;
+        @memcpy(std.mem.asBytes(&header), data[0..60]);
+        if (header.account_type != .ContractRoot) return null;
+        var code_hash: types.Hash = undefined;
+        @memcpy(&code_hash.bytes, data[60..92]);
+        var storage_root: types.Hash = undefined;
+        @memcpy(&storage_root.bytes, data[92..124]);
+        return .{ .header = header, .code_hash = code_hash, .storage_root = storage_root };
+    }
 };
 
-// ── Key Derivation ──────────────────────────────────────────────────────
-
-/// Code hash key for Verkle trie: stem || 0x02
+/// Code hash key: stem || 0x02
 pub fn codeHashKey(addr: types.Address) [32]u8 {
-    var key: [32]u8 = undefined;
-    @memcpy(key[0..31], &contractStem(addr));
-    key[31] = 0x02;
-    return key;
+    return common.codeHashKey(addr);
 }
 
 /// Code body key: stem || 0x03
 pub fn codeKey(addr: types.Address) [32]u8 {
-    var key: [32]u8 = undefined;
-    @memcpy(key[0..31], &contractStem(addr));
-    key[31] = 0x03;
-    return key;
+    return common.codeKey(addr);
 }
 
-/// Contract stem: blake3(address)[0..31]
-pub fn contractStem(addr: types.Address) [31]u8 {
-    var h: [32]u8 = undefined;
-    Blake3.hash(&addr.bytes, &h, .{});
-    var stem: [31]u8 = undefined;
-    @memcpy(&stem, h[0..31]);
-    return stem;
-}
-
-/// Derive contract address from deployer + nonce (CREATE opcode)
-pub fn deriveAddress(deployer: types.Address, nonce: u64) types.Address {
-    var nonceBytes: [8]u8 = undefined;
-    std.mem.writeInt(u64, &nonceBytes, nonce, .big);
+/// Derive contract address from deployer + sequence (CREATE opcode)
+pub fn deriveAddress(deployer: types.Address, sequence: u64) types.Address {
+    var sequenceBytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &sequenceBytes, sequence, .big);
     var createInput: [40]u8 = undefined;
     @memcpy(createInput[0..32], &deployer.bytes);
-    @memcpy(createInput[32..40], &nonceBytes);
+    @memcpy(createInput[32..40], &sequenceBytes);
     var addr: types.Address = undefined;
-    Blake3.hash(&createInput, &addr.bytes, .{});
+    std.crypto.hash.Blake3.hash(&createInput, &addr.bytes, .{});
     return addr;
 }
 
@@ -90,6 +85,6 @@ pub fn deriveCreate2Address(deployer: types.Address, salt: [32]u8, init_code_has
     @memcpy(create2Input[33..65], &salt);
     @memcpy(create2Input[65..97], &init_code_hash);
     var addr: types.Address = undefined;
-    Blake3.hash(&create2Input, &addr.bytes, .{});
+    std.crypto.hash.Blake3.hash(&create2Input, &addr.bytes, .{});
     return addr;
 }

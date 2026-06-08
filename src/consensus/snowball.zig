@@ -55,9 +55,9 @@ pub const SnowballInstance = struct {
     /// Total responses in current round
     current_round_total: u32,
     /// Stake-weighted accept count
-    current_round_accept_stake: u64,
+    current_round_accept_stake: u256,
     /// Stake-weighted reject count
-    current_round_reject_stake: u64,
+    current_round_reject_stake: u256,
     /// Confidence counter for Accept
     accept_confidence: u32,
     /// Confidence counter for Reject
@@ -119,7 +119,7 @@ pub const Snowball = struct {
         self: *Self,
         slot: u64,
         accept: bool,
-        responder_stake: u64,
+        responder_stake: u256,
     ) bool {
         var instance = self.instances.getPtr(slot) orelse return false;
         if (instance.finalized) return true;
@@ -265,7 +265,6 @@ pub const Snowball = struct {
         _ = self;
         var peers: [types.SNOWBALL_K]u32 = undefined;
         if (validator_count <= types.SNOWBALL_K) {
-            // If fewer validators than k, select all
             for (0..types.SNOWBALL_K) |i| {
                 peers[i] = @intCast(i % validator_count);
             }
@@ -273,17 +272,37 @@ pub const Snowball = struct {
         }
 
         var state = seed;
-        for (0..types.SNOWBALL_K) |i| {
+        var selected: usize = 0;
+        var attempts: usize = 0;
+        const max_attempts = types.SNOWBALL_K * 4;
+        while (selected < types.SNOWBALL_K and attempts < max_attempts) : (attempts += 1) {
             var hasher = std.crypto.hash.Blake3.init(.{});
             hasher.update(&state);
             var buf: [12]u8 = undefined;
             std.mem.writeInt(u64, buf[0..8], slot, .big);
-            std.mem.writeInt(u32, buf[8..12], round + @as(u32, @intCast(i)), .big);
+            std.mem.writeInt(u32, buf[8..12], round + @as(u32, @intCast(attempts)), .big);
             hasher.update(&buf);
             hasher.final(&state);
 
             const val = std.mem.readInt(u32, state[0..4], .big);
-            peers[i] = val % validator_count;
+            const idx = val % validator_count;
+
+            // Dedup: linear scan over already-selected (K=20, O(K) is fine)
+            const is_dup = blk: {
+                for (0..selected) |j| {
+                    if (peers[j] == idx) break :blk true;
+                }
+                break :blk false;
+            };
+            if (!is_dup) {
+                peers[selected] = idx;
+                selected += 1;
+            }
+        }
+        // Fill any remaining slots with fallback indices
+        while (selected < types.SNOWBALL_K) {
+            peers[selected] = @intCast(selected % validator_count);
+            selected += 1;
         }
 
         return peers;

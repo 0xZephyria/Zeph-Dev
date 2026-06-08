@@ -195,19 +195,12 @@ pub const RpcHandler = struct {
     }
 
     fn ethGasPrice(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
-        // Compute from recent block base fees if available
-        if (self.chain.currentBlock) |head| {
-            const base_fee = head.header.baseFee;
-            if (base_fee > 0) {
-                // gas_price = base_fee + priority_fee (2 Gwei)
-                const priority_fee: u256 = 2_000_000_000;
-                const price = base_fee + priority_fee;
-                return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{price}) };
-            }
-        }
-        // Fallback: 20 Gwei
-        return std.json.Value{ .string = "0x4a817c800" };
+        _ = self;
+        // Return a fixed default gas price (no base fee in Zephyria)
+        const price: u256 = 2_000_000_000;
+        return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{price}) };
     }
+
 
     fn ethMaxPriorityFeePerGas(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         _ = self;
@@ -519,15 +512,15 @@ pub const RpcHandler = struct {
         else
             "latest";
 
-        var nonce = try self.getNonceAt(address, block_tag);
+        var sequence = try self.getSequenceAt(address, block_tag);
 
-        // For "pending" tag: use DAG mempool nonce
+        // For "pending" tag: use DAG mempool sequence
         if (std.mem.eql(u8, block_tag, "pending")) {
-            nonce = self.dagPool.pendingNonce(address);
+            sequence = self.dagPool.pendingSequence(address);
         }
 
-        log.debug("[RPC] ethGetTransactionCount: Tag={s} -> Nonce={d}\n", .{ block_tag, nonce });
-        return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{nonce}) };
+        log.debug("[RPC] ethGetTransactionCount: Tag={s} -> Seq={d}\n", .{ block_tag, sequence });
+        return std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{sequence}) };
     }
 
     /// Get balance at a specific block (Ethereum-compatible)
@@ -568,34 +561,34 @@ pub const RpcHandler = struct {
         return self.state.getBalance(address);
     }
 
-    /// Get nonce at a specific block (Ethereum-compatible)
-    fn getNonceAt(self: *RpcHandler, address: types.Address, block_tag: []const u8) !u64 {
+    /// Get sequence at a specific block (Ethereum-compatible)
+    fn getSequenceAt(self: *RpcHandler, address: types.Address, block_tag: []const u8) !u64 {
         if (std.mem.eql(u8, block_tag, "latest") or std.mem.eql(u8, block_tag, "pending")) {
-            return self.state.getNonce(address);
+            return self.state.getSequence(address);
         }
 
         if (std.mem.eql(u8, block_tag, "earliest")) {
             if (self.historical) |hist| {
-                return hist.getNonceAt(address, 0);
+                return hist.getSequenceAt(address, 0);
             }
             return 0;
         }
 
         const trimmed = if (std.mem.startsWith(u8, block_tag, "0x")) block_tag[2..] else block_tag;
         const block_num = std.fmt.parseInt(u64, trimmed, 16) catch {
-            return self.state.getNonce(address);
+            return self.state.getSequence(address);
         };
 
         const head = self.chain.getHeadNumber();
         if (block_num >= head) {
-            return self.state.getNonce(address);
+            return self.state.getSequence(address);
         }
 
         if (self.historical) |hist| {
-            return hist.getNonceAt(address, block_num);
+            return hist.getSequenceAt(address, block_num);
         }
 
-        return self.state.getNonce(address);
+        return self.state.getSequence(address);
     }
 
     fn ethSendRawTransaction(self: *RpcHandler, allocator: std.mem.Allocator, params: std.json.Value) !std.json.Value {
@@ -693,26 +686,34 @@ pub const RpcHandler = struct {
 
         var h_res: [32]u8 = undefined;
         var hasher = std.crypto.hash.Blake3.init(.{});
-        const encoded = try block.header.rlpEncode(allocator);
-        defer allocator.free(encoded);
-        hasher.update(encoded);
+        var enc_buf: [256]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&enc_buf);
+        {
+            const w = fbs.writer();
+            try w.writeInt(u64, block.header.number, .big);
+            try w.writeAll(&block.header.parentHash.bytes);
+            try w.writeInt(u64, block.header.time, .big);
+            try w.writeAll(&block.header.stateRoot.bytes);
+            try w.writeAll(&block.header.txHash.bytes);
+            try w.writeAll(&block.header.producer.bytes);
+            try w.writeInt(u64, block.header.executionBudget, .big);
+            try w.writeInt(u64, block.header.gasUsed, .big);
+            try w.writeAll(block.header.extraData);
+        }
+        hasher.update(enc_buf[0..fbs.pos]);
         hasher.final(&h_res);
-
-        try map.put("hash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &h_res)) });
-        try map.put("parentHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.parentHash.bytes)) });
-        try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.verkleRoot.bytes)) });
 
         // PoS-compatible fields
         const zero_hash = [_]u8{0} ** 32;
         try map.put("sha3Uncles", std.json.Value{ .string = "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347" });
-        try map.put("miner", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.coinbase.bytes)) });
+        try map.put("miner", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.producer.bytes)) });
         try map.put("transactionsRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &block.header.txHash.bytes)) });
         try map.put("receiptsRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &zero_hash)) });
         try map.put("logsBloom", std.json.Value{ .string = "0x" ++ "00" ** 256 });
         try map.put("difficulty", std.json.Value{ .string = "0x0" });
         try map.put("totalDifficulty", std.json.Value{ .string = "0x0" });
         try map.put("extraData", std.json.Value{ .string = try hex.encode(allocator, block.header.extraData) });
-        try map.put("size", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{encoded.len}) });
+        try map.put("size", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.extraData.len + 200}) });
         try map.put("mixHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &zero_hash)) });
         try map.put("nonce", std.json.Value{ .string = "0x0000000000000000" }); // PoS zero nonce
         try map.put("uncles", std.json.Value{ .array = std.json.Array.init(allocator) });
@@ -725,7 +726,7 @@ pub const RpcHandler = struct {
             if (full_tx) {
                 var tx_map = std.json.ObjectMap.init(allocator);
                 try tx_map.put("hash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &tx.hash().bytes)) });
-                try tx_map.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.nonce}) });
+                try tx_map.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.sequence}) });
                 try tx_map.put("blockHash", map.get("hash").?);
                 try tx_map.put("blockNumber", map.get("number").?);
                 try tx_map.put("transactionIndex", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{i}) });
@@ -736,7 +737,7 @@ pub const RpcHandler = struct {
                     try tx_map.put("to", std.json.Value.null);
                 }
                 try tx_map.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
-                try tx_map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+                try tx_map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.executionBudget}) });
                 try tx_map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
                 try tx_map.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
                 try tx_map.put("type", std.json.Value{ .string = "0x0" });
@@ -754,9 +755,9 @@ pub const RpcHandler = struct {
 
         // Timestamp and gas
         try map.put("timestamp", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.time}) });
-        try map.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.gasLimit}) });
+        try map.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.executionBudget}) });
         try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.gasUsed}) });
-        try map.put("baseFeePerGas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{block.header.baseFee}) });
+        try map.put("baseFeePerGas", std.json.Value{ .string = "0x0" });
 
         return std.json.Value{ .object = map };
     }
@@ -859,15 +860,11 @@ pub const RpcHandler = struct {
                     try map.put("contractAddress", std.json.Value{ .string = try hex.encode(allocator, &contract_addr.bytes) });
                 }
 
-                try map.put("cumulativeGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
-                try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+                try map.put("cumulativeGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.executionBudget}) });
+                try map.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.executionBudget}) });
 
-                // Effective gas price: clamp baseFee arithmetic to u64
+                // Effective gas price (no base fee in Zephyria)
                 var effective_gas_price = tx.gasPrice;
-                if (b.header.baseFee > 0) {
-                    const base = std.math.cast(u64, b.header.baseFee) orelse std.math.maxInt(u64);
-                    effective_gas_price = @max(base, tx.gasPrice);
-                }
                 if (effective_gas_price == 0) effective_gas_price = 1000; // Minimal default
 
                 try map.put("effectiveGasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{effective_gas_price}) });
@@ -941,7 +938,7 @@ pub const RpcHandler = struct {
         var map = std.json.ObjectMap.init(allocator);
 
         try map.put("hash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &tx_hash.bytes)) });
-        try map.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.nonce}) });
+        try map.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.sequence}) });
 
         if (block) |b| {
             try map.put("blockHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &b.hash().bytes)) });
@@ -961,7 +958,7 @@ pub const RpcHandler = struct {
         }
 
         try map.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
-        try map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+        try map.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.executionBudget}) });
         try map.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
         try map.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
         try map.put("type", std.json.Value{ .string = "0x0" });
@@ -1094,17 +1091,17 @@ pub const RpcHandler = struct {
             return error.KeyNotFound;
         }
 
-        // Get Nonce from state using the derived address since it is the actual signer/sender
-        const nonce = self.state.getNonce(derived_addr);
-        log.debug("[RPC] Nonce: {d}\n", .{nonce});
+        // Get Sequence from state using the derived address since it is the actual signer/sender
+        const sequence = self.state.getSequence(derived_addr);
+        log.debug("[RPC] Sequence: {d}\n", .{sequence});
 
         // Construct transaction with binary encoding
         const tx_inner = types.Transaction{
             .pub_key = key_pair.public_key.bytes,
             .from = derived_addr,
-            .nonce = nonce,
-            .gasPrice = @truncate(gas_price),
-            .gasLimit = gas_limit,
+            .sequence = sequence,
+            .gasPrice = @intCast(gas_price),
+            .executionBudget = gas_limit,
             .to = to_addr,
             .value = value,
             .data = data_bytes,
@@ -1262,9 +1259,21 @@ pub const RpcHandler = struct {
 
                     var h_res: [32]u8 = undefined;
                     var hasher = std.crypto.hash.Blake3.init(.{});
-                    const encoded = try block.header.rlpEncode(allocator);
-                    defer allocator.free(encoded);
-                    hasher.update(encoded);
+                    var enc_buf: [256]u8 = undefined;
+                    var fbs = std.io.fixedBufferStream(&enc_buf);
+                    {
+                        const w = fbs.writer();
+                        try w.writeInt(u64, block.header.number, .big);
+                        try w.writeAll(&block.header.parentHash.bytes);
+                        try w.writeInt(u64, block.header.time, .big);
+                        try w.writeAll(&block.header.stateRoot.bytes);
+                        try w.writeAll(&block.header.txHash.bytes);
+                        try w.writeAll(&block.header.producer.bytes);
+                        try w.writeInt(u64, block.header.executionBudget, .big);
+                        try w.writeInt(u64, block.header.gasUsed, .big);
+                        try w.writeAll(block.header.extraData);
+                    }
+                    hasher.update(enc_buf[0..fbs.pos]);
                     hasher.final(&h_res);
                     var buf: [66]u8 = undefined;
                     try log_obj.put("blockHash", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &h_res)) });
@@ -1551,9 +1560,21 @@ pub const RpcHandler = struct {
                         var buf: [66]u8 = undefined;
                         var h_res: [32]u8 = undefined;
                         var hasher = std.crypto.hash.Blake3.init(.{});
-                        const encoded = block.header.rlpEncode(allocator) catch continue;
-                        defer allocator.free(encoded);
-                        hasher.update(encoded);
+                        var enc_buf: [256]u8 = undefined;
+                        var fbs = std.io.fixedBufferStream(&enc_buf);
+                        {
+                            const w = fbs.writer();
+                            w.writeInt(u64, block.header.number, .big) catch continue;
+                            w.writeAll(&block.header.parentHash.bytes) catch continue;
+                            w.writeInt(u64, block.header.time, .big) catch continue;
+                            w.writeAll(&block.header.stateRoot.bytes) catch continue;
+                            w.writeAll(&block.header.txHash.bytes) catch continue;
+                            w.writeAll(&block.header.producer.bytes) catch continue;
+                            w.writeInt(u64, block.header.executionBudget, .big) catch continue;
+                            w.writeInt(u64, block.header.gasUsed, .big) catch continue;
+                            w.writeAll(block.header.extraData) catch continue;
+                        }
+                        hasher.update(enc_buf[0..fbs.pos]);
                         hasher.final(&h_res);
                         try result.append(std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &h_res)) });
                     }
@@ -1652,7 +1673,7 @@ pub const RpcHandler = struct {
             try live.put("gcEvicted", std.json.Value{ .integer = @intCast(stats.totalGcEvicted) });
             try live.put("duplicateRejected", std.json.Value{ .integer = @intCast(stats.duplicateRejected) });
             try live.put("rateLimited", std.json.Value{ .integer = @intCast(stats.rateLimited) });
-            try live.put("nonceRejected", std.json.Value{ .integer = @intCast(stats.nonceRejected) });
+            try live.put("nonceRejected", std.json.Value{ .integer = @intCast(stats.sequenceRejected) });
             try live.put("gasPriceRejected", std.json.Value{ .integer = @intCast(stats.gasPriceRejected) });
             try live.put("replacementCount", std.json.Value{ .integer = @intCast(stats.replacementCount) });
             try live.put("bloomCount", std.json.Value{ .integer = @intCast(stats.bloomCount) });
@@ -1809,7 +1830,7 @@ pub const RpcHandler = struct {
 
         // Architecture
         try map.put("execution", std.json.Value{ .string = "RISC-V VM (Zephyr)" });
-        try map.put("stateDB", std.json.Value{ .string = "Verkle Trie" });
+        try map.put("stateDB", std.json.Value{ .string = "ZephyrDB FlatTable + HighPerfDB" });
         try map.put("consensus", std.json.Value{ .string = "Loom" });
         try map.put("mempool", std.json.Value{ .string = "DAG-Based Sharded" });
 
@@ -1870,9 +1891,9 @@ pub const RpcHandler = struct {
             const addr_hex = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &tx.from.bytes));
 
             var tx_obj = std.json.ObjectMap.init(allocator);
-            try tx_obj.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.nonce}) });
+            try tx_obj.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.sequence}) });
             try tx_obj.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
-            try tx_obj.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+            try tx_obj.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.executionBudget}) });
             try tx_obj.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
             if (tx.to) |to| {
                 try tx_obj.put("to", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &to.bytes)) });
@@ -1909,12 +1930,11 @@ pub const RpcHandler = struct {
         try map.put("baseFeeEnabled", std.json.Value{ .bool = true });
 
         if (self.chain.currentBlock) |head| {
-            try map.put("latestBaseFee", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.baseFee}) });
             try map.put("latestGasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasUsed}) });
-            try map.put("latestGasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasLimit}) });
+            try map.put("latestGasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.executionBudget}) });
 
             var buf: [66]u8 = undefined;
-            try map.put("coinbase", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.coinbase.bytes)) });
+            try map.put("coinbase", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.producer.bytes)) });
         }
 
         // Execution model
@@ -2072,11 +2092,11 @@ pub const RpcHandler = struct {
             try latest.put("blockNumber", std.json.Value{ .integer = @intCast(head.header.number) });
             try latest.put("txCount", std.json.Value{ .integer = @intCast(head.transactions.len) });
             try latest.put("gasUsed", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasUsed}) });
-            try latest.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.gasLimit}) });
+            try latest.put("gasLimit", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.executionBudget}) });
 
             // Gas utilization percentage
-            const utilization = if (head.header.gasLimit > 0)
-                (head.header.gasUsed * 100) / head.header.gasLimit
+            const utilization = if (head.header.executionBudget > 0)
+                (head.header.gasUsed * 100) / head.header.executionBudget
             else
                 0;
             try latest.put("gasUtilizationPct", std.json.Value{ .integer = @intCast(utilization) });
@@ -2085,7 +2105,7 @@ pub const RpcHandler = struct {
 
         // Execution config
         var exec_cfg = std.json.ObjectMap.init(allocator);
-        try exec_cfg.put("blockGasLimit", std.json.Value{ .integer = @intCast(self.dagExecutor.config.blockGasLimit) });
+            try exec_cfg.put("blockGasLimit", std.json.Value{ .integer = @intCast(self.dagExecutor.config.blockExecutionBudget) });
         try exec_cfg.put("maxThreads", std.json.Value{ .integer = @intCast(self.dagExecutor.config.numThreads) });
         try map.put("config", std.json.Value{ .object = exec_cfg });
 
@@ -2096,12 +2116,12 @@ pub const RpcHandler = struct {
     fn forgeGetStateMetrics(self: *RpcHandler, allocator: std.mem.Allocator) !std.json.Value {
         var map = std.json.ObjectMap.init(allocator);
 
-        try map.put("type", std.json.Value{ .string = "verkle_trie" });
+        try map.put("type", std.json.Value{ .string = "kv_flat" });
 
         // State root from latest block
         if (self.chain.currentBlock) |head| {
             var buf: [66]u8 = undefined;
-            try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.verkleRoot.bytes)) });
+            try map.put("stateRoot", std.json.Value{ .string = try allocator.dupe(u8, try hex.encodeBuffer(&buf, &head.header.stateRoot.bytes)) });
         }
 
         // Storage backend
@@ -2162,9 +2182,9 @@ pub const RpcHandler = struct {
         try map.put("avgGasPerBlock", std.json.Value{ .integer = @intCast(if (block_count > 0) total_gas / block_count else 0) });
         try map.put("avgTxPerBlock", std.json.Value{ .integer = @intCast(if (block_count > 0) total_txs / block_count else 0) });
 
-        // Current base fee
-        if (self.chain.currentBlock) |head| {
-            try map.put("currentBaseFee", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{head.header.baseFee}) });
+        // Base fee info (always 0 in Zephyria)
+        if (self.chain.currentBlock) |_| {
+            try map.put("currentBaseFee", std.json.Value{ .string = "0x0" });
         }
 
         return std.json.Value{ .object = map };
@@ -2188,10 +2208,10 @@ pub const RpcHandler = struct {
             } else {
                 try tx_obj.put("to", std.json.Value.null);
             }
-            try tx_obj.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.nonce}) });
+            try tx_obj.put("nonce", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.sequence}) });
             try tx_obj.put("value", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.value}) });
             try tx_obj.put("gasPrice", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasPrice}) });
-            try tx_obj.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.gasLimit}) });
+            try tx_obj.put("gas", std.json.Value{ .string = try std.fmt.allocPrint(allocator, "0x{x}", .{tx.executionBudget}) });
             try tx_obj.put("input", std.json.Value{ .string = try hex.encode(allocator, tx.data) });
             try result.append(std.json.Value{ .object = tx_obj });
         }

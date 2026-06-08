@@ -5,12 +5,12 @@
 // High-throughput sharded mempool designed for 1M+ TPS. Exploits Zephyria's
 // isolated account model where per-user DerivedState keys and per-slot
 // StorageCell keys are unique per sender. The ONLY transactions that share
-// write keys are from the SAME sender (nonce + balance keys).
+// write keys are from the SAME sender (sequence + balance keys).
 //
 // Architecture:
 //   • 256 shards keyed by sender address byte[0] — zero cross-shard contention
-//   • Per-sender AccountLanes maintain nonce-ordered TX queues
-//   • DAG is implicit: edges exist only within same-sender lanes (nonce ordering)
+//   • Per-sender AccountLanes maintain sequence-ordered TX queues
+//   • DAG is implicit: edges exist only within same-sender lanes (sequence ordering)
 //   • Extraction yields independent lanes — guaranteed zero-conflict parallel execution
 //
 // Security:
@@ -19,7 +19,7 @@
 //   • Lane depth limits (max 256 pending TXs per sender)
 //   • Hot-shard detection with gas price premium
 //   • Orphan lane GC (evict inactive lanes after timeout)
-//   • Nonce gap protection (max 64 gap from state nonce)
+//   • Sequence gap protection (max 64 gap from state sequence)
 //   • TX sanitization (signature, bounds, malleability)
 //
 // Zero sequential fallback. Zero wavefront computation. Zero conflict detection.
@@ -45,8 +45,8 @@ pub const DAGConfig = struct {
     maxLaneGas: u64 = 100_000_000,
     /// Orphan lane timeout in seconds
     orphanTimeoutS: u64 = 60,
-    /// Maximum nonce gap from state nonce
-    maxNonceGap: u64 = 64,
+    /// Maximum sequence gap from state sequence
+    maxSequenceGap: u64 = 64,
     /// Minimum gas price (1 Gwei anti-spam floor)
     minGasPrice: u256 = 1_000_000_000,
     /// Gas price bump required for TX replacement (10%)
@@ -61,10 +61,10 @@ pub const DAGConfig = struct {
     enableSanitization: bool = true,
     /// Maximum calldata size
     maxCalldata: u32 = 96 * 1024,
-    /// Minimum gas limit for any TX
-    minGasLimit: u64 = 21_000,
-    /// Maximum gas limit for any TX
-    maxGasLimit: u64 = 30_000_000,
+    /// Minimum execution budget for any TX
+    minExecutionBudget: u64 = 21_000,
+    /// Maximum execution budget for any TX
+    maxExecutionBudget: u64 = 30_000_000,
     /// Maximum gas price (anti-grief)
     maxGasPrice: u256 = 10_000_000_000_000_000_000_000,
     /// Maximum value transfer
@@ -75,19 +75,19 @@ pub const DAGConfig = struct {
 
 // ── Account Lane ────────────────────────────────────────────────────────
 //
-// Per-sender transaction queue. TXs are ordered by nonce within the lane.
-// This IS the DAG: same-sender TXs form a chain (nonce N depends on N-1).
+// Per-sender transaction queue. TXs are ordered by sequence within the lane.
+// This IS the DAG: same-sender TXs form a chain (sequence N depends on N-1).
 // Different senders' lanes are completely independent — zero edges between them.
 
 /// Represents a per-sender transaction queue (a "lane").
-/// In Zephyria, same-sender transactions must be executed in nonce order,
+/// In Zephyria, same-sender transactions must be executed in sequence order,
 /// forming a linear dependency chain within the lane.
 pub const AccountLane = struct {
     sender: types.Address,
-    /// Nonce-ordered TX queue. Index 0 = baseNonce, Index 1 = baseNonce+1, etc.
+    /// Sequence-ordered TX queue. Index 0 = baseSequence, Index 1 = baseSequence+1, etc.
     txs: std.ArrayListUnmanaged(LaneTx),
-    /// Current confirmed state nonce for this sender
-    baseNonce: u64,
+    /// Current confirmed state sequence for this sender
+    baseSequence: u64,
     /// Total gas reserved by all TXs in this lane
     totalGas: u64,
     /// Monotonic timestamp of last TX addition (for GC)
@@ -96,11 +96,11 @@ pub const AccountLane = struct {
     extractedCount: u32,
 
     /// Initializes a new AccountLane.
-    pub fn init(sender: types.Address, baseNonce: u64) AccountLane {
+    pub fn init(sender: types.Address, baseSequence: u64) AccountLane {
         return .{
             .sender = sender,
             .txs = .{},
-            .baseNonce = baseNonce,
+            .baseSequence = baseSequence,
             .totalGas = 0,
             .lastTouchNs = std.time.nanoTimestamp(),
             .extractedCount = 0,
@@ -112,7 +112,7 @@ pub const AccountLane = struct {
         self.txs.deinit(allocator);
     }
 
-    /// Insert a TX at the correct nonce position within the lane.
+    /// Insert a TX at the correct sequence position within the lane.
     /// Returns the TX that was replaced (if any) for eviction.
     pub fn insert(
         self: *AccountLane,
@@ -120,9 +120,9 @@ pub const AccountLane = struct {
         tx: types.Transaction,
         replacementBumpPct: u32,
     ) !?types.Transaction {
-        if (tx.nonce < self.baseNonce) return error.NonceTooLow;
+        if (tx.sequence < self.baseSequence) return error.SequenceTooLow;
 
-        const idx = tx.nonce - self.baseNonce;
+        const idx = tx.sequence - self.baseSequence;
 
         // Check if this is a replacement
         if (idx < self.txs.items.len) {
@@ -134,15 +134,15 @@ pub const AccountLane = struct {
 
             // Replace
             const oldTx = existing.tx;
-            self.totalGas -= oldTx.gasLimit;
+            self.totalGas -= oldTx.executionBudget;
             existing.tx = tx;
             existing.insertedAt = std.time.nanoTimestamp();
-            self.totalGas += tx.gasLimit;
+            self.totalGas += tx.executionBudget;
             self.lastTouchNs = std.time.nanoTimestamp();
             return oldTx;
         }
 
-        // Append at position (may leave gaps — nonce gap protection handles)
+        // Append at position (may leave gaps — sequence gap protection handles)
         while (self.txs.items.len < idx) {
             try self.txs.append(allocator, LaneTx{
                 .tx = undefined,
@@ -157,12 +157,12 @@ pub const AccountLane = struct {
             .isPlaceholder = false,
         });
 
-        self.totalGas += tx.gasLimit;
+        self.totalGas += tx.executionBudget;
         self.lastTouchNs = std.time.nanoTimestamp();
         return null;
     }
 
-    /// Get the contiguous sequence of ready TXs starting from baseNonce.
+    /// Get the contiguous sequence of ready TXs starting from baseSequence.
     /// These are guaranteed to be executable in order.
     pub fn getReady(self: *const AccountLane) []const LaneTx {
         var count: usize = 0;
@@ -173,18 +173,18 @@ pub const AccountLane = struct {
         return self.txs.items[0..count];
     }
 
-    /// Remove TXs that have been committed (nonce < new_baseNonce).
-    pub fn advance(self: *AccountLane, allocator: std.mem.Allocator, newBaseNonce: u64) void {
-        if (newBaseNonce <= self.baseNonce) return;
+    /// Remove TXs that have been committed (sequence < new_baseSequence).
+    pub fn advance(self: *AccountLane, allocator: std.mem.Allocator, newBaseSequence: u64) void {
+        if (newBaseSequence <= self.baseSequence) return;
 
         const removeCount = @min(
-            newBaseNonce - self.baseNonce,
+            newBaseSequence - self.baseSequence,
             self.txs.items.len,
         );
 
         for (self.txs.items[0..removeCount]) |*lt| {
             if (!lt.isPlaceholder) {
-                self.totalGas -|= lt.tx.gasLimit;
+                self.totalGas -|= lt.tx.executionBudget;
             }
         }
 
@@ -201,7 +201,7 @@ pub const AccountLane = struct {
             self.txs.items.len = 0;
         }
 
-        self.baseNonce = newBaseNonce;
+        self.baseSequence = newBaseSequence;
         _ = allocator;
     }
 
@@ -260,10 +260,10 @@ pub const Shard = struct {
 pub const DAGVertex = struct {
     txHash: types.Hash,
     sender: types.Address,
-    nonce: u64,
+    sequence: u64,
     writeKeys: [MAX_WRITE_KEYS][32]u8,
     writeKeyCount: u8,
-    gasLimit: u64,
+    executionBudget: u64,
     gasPrice: u256,
     shardId: u8,
 
@@ -276,16 +276,16 @@ pub const DAGVertex = struct {
         var vertex = DAGVertex{
             .txHash = tx.hash(),
             .sender = tx.from,
-            .nonce = tx.nonce,
+            .sequence = tx.sequence,
             .writeKeys = undefined,
             .writeKeyCount = 0,
-            .gasLimit = tx.gasLimit,
+            .executionBudget = tx.executionBudget,
             .gasPrice = tx.gasPrice,
             .shardId = tx.from.bytes[0],
         };
 
-        // 1. Sender nonce + balance (ALWAYS written)
-        vertex.addKey(State.nonceKey(tx.from));
+        // 1. Sender sequence + balance (ALWAYS written)
+        vertex.addKey(State.sequenceKey(tx.from));
         vertex.addKey(State.balanceKey(tx.from));
 
         // 2. Recipient
@@ -301,7 +301,7 @@ pub const DAGVertex = struct {
         } else {
             // Contract creation
             const newAddr = tx.deriveContractAddress();
-            vertex.addKey(State.nonceKey(newAddr));
+            vertex.addKey(State.sequenceKey(newAddr));
             vertex.addKey(State.balanceKey(newAddr));
             vertex.addKey(State.codeHashKey(newAddr));
         }
@@ -317,7 +317,7 @@ pub const DAGVertex = struct {
 
     /// Check if this vertex conflicts with another vertex.
     /// In Zephyria's isolated model, conflicts ONLY happen between
-    /// same-sender TXs (shared nonce + balance keys).
+    /// same-sender TXs (shared sequence + balance keys).
     pub fn conflictsWith(self: *const DAGVertex, other: *const DAGVertex) bool {
         for (self.writeKeys[0..self.writeKeyCount]) |keyA| {
             for (other.writeKeys[0..other.writeKeyCount]) |keyB| {
@@ -350,7 +350,7 @@ pub const ExtractionResult = struct {
 pub const ExtractedLane = struct {
     sender: types.Address,
     txs: []types.Transaction,
-    baseNonce: u64,
+    baseSequence: u64,
 };
 
 // ── Metrics ─────────────────────────────────────────────────────────────
@@ -364,7 +364,7 @@ pub const Metrics = struct {
     totalGcEvicted: u64,
     duplicateRejected: u64,
     rateLimited: u64,
-    nonceRejected: u64,
+    sequenceRejected: u64,
     gasPriceRejected: u64,
     sanitizationRejected: u64,
     hotShardPremiumApplied: u64,
@@ -421,12 +421,12 @@ pub const DAGMempool = struct {
             .rate_limiter = security.RateLimiter.init(allocator, .{}),
             .sanitizer = security.TxSanitizer.init(.{
                 .maxCalldata = config.maxCalldata,
-                .minGasLimit = config.minGasLimit,
-                .maxGasLimit = config.maxGasLimit,
+                .minExecutionBudget = config.minExecutionBudget,
+                .maxExecutionBudget = config.maxExecutionBudget,
                 .maxGasPrice = config.maxGasPrice,
                 .maxValue = config.maxValue,
                 .chainId = config.chainId,
-                .maxNonceGap = config.maxNonceGap,
+                .maxSequenceGap = config.maxSequenceGap,
             }),
             .totalVertices = std.atomic.Value(u32).init(0),
             .totalGas = std.atomic.Value(u64).init(0),
@@ -497,11 +497,11 @@ pub const DAGMempool = struct {
             return error.GasPriceTooLow;
         }
 
-        // 5. TX sanitization (signature, nonce bounds, balance)
+        // 5. TX sanitization (signature, sequence bounds, balance)
         if (self.config.enableSanitization) {
-            const state_nonce = self.state.getNonce(tx.from);
+            const state_sequence = self.state.getSequence(tx.from);
             const state_balance = self.state.getBalance(tx.from);
-            self.sanitizer.validate(self.allocator, tx, state_nonce, state_balance) catch |err| {
+            self.sanitizer.validate(self.allocator, tx, state_sequence, state_balance) catch |err| {
                 self.incrMetric(.sanitizationRejected);
                 return err;
             };
@@ -523,7 +523,7 @@ pub const DAGMempool = struct {
         }
 
         // 9. Lane gas budget check
-        if (lane.totalGas + tx.gasLimit > self.config.maxLaneGas) {
+        if (lane.totalGas + tx.executionBudget > self.config.maxLaneGas) {
             self.incrMetric(.totalRejected);
             return error.LaneGasBudgetExceeded;
         }
@@ -549,7 +549,7 @@ pub const DAGMempool = struct {
         self.by_hash.put(txHash, TxLocation{
             .shardId = shardId,
             .sender = tx.from,
-            .nonce = tx.nonce,
+            .sequence = tx.sequence,
         }) catch {
             self.by_hash_lock.unlock();
             self.incrMetric(.totalRejected);
@@ -565,7 +565,7 @@ pub const DAGMempool = struct {
 
     /// Extract execution-ready TX lanes for block building.
     /// Returns independent lanes — guaranteed zero-conflict parallel execution.
-    /// Each lane contains nonce-ordered TXs from a single sender.
+    /// Each lane contains sequence-ordered TXs from a single sender.
     /// Extracts execution-ready transaction lanes for block production, respecting the gas budget.
     pub fn extract(self: *DAGMempool, allocator: std.mem.Allocator, gas_budget: u64) !ExtractionResult {
         var lanes = std.ArrayListUnmanaged(ExtractedLane){};
@@ -592,7 +592,7 @@ pub const DAGMempool = struct {
                 var lane_gas: u64 = 0;
                 for (ready) |*lt| {
                     if (lt.tx.gasPrice > maxGasPrice) maxGasPrice = lt.tx.gasPrice;
-                    lane_gas += lt.tx.gasLimit;
+                    lane_gas += lt.tx.executionBudget;
                 }
 
                 try candidates.append(allocator, LaneCandidate{
@@ -600,7 +600,7 @@ pub const DAGMempool = struct {
                     .ready_count = @intCast(ready.len),
                     .maxGasPrice = maxGasPrice,
                     .totalGas = lane_gas,
-                    .baseNonce = lane.baseNonce,
+                    .baseSequence = lane.baseSequence,
                 });
             }
         }
@@ -630,9 +630,9 @@ pub const DAGMempool = struct {
                 defer txs.deinit(allocator); // only on error
 
                 for (ready) |*lt| {
-                    if (lt.tx.gasLimit > remaining_gas) break;
+                    if (lt.tx.executionBudget > remaining_gas) break;
                     try txs.append(allocator, lt.tx);
-                    remaining_gas -= lt.tx.gasLimit;
+                    remaining_gas -= lt.tx.executionBudget;
                 }
 
                 if (txs.items.len > 0) {
@@ -642,7 +642,7 @@ pub const DAGMempool = struct {
                     try lanes.append(allocator, ExtractedLane{
                         .sender = candidate.sender,
                         .txs = tx_slice,
-                        .baseNonce = lane.baseNonce,
+                        .baseSequence = lane.baseSequence,
                     });
                     totalTxs += @intCast(txs.items.len);
                 }
@@ -662,13 +662,13 @@ pub const DAGMempool = struct {
 
     // ── Post-Execution Cleanup ──────────────────────────────────────────
 
-    /// Remove committed TXs and advance lane nonces.
+    /// Remove committed TXs and advance lane sequences.
     /// Called after block execution with the committed TX list.
     /// Removes transactions that have been committed to a block from the mempool.
     pub fn removeCommitted(self: *DAGMempool, transactions: []const types.Transaction) void {
         // Group by sender for efficient lane advancement
-        var sender_max_nonce = std.AutoHashMap(types.Address, u64).init(self.allocator);
-        defer sender_max_nonce.deinit();
+        var sender_max_sequence = std.AutoHashMap(types.Address, u64).init(self.allocator);
+        defer sender_max_sequence.deinit();
 
         for (transactions) |*tx| {
             const txHash = tx.hash();
@@ -678,20 +678,20 @@ pub const DAGMempool = struct {
             _ = self.by_hash.remove(txHash);
             self.by_hash_lock.unlock();
 
-            // Track max nonce per sender
-            const gop = sender_max_nonce.getOrPut(tx.from) catch continue;
-            if (!gop.found_existing or tx.nonce >= gop.value_ptr.*) {
-                gop.value_ptr.* = tx.nonce + 1;
+            // Track max sequence per sender
+            const gop = sender_max_sequence.getOrPut(tx.from) catch continue;
+            if (!gop.found_existing or tx.sequence >= gop.value_ptr.*) {
+                gop.value_ptr.* = tx.sequence + 1;
             }
 
             _ = self.totalVertices.fetchSub(1, .release);
         }
 
         // Advance each sender's lane
-        var it = sender_max_nonce.iterator();
+        var it = sender_max_sequence.iterator();
         while (it.next()) |entry| {
             const sender = entry.key_ptr.*;
-            const new_nonce = entry.value_ptr.*;
+            const new_sequence = entry.value_ptr.*;
             const shardId = self.shardFor(sender);
             var shard = &self.shards[shardId];
 
@@ -700,7 +700,7 @@ pub const DAGMempool = struct {
 
             if (shard.accounts.get(sender)) |lane| {
                 const old_count = lane.txs.items.len;
-                lane.advance(self.allocator, new_nonce);
+                lane.advance(self.allocator, new_sequence);
                 const removed = old_count - lane.txs.items.len;
                 shard.vertexCount -|= @intCast(removed);
 
@@ -714,7 +714,7 @@ pub const DAGMempool = struct {
         }
     }
 
-    /// Sync pool with current state — prune TXs with stale nonces.
+    /// Sync pool with current state — prune TXs with stale sequences.
     pub fn syncWithState(self: *DAGMempool) void {
         for (&self.shards) |*shard| {
             shard.lock.lock();
@@ -726,10 +726,10 @@ pub const DAGMempool = struct {
             var it = shard.accounts.iterator();
             while (it.next()) |entry| {
                 const lane = entry.value_ptr.*;
-                const current_nonce = self.state.getNonce(lane.sender);
+                const current_sequence = self.state.getSequence(lane.sender);
 
-                if (current_nonce > lane.baseNonce) {
-                    lane.advance(self.allocator, current_nonce);
+                if (current_sequence > lane.baseSequence) {
+                    lane.advance(self.allocator, current_sequence);
                 }
 
                 if (lane.isEmpty()) {
@@ -812,8 +812,8 @@ pub const DAGMempool = struct {
             defer shard.lock.unlock();
 
             if (shard.accounts.get(location.sender)) |lane| {
-                if (location.nonce >= lane.baseNonce) {
-                    const idx = location.nonce - lane.baseNonce;
+                if (location.sequence >= lane.baseSequence) {
+                    const idx = location.sequence - lane.baseSequence;
                     if (idx < lane.txs.items.len and !lane.txs.items[idx].isPlaceholder) {
                         return lane.txs.items[idx].tx;
                     }
@@ -823,17 +823,17 @@ pub const DAGMempool = struct {
         return null;
     }
 
-    /// Get the pending nonce for an account (state nonce + pending TXs).
-    pub fn pendingNonce(self: *DAGMempool, addr: types.Address) u64 {
+    /// Get the pending sequence for an account (state sequence + pending TXs).
+    pub fn pendingSequence(self: *DAGMempool, addr: types.Address) u64 {
         const shardId = self.shardFor(addr);
         var shard = &self.shards[shardId];
         shard.lock.lock();
         defer shard.lock.unlock();
 
         if (shard.accounts.get(addr)) |lane| {
-            return lane.baseNonce + @as(u64, lane.readyCount());
+            return lane.baseSequence + @as(u64, lane.readyCount());
         }
-        return self.state.getNonce(addr);
+        return self.state.getSequence(addr);
     }
 
     /// Get all pending transactions.
@@ -885,7 +885,7 @@ pub const DAGMempool = struct {
             .totalGcEvicted = self.metrics.totalGcEvicted,
             .duplicateRejected = self.metrics.duplicateRejected,
             .rateLimited = self.metrics.rateLimited,
-            .nonceRejected = self.metrics.nonceRejected,
+            .sequenceRejected = self.metrics.sequenceRejected,
             .gasPriceRejected = self.metrics.gasPriceRejected,
             .replacementCount = self.metrics.replacementCount,
             .bloomCount = self.bloom.count,
@@ -915,7 +915,7 @@ pub const DAGMempool = struct {
         }
 
         const lane = try self.allocator.create(AccountLane);
-        lane.* = AccountLane.init(sender, self.state.getNonce(sender));
+        lane.* = AccountLane.init(sender, self.state.getSequence(sender));
         try shard.accounts.put(sender, lane);
 
         return lane;
@@ -976,7 +976,7 @@ pub const DAGMempool = struct {
                 defer shard.lock.unlock();
 
                 if (shard.accounts.get(sender)) |lane| {
-                    // Evict last (lowest nonce has priority) TX from the lane
+                    // Evict last (lowest sequence has priority) TX from the lane
                     if (lane.txs.items.len > 0) {
                         const last_idx = lane.txs.items.len - 1;
                         const evicted = lane.txs.items[last_idx];
@@ -985,7 +985,7 @@ pub const DAGMempool = struct {
                             self.by_hash_lock.lock();
                             _ = self.by_hash.remove(txHash);
                             self.by_hash_lock.unlock();
-                            lane.totalGas -|= evicted.tx.gasLimit;
+                            lane.totalGas -|= evicted.tx.executionBudget;
                         }
                         lane.txs.items.len -= 1;
                         shard.vertexCount -|= 1;
@@ -1012,7 +1012,7 @@ pub const DAGMempool = struct {
 const TxLocation = struct {
     shardId: u8,
     sender: types.Address,
-    nonce: u64,
+    sequence: u64,
 };
 
 const LaneCandidate = struct {
@@ -1020,7 +1020,7 @@ const LaneCandidate = struct {
     ready_count: u32,
     maxGasPrice: u256,
     totalGas: u64,
-    baseNonce: u64,
+    baseSequence: u64,
 };
 
 pub const DAGMempoolStats = struct {
@@ -1032,7 +1032,7 @@ pub const DAGMempoolStats = struct {
     totalGcEvicted: u64,
     duplicateRejected: u64,
     rateLimited: u64,
-    nonceRejected: u64,
+    sequenceRejected: u64,
     gasPriceRejected: u64,
     replacementCount: u64,
     bloomCount: u32,

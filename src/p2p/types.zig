@@ -213,12 +213,12 @@ pub const NodeDataMsg = struct {
 };
 
 pub const PingMsg = struct {
-    nonce: u64,
+    sequence: u64,
     timestamp: i64,
 };
 
 pub const PongMsg = struct {
-    nonce: u64,
+    sequence: u64,
     timestamp: i64,
 };
 
@@ -279,7 +279,7 @@ pub const QuorumCertificate = struct {
     epoch: u64,
     aggregateSignature: [96]u8,
     participationBitmap: [32]u8,
-    proposerVrfProof: [48]u8,
+    proposerVrfProof: [96]u8,
 };
 
 pub const ViewChangeMsg = struct {
@@ -380,9 +380,9 @@ pub const ThreadAttestationMsg = struct {
     threadId: u8,
     threadRoot: core.types.Hash,
     validatorIndex: u32,
-    roleProof: [48]u8,
+    roleProof: [96]u8,
     blsSignature: [96]u8,
-    attestingStake: u64,
+    attestingStake: u256,
 };
 
 /// Thread certificate message (aggregated from attestations)
@@ -392,8 +392,8 @@ pub const ThreadCertificateMsg = struct {
     threadRoot: core.types.Hash,
     aggregateSignature: [96]u8,
     weaverBitmap: [32]u8,
-    attestingStake: u64,
-    totalEligibleStake: u64,
+    attestingStake: u256,
+    totalEligibleStake: u256,
 };
 
 /// Adaptive Quorum Certificate message
@@ -403,7 +403,7 @@ pub const AdaptiveQCMsg = struct {
     threadCertBitmap: u128,
     aggregateSignature: [96]u8,
     voterBitmap: [32]u8,
-    totalAttestingStake: u64,
+    totalAttestingStake: u256,
     randomnessSeed: [32]u8,
     tier: u8, // ConsensusTier as u8
 };
@@ -423,7 +423,7 @@ pub const SnowballResponseMsg = struct {
     accept: bool,
     round: u32,
     responderIndex: u32,
-    responderStake: u64,
+    responderStake: u256,
 };
 
 /// Epoch transition notification

@@ -1,15 +1,3 @@
-// ============================================================================
-// Zephyria — Block Producer (DAG-Based)
-// ============================================================================
-//
-// Block production pipeline using DAG mempool + DAG executor:
-//   1. Extract independent execution lanes from DAG mempool
-//   2. Schedule lanes with gas-balanced thread assignment
-//   3. Execute all lanes in parallel (zero conflicts)
-//   4. Merge accumulator deltas for global state
-//   5. Compute state root via Verkle batch commit
-//   6. Assemble block header with computed roots
-
 const std = @import("std");
 const types = @import("types.zig");
 const state_mod = @import("state.zig");
@@ -17,7 +5,6 @@ const blockchain_mod = @import("blockchain.zig");
 const dag_mempool_mod = @import("dag_mempool.zig");
 const dag_scheduler_mod = @import("dag_scheduler.zig");
 const dag_executor_mod = @import("dag_executor.zig");
-const async_root_mod = @import("async_state_root.zig");
 const log = @import("logger.zig");
 
 pub const BuildResult = struct {
@@ -34,36 +21,30 @@ pub const BlockProducer = struct {
     allocator: std.mem.Allocator,
     chain: *blockchain_mod.Blockchain,
     worldState: *state_mod.State,
-    coinbase: types.Address,
-    gasLimit: u64,
+    producer: types.Address,
+    executionBudget: u64,
 
-    // DAG-based pipeline (primary)
     dagPool: ?*dag_mempool_mod.DAGMempool,
     dagExecutor: ?*dag_executor_mod.DAGExecutor,
-
-    // Async state root computer (production path)
-    asyncRootComputer: ?*async_root_mod.AsyncStateRootComputer,
 
     pub fn init(
         allocator: std.mem.Allocator,
         chain: *blockchain_mod.Blockchain,
         worldState: *state_mod.State,
-        coinbase: types.Address,
-        gasLimit: u64,
+        producer: types.Address,
+        executionBudget: u64,
     ) BlockProducer {
         return BlockProducer{
             .allocator = allocator,
             .chain = chain,
             .worldState = worldState,
-            .coinbase = coinbase,
-            .gasLimit = gasLimit,
+            .producer = producer,
+            .executionBudget = executionBudget,
             .dagPool = null,
             .dagExecutor = null,
-            .asyncRootComputer = null,
         };
     }
 
-    /// Configure for DAG-based execution (primary path).
     pub fn setDAGPipeline(
         self: *BlockProducer,
         pool: *dag_mempool_mod.DAGMempool,
@@ -73,60 +54,40 @@ pub const BlockProducer = struct {
         self.dagExecutor = executor;
     }
 
-    /// Configure async state root computation (production path).
-    /// When set, block headers use 2-block-lagged state roots and
-    /// trie commitment runs on a dedicated background thread.
-    pub fn setAsyncRoot(self: *BlockProducer, computer: *async_root_mod.AsyncStateRootComputer) void {
-        self.asyncRootComputer = computer;
-        // Also wire it into the DAG executor
-        if (self.dagExecutor) |executor| {
-            executor.setAsyncRoot(computer);
-        }
-    }
-
-    /// Produce a new block from pending transactions.
     pub fn produce(self: *BlockProducer) !BuildResult {
         const start = std.time.nanoTimestamp();
 
         var pool = self.dagPool orelse return error.NoPipelineConfigured;
         var executor = self.dagExecutor orelse return error.NoPipelineConfigured;
 
-        // 1. Extract independent lanes from DAG mempool
-        var extraction = try pool.extract(self.allocator, self.gasLimit);
+        var extraction = try pool.extract(self.allocator, self.executionBudget);
         defer extraction.deinit();
 
-        // 2. Schedule lanes with gas-balanced thread assignment
         const parent = self.chain.getHead();
         const parentHash = if (parent) |p| p.hash() else types.Hash.zero();
-        const baseFee: u256 = if (parent) |p|
-            blockchain_mod.Blockchain.calcBaseFee(&p.header)
-        else
-            0;
 
-        executor.config.coinbase = self.coinbase;
-        executor.config.blockGasLimit = self.gasLimit;
-        executor.config.baseFee = baseFee;
+        executor.config.producer = self.producer;
+        executor.config.blockExecutionBudget = self.executionBudget;
+        if (parent) |p| {
+            executor.lastStateRoot = p.header.stateRoot.bytes;
+        }
 
         var plan = try dag_scheduler_mod.schedule(
             self.allocator,
             &extraction,
             .{
                 .numThreads = executor.config.numThreads,
-                .blockGasLimit = self.gasLimit,
-                .coinbase = self.coinbase,
-                .baseFee = baseFee,
+                .blockExecutionBudget = self.executionBudget,
+                .producer = self.producer,
             },
         );
         defer plan.deinit();
 
-        // 3. Compute DAG root for block header
         const dagRoot = dag_scheduler_mod.computeDAGRoot(&plan);
 
-        // 4. Execute all lanes in parallel
         var blockResult = try executor.executeBlock(&plan);
         defer blockResult.deinit(self.allocator);
 
-        // 5. Collect all TXs for block assembly
         var all_txs = std.ArrayListUnmanaged(types.Transaction){};
         defer all_txs.deinit(self.allocator);
 
@@ -136,7 +97,6 @@ pub const BlockProducer = struct {
             }
         }
 
-        // 6. Assemble block
         const parentNumber = if (parent) |p| p.header.number else 0;
 
         const txs = try self.allocator.alloc(types.Transaction, all_txs.items.len);
@@ -152,18 +112,16 @@ pub const BlockProducer = struct {
                 .parentHash = parentHash,
                 .number = parentNumber + 1,
                 .time = blockTime,
-                .verkleRoot = blockResult.stateRoot,
+                .stateRoot = blockResult.stateRoot,
                 .txHash = computeTxRoot(txs),
-                .coinbase = self.coinbase,
+                .producer = self.producer,
                 .extraData = &[_]u8{},
-                .gasLimit = self.gasLimit,
+                .executionBudget = self.executionBudget,
                 .gasUsed = blockResult.gasUsed,
-                .baseFee = baseFee,
             },
             .transactions = txs,
         };
 
-        // 7. Remove committed TXs from pool
         pool.removeCommitted(all_txs.items);
 
         const end = std.time.nanoTimestamp();

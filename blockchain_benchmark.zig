@@ -164,7 +164,7 @@ pub fn main() !void {
         random.bytes(&addr_bytes);
         senders[j] = core.types.Address{ .bytes = addr_bytes };
         try worldState.setBalance(senders[j], 1000000000000000000000000000000000);
-        try worldState.setNonce(senders[j], 0);
+        try worldState.setSequence(senders[j], 0);
     }
 
     const contract_addr = core.types.Address{
@@ -187,9 +187,9 @@ pub fn main() !void {
         const nonce = j / num_senders;
 
         txs[j] = core.types.Transaction{
-            .nonce = nonce,
+            .sequence = nonce,
             .gasPrice = 1000000000,
-            .gasLimit = 2000000,
+            .executionBudget = 2000000,
             .from = sender,
             .to = contract_addr,
             .value = 0,
@@ -210,40 +210,18 @@ pub fn main() !void {
         .timestamp = @intCast(@max(0, std.time.timestamp())),
         .blockNumber = 1,
         .chainId = 99999,
-        .coinbase = [_]u8{0} ** 32,
+        .producer = [_]u8{0} ** 32,
         .prevRandao = [_]u8{0} ** 32,
     });
 
     var dagExecutor = core.dag_executor.DAGExecutor.init(allocator, &worldState, .{
         .numThreads = cfg.threads,
-        .blockGasLimit = 1_000_000_000,
-        .coinbase = core.types.Address.zero(),
-        .baseFee = 1_000_000_000,
+        .blockExecutionBudget = 1_000_000_000,
+        .producer = core.types.Address.zero(),
         .transferFastPath = true,
     });
 
-    var asyncComputer = core.async_state_root.AsyncStateRootComputer.init(allocator, &worldState, .{
-        .rootLag = 2,
-        .maxQueueDepth = 8,
-        .enableVerification = true,
-    });
-    try asyncComputer.start();
-    defer asyncComputer.stop();
-    dagExecutor.setAsyncRoot(&asyncComputer);
-
     dagExecutor.setVMCallback(riscvBridge.getCallback());
-
-    var statePrefetcher = core.state_prefetcher.StatePrefetcher.init(
-        allocator,
-        &worldState,
-        .{ .maxAddresses = 1_000_000, .prefetchCode = true },
-    );
-    defer statePrefetcher.deinit();
-    dagExecutor.setPrefetcher(&statePrefetcher);
-
-    var deltaMerger = core.delta_merge.DeltaMerger.init(allocator);
-    defer deltaMerger.deinit();
-    dagExecutor.setDeltaMerger(&deltaMerger);
 
     // Run DAG Scheduler
     try stdout.print("Scheduling transactions via DAG Scheduler...\n", .{});
@@ -259,19 +237,6 @@ pub fn main() !void {
     try stdout.print("Executing block with {} lanes...\n", .{plan.lanes.len});
     var block_res = try dagExecutor.executeBlock(&plan);
     defer block_res.deinit(allocator);
-
-    // Wait for the background thread to finish Verkle trie commitment for the block
-    if (dagExecutor.async_root_computer) |arc| {
-        const wait_start = std.time.nanoTimestamp();
-        const block_num = dagExecutor.blocksExecuted;
-        _ = arc.waitForRoot(block_num, 60000); // Wait up to 60s
-        const wait_end = std.time.nanoTimestamp();
-        if (arc.getRoot(block_num)) |completed| {
-            block_res.commitTimeNs = completed.computationTimeNs;
-        } else {
-            block_res.commitTimeNs = wait_end - wait_start;
-        }
-    }
 
     var succeeded: u32 = 0;
     for (block_res.txResults) |r| {

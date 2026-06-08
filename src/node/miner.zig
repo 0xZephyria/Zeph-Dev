@@ -8,7 +8,7 @@ const dag_mempool_mod = core.dag_mempool;
 const dag_executor_mod = core.dag_executor;
 const block_producer_mod = core.block_producer;
 const state_mod = core.state;
-const block_rewards = core.block_rewards;
+
 const p2p = @import("p2p");
 const EpochIntegration = @import("epoch_integration.zig").EpochIntegration;
 const log = core.logger;
@@ -56,7 +56,7 @@ pub const Miner = struct {
     epochIntegration: ?*EpochIntegration,
 
     // Block rewards config
-    rewardConfig: block_rewards.RewardConfig,
+    rewardConfig: dag_executor_mod.BlockRewardConfig,
 
     // Stats
     blocksProduced: u64,
@@ -150,7 +150,13 @@ pub const Miner = struct {
                 try integration.beginBlock();
             }
 
-            // 3. Produce block via unified BlockProducer
+            // 3. Set block reward config on executor (captured in StateDelta)
+            self.dagExecutor.config.blockReward = .{
+                .base_reward = self.rewardConfig.base_reward,
+                .enabled = self.rewardConfig.enabled,
+            };
+
+            // 4. Produce block via unified BlockProducer
             const buildResult = self.producer.produce() catch |err| {
                 log.err("Block production failed: {}", .{err});
                 std.Thread.sleep(BLOCK_TIME_MS * std.time.ns_per_ms);
@@ -158,19 +164,7 @@ pub const Miner = struct {
             };
             const block = buildResult.block;
 
-            // 4. Apply block rewards
-            const rewardCtx = block_rewards.RewardContext{
-                .coinbase = self.validatorAddr,
-                .block_number = nextNumber,
-                .gas_used = buildResult.gasUsed,
-                .tx_count = @as(u64, buildResult.txCount),
-                .timestamp = block.header.time,
-            };
-            _ = try block_rewards.applyRewards(self.state, self.rewardConfig, rewardCtx);
-
-            // 5. Flat KV: no per-block state root
-            block.header.verkleRoot = types.Hash.zero();
-
+            // 5. State root comes from BlockResult (via DAGExecutor's async root computer)
             // 6. Compute woven root from thread partitioning
             const thread_count_now = self.engine.getThreadCount();
             var thread_roots: [cons_types.MAX_THREADS]core.types.Hash = undefined;
@@ -188,7 +182,7 @@ pub const Miner = struct {
             var tc: u8 = 0;
             while (tc < thread_count_now) : (tc += 1) {
                 var hasher = std.crypto.hash.Blake3.init(.{});
-                hasher.update(&block.header.verkleRoot.bytes);
+                hasher.update(&block.header.stateRoot.bytes);
                 hasher.update(&[_]u8{tc});
                 var count_buf: [4]u8 = undefined;
                 std.mem.writeInt(u32, &count_buf, thread_tx_counts[tc], .big);
@@ -198,7 +192,7 @@ pub const Miner = struct {
             const wovenRoot = computeWovenRoot(thread_roots[0..thread_count_now]);
             block.header.txHash = wovenRoot;
 
-            // 7. Seal with BLS signature + VDF proof
+            // 7. Seal with BLS signature + VRF proof
             self.engine.seal(block) catch |err| {
                 log.err("Block seal failed: {}", .{err});
                 std.Thread.sleep(BLOCK_TIME_MS * std.time.ns_per_ms);
@@ -288,7 +282,7 @@ pub const Miner = struct {
             std.debug.print("  \x1b[38;5;245m├─\x1b[0m hash  \x1b[38;5;75m0x{s}\x1b[0m\n" ++
                 "  \x1b[38;5;245m└─\x1b[0m state \x1b[38;5;141m0x{s}\x1b[0m\n", .{
                 hexEncode(blockHash.bytes),
-                hexEncode(block.header.verkleRoot.bytes),
+                hexEncode(block.header.stateRoot.bytes),
             });
 
             // 16. Sleep remaining block time
@@ -316,14 +310,14 @@ pub const Miner = struct {
 
     fn handleEpochRotation(self: *Miner, blockNumber: u64, blockHash: types.Hash) !void {
         // Collect validator stakes for adaptive epoch transition
-        var stakesOwned: ?[]u64 = null;
+        var stakesOwned: ?[]u256 = null;
         defer if (stakesOwned) |s| self.allocator.free(s);
 
-        const stakes: []const u64 = if (self.staking) |stk| blk: {
-            const s = stk.getValidatorStakes() catch break :blk &[_]u64{};
+        const stakes: []const u256 = if (self.staking) |stk| blk: {
+            const s = stk.getValidatorStakes() catch break :blk &[_]u256{};
             stakesOwned = s;
             break :blk s;
-        } else &[_]u64{};
+        } else &[_]u256{};
 
         self.engine.rotateEpoch(blockNumber, blockHash.bytes, stakes) catch |err| {
             log.err("Epoch rotation failed: {}", .{err});

@@ -38,7 +38,7 @@ pub const VMConfig = struct {
     enableJit: bool = false, // Reserved for future RISC-V JIT
     optimizationLevel: OptLevel = .Fast,
     traceExecution: bool = false,
-    gasLimit: u64 = 30_000_000,
+    executionBudget: u64 = 30_000_000,
     /// Execution timeout per contract call (ms)
     executionTimeoutMs: u64 = 5_000,
 };
@@ -63,10 +63,8 @@ pub const ExecutionContext = struct {
     txOrigin: [32]u8 = [_]u8{0} ** 32,
     /// Transaction gas price
     gasPrice: u64 = 0,
-    /// Block coinbase (validator address from consensus)
-    coinbase: [32]u8 = [_]u8{0} ** 32,
-    /// Block base fee (EIP-1559)
-    baseFee: u64 = 0,
+    /// Block producer (validator address from consensus)
+    producer: [32]u8 = [_]u8{0} ** 32,
     /// Block prevRandao (VRF output from adaptive consensus)
     prevRandao: [32]u8 = [_]u8{0} ** 32,
     /// Block number
@@ -236,8 +234,7 @@ pub const VMBridge = struct {
         sb.chainId = bridge.execCtx.chainId;
         sb.txOrigin = bridge.execCtx.txOrigin;
         sb.gasPrice = bridge.execCtx.gasPrice;
-        sb.coinbase = bridge.execCtx.coinbase;
-        sb.baseFee = bridge.execCtx.baseFee;
+        sb.producer = bridge.execCtx.producer;
         sb.prevRandao = bridge.execCtx.prevRandao;
 
         // Execute via RISC-V VM with all providers wired

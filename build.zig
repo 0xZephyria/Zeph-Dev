@@ -18,7 +18,7 @@ pub fn build(b: *std.Build) void {
     crypto_mod.addCSourceFile(.{ .file = b.path("src/crypto/blst/blst/src/server.c"), .flags = &.{"-D__BLST_PORTABLE__"} });
     crypto_mod.addCSourceFile(.{ .file = b.path("src/crypto/blst/blst/build/assembly.S"), .flags = &.{"-D__BLST_PORTABLE__"} });
 
-    // Storage module (Verkle trie, LSM, epoch, code store)
+    // Storage module (ZephyrDB FlatTable, LSM, epoch, code store)
     const storage_mod = b.addModule("storage", .{
         .root_source_file = b.path("src/storage/mod.zig"),
     });
@@ -47,12 +47,11 @@ pub fn build(b: *std.Build) void {
     core_mod.addImport("storage", storage_mod);
     core_mod.addImport("encoding", encoding_mod);
     core_mod.addImport("utils", utils_mod);
-    core_mod.addImport("rlp", rlp_mod);
 
     encoding_mod.addImport("core", core_mod);
     encoding_mod.addImport("rlp", rlp_mod);
 
-    // Consensus module (Zelius PoS with BLS/VDF/VRF)
+    // Consensus module (Zelius PoS with BLS/VRF)
     const consensus_mod = b.addModule("consensus", .{
         .root_source_file = b.path("src/consensus/mod.zig"),
     });
@@ -173,6 +172,7 @@ pub fn build(b: *std.Build) void {
     core_test.root_module.addImport("rlp", rlp_mod);
     core_test.root_module.addImport("crypto", crypto_mod);
     core_test.root_module.addImport("storage", storage_mod);
+    // GMP was previously used by VDF — removed with VDF
     node_test_step.dependOn(&b.addRunArtifact(core_test).step);
 
     // State tests
@@ -186,6 +186,7 @@ pub fn build(b: *std.Build) void {
     state_test.root_module.addImport("storage", storage_mod);
     state_test.root_module.addImport("utils", utils_mod);
     state_test.root_module.addImport("crypto", crypto_mod);
+    
     node_test_step.dependOn(&b.addRunArtifact(state_test).step);
 
     // Scheduler tests
@@ -199,6 +200,7 @@ pub fn build(b: *std.Build) void {
     scheduler_test.root_module.addImport("storage", storage_mod);
     scheduler_test.root_module.addImport("utils", utils_mod);
     scheduler_test.root_module.addImport("crypto", crypto_mod);
+    
     node_test_step.dependOn(&b.addRunArtifact(scheduler_test).step);
 
     // Signature tests
@@ -211,6 +213,7 @@ pub fn build(b: *std.Build) void {
     });
     signature_test.root_module.addImport("crypto", crypto_mod);
     signature_test.root_module.link_libc = true;
+    // GMP no longer needed (VDF removed)
     node_test_step.dependOn(&b.addRunArtifact(signature_test).step);
 
     // Blockchain tests
@@ -225,6 +228,7 @@ pub fn build(b: *std.Build) void {
     blockchain_test.root_module.addImport("utils", utils_mod);
     blockchain_test.root_module.addImport("crypto", crypto_mod);
     blockchain_test.root_module.addImport("rlp", rlp_mod);
+    
     blockchain_test.root_module.addImport("encoding", encoding_mod);
     node_test_step.dependOn(&b.addRunArtifact(blockchain_test).step);
 
@@ -241,6 +245,7 @@ pub fn build(b: *std.Build) void {
     executor_test.root_module.addImport("crypto", crypto_mod);
     executor_test.root_module.addImport("rlp", rlp_mod);
     executor_test.root_module.addImport("encoding", encoding_mod);
+    
     node_test_step.dependOn(&b.addRunArtifact(executor_test).step);
 
     // P2P tests
@@ -257,22 +262,11 @@ pub fn build(b: *std.Build) void {
     p2p_test.root_module.addImport("net_utils", net_utils_mod);
     p2p_test.root_module.addImport("rlp", rlp_mod);
     p2p_test.root_module.addImport("encoding", encoding_mod);
+    // GMP no longer needed (VDF removed)
     node_test_step.dependOn(&b.addRunArtifact(p2p_test).step);
 
     const p2p_test_step = b.step("test-p2p", "Run P2P unit tests");
     p2p_test_step.dependOn(&b.addRunArtifact(p2p_test).step);
-
-    // Consensus tests
-    const consensus_test = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/consensus/vdf_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    consensus_test.root_module.addImport("core", core_mod);
-    consensus_test.root_module.addImport("rlp", rlp_mod);
-    node_test_step.dependOn(&b.addRunArtifact(consensus_test).step);
 
     // DAG Mempool tests
     const dag_test = b.addTest(.{
@@ -288,6 +282,7 @@ pub fn build(b: *std.Build) void {
     dag_test.root_module.addImport("crypto", crypto_mod);
     dag_test.root_module.addImport("rlp", rlp_mod);
     dag_test.root_module.addImport("encoding", encoding_mod);
+    
     node_test_step.dependOn(&b.addRunArtifact(dag_test).step);
 
     // VM tests
@@ -353,6 +348,7 @@ pub fn build(b: *std.Build) void {
     blockchain_benchmark.root_module.addImport("polkavm", polkavm_mod);
     blockchain_benchmark.root_module.link_libc = true;
     blockchain_benchmark.root_module.linkSystemLibrary("z", .{});
+    // GMP no longer needed (VDF removed)
     b.installArtifact(blockchain_benchmark);
 
     const run_blockchain_benchmark_cmd = b.addRunArtifact(blockchain_benchmark);

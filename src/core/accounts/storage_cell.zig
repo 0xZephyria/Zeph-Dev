@@ -1,28 +1,10 @@
-// ============================================================================
-// Zephyria — Storage Cell Account (Type 4)
-// ============================================================================
-//
-// THE KEY TO ZERO CONFLICTS.
-//
-// Each Ethereum storage slot becomes an independent account in the Verkle trie.
-// Address derivation:
-//   StorageAccountKey = blake3(contract_root_address || slot_hash)
-//
-// One slot = one account. No shared storage blob.
-// Parallel transactions touching different slots have ZERO overlap.
-// Conflict detection becomes trivial set intersection of write-set keys.
-//
-// This preserves full Ethereum storage compatibility:
-//   • ABI identical
-//   • Storage slot hashing identical (Solidity keccak256(key || base_slot))
-//   • Tools see same storage layout via eth_getStorageAt RPC translation
-//   • No changes to MetaMask, Hardhat, Foundry, Ethers.js
-
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Blake3 = std.crypto.hash.Blake3;
 
+/// Storage Cell Account (Type 4).
+/// Each Ethereum storage slot maps to an independent account.
+/// Zero conflicts by construction — different slots = different keys.
 pub const StorageCellAccount = struct {
     header: AccountHeader,
     slot_key: types.Hash,
@@ -57,16 +39,31 @@ pub const StorageCellAccount = struct {
     pub fn isZero(self: *const StorageCellAccount) bool {
         return std.mem.eql(u8, &self.value, &([_]u8{0} ** 32));
     }
+
+    /// Serialize to bytes: header(60) + slot_key(32) + value(32) = 124 bytes
+    pub fn serialize(self: *const StorageCellAccount, buf: []u8) []u8 {
+        const hdr = std.mem.asBytes(&self.header);
+        @memcpy(buf[0..60], hdr);
+        @memcpy(buf[60..92], &self.slot_key.bytes);
+        @memcpy(buf[92..124], &self.value);
+        return buf[0..124];
+    }
+
+    /// Deserialize from bytes.
+    pub fn deserialize(data: []const u8) ?StorageCellAccount {
+        if (data.len < 124) return null;
+        var header: AccountHeader = undefined;
+        @memcpy(std.mem.asBytes(&header), data[0..60]);
+        if (header.account_type != .StorageCell) return null;
+        var slot_key: types.Hash = undefined;
+        @memcpy(&slot_key.bytes, data[60..92]);
+        var value: [32]u8 = undefined;
+        @memcpy(&value, data[92..124]);
+        return .{ .header = header, .slot_key = slot_key, .value = value };
+    }
 };
 
-// ── Key Derivation ──────────────────────────────────────────────────────
-
-/// Derive the storage cell key in the global Verkle trie.
-/// Key = blake3(contract_address || storage_slot)
-///
-/// This is the CORE of the zero-conflict model: each slot maps to a
-/// unique trie key, so two transactions writing different slots NEVER
-/// touch the same trie node.
+/// Derive the storage cell key: blake3(contract_address || storage_slot)
 pub fn storageKey(contract: types.Address, slot: [32]u8) [32]u8 {
     var input: [64]u8 = undefined;
     @memcpy(input[0..32], &contract.bytes);
@@ -77,7 +74,6 @@ pub fn storageKey(contract: types.Address, slot: [32]u8) [32]u8 {
 }
 
 /// Derive the storage cell address (for scheduling conflict detection).
-/// This returns an Address (32 bytes) from the full storage key.
 pub fn storageCellAddress(contract: types.Address, slot: [32]u8) types.Address {
     const full_key = storageKey(contract, slot);
     var addr: types.Address = undefined;

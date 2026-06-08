@@ -1,34 +1,9 @@
-// ============================================================================
-// Zephyria — Derived State Account (Type 5)
-// ============================================================================
-//
-// THE KEY TO DEX PARALLELISM.
-//
-// For high-frequency contracts (AMMs, DEXes, token contracts), mappings
-// like `balances[user]` are decomposed into per-user derived accounts:
-//
-//   DerivedKey = keccak256(user || contract || slot)
-//
-// This means Alice's token balance and Bob's token balance are DIFFERENT
-// trie keys — swaps from different users NEVER conflict on balance storage.
-//
-// For global state (totalSupply, pool reserves), uses accumulator pattern:
-//
-//   GlobalKey = keccak256(contract || "global" || slot)
-//
-// Accumulators merge order-independently via credit receipts and delta queues.
-// Each TX produces a delta (e.g., "+100 tokens"), and Phase 2 merges them
-// deterministically in TX-index order.
-//
-// Result: Even DEX swaps that traditionally lock the entire pool can be
-// fully parallelized — user balances go to isolated per-user accounts,
-// reserve updates go through commutative accumulators.
-
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Blake3 = std.crypto.hash.Blake3;
 
+/// Derived State Account (Type 5).
+/// Per-user contract state for conflict-free DEX parallelism.
 pub const DerivedStateAccount = struct {
     header: AccountHeader,
     user: types.Address,
@@ -44,9 +19,29 @@ pub const DerivedStateAccount = struct {
             .contract = contract,
         };
     }
-};
 
-// ── Key Derivation ──────────────────────────────────────────────────────
+    /// Serialize to bytes: header(60) + user(32) + contract(32) = 124 bytes
+    pub fn serialize(self: *const DerivedStateAccount, buf: []u8) []u8 {
+        const hdr = std.mem.asBytes(&self.header);
+        @memcpy(buf[0..60], hdr);
+        @memcpy(buf[60..92], &self.user.bytes);
+        @memcpy(buf[92..124], &self.contract.bytes);
+        return buf[0..124];
+    }
+
+    /// Deserialize from bytes.
+    pub fn deserialize(data: []const u8) ?DerivedStateAccount {
+        if (data.len < 124) return null;
+        var header: AccountHeader = undefined;
+        @memcpy(std.mem.asBytes(&header), data[0..60]);
+        if (header.account_type != .DerivedState) return null;
+        var user: types.Address = undefined;
+        @memcpy(&user.bytes, data[60..92]);
+        var contract: types.Address = undefined;
+        @memcpy(&contract.bytes, data[92..124]);
+        return .{ .header = header, .user = user, .contract = contract };
+    }
+};
 
 /// Derive deterministic account address for a user's state within a contract.
 /// Address = blake3(user || contract)
@@ -55,52 +50,45 @@ pub fn deriveAddress(user: types.Address, contract: types.Address) types.Address
     @memcpy(createInput[0..32], &user.bytes);
     @memcpy(createInput[32..64], &contract.bytes);
     var addr: types.Address = undefined;
-    Blake3.hash(&createInput, &addr.bytes, .{});
+    std.crypto.hash.Blake3.hash(&createInput, &addr.bytes, .{});
     return addr;
 }
 
 /// Per-user storage key: blake3(user || contract || slot)
-/// Replaces the legacy storage_key(contract, slot) for per-user slots.
-/// Two different users writing the SAME logical slot get DIFFERENT trie keys.
 pub fn derivedStorageKey(user: types.Address, contract: types.Address, slot: [32]u8) [32]u8 {
     var createInput: [96]u8 = undefined;
     @memcpy(createInput[0..32], &user.bytes);
     @memcpy(createInput[32..64], &contract.bytes);
     @memcpy(createInput[64..96], &slot);
     var hash: [32]u8 = undefined;
-    Blake3.hash(&createInput, &hash, .{});
+    std.crypto.hash.Blake3.hash(&createInput, &hash, .{});
     return hash;
 }
 
 /// Global accumulator storage key: blake3(contract || "global" || slot)
-/// Used for commutative state like totalSupply, pool reserves.
-/// All transactions writing this key produce AccumulatorDeltas that merge.
 pub fn globalStorageKey(contract: types.Address, slot: [32]u8) [32]u8 {
     var createInput: [70]u8 = undefined;
     @memcpy(createInput[0..32], &contract.bytes);
     @memcpy(createInput[32..38], "global");
     @memcpy(createInput[38..70], &slot);
     var hash: [32]u8 = undefined;
-    Blake3.hash(&createInput, &hash, .{});
+    std.crypto.hash.Blake3.hash(&createInput, &hash, .{});
     return hash;
 }
 
 /// Legacy-compatible storage key: blake3(contract || slot)
-/// Used for contracts that haven't been classified yet by the transpiler.
 pub fn legacyStorageKey(addr: types.Address, slot: [32]u8) [32]u8 {
     var input: [64]u8 = undefined;
     @memcpy(input[0..32], &addr.bytes);
     @memcpy(input[32..64], &slot);
     var hash: [32]u8 = undefined;
-    Blake3.hash(&input, &hash, .{});
+    std.crypto.hash.Blake3.hash(&input, &hash, .{});
     return hash;
 }
 
 // ── Credit Receipt Queue ────────────────────────────────────────────────
 
 /// Queue of credit receipts produced during parallel execution.
-/// Receipts represent cross-user state changes (e.g., Bob gets +100 tokens
-/// from Alice's transfer). Applied deterministically in TX-index order.
 pub const ReceiptQueue = struct {
     allocator: std.mem.Allocator,
     items: std.ArrayListUnmanaged(types.CreditReceipt),
@@ -137,8 +125,6 @@ pub const ReceiptQueue = struct {
 // ── Accumulator Delta Queue ─────────────────────────────────────────────
 
 /// Queue of accumulator deltas for commutative global state.
-/// Deltas merge order-independently — the final result is the same
-/// regardless of which thread produced them first.
 pub const DeltaQueue = struct {
     allocator: std.mem.Allocator,
     items: std.ArrayListUnmanaged(types.AccumulatorDelta),

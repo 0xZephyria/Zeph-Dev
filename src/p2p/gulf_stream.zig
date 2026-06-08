@@ -98,7 +98,7 @@ pub const LeaderSchedule = struct {
 pub const ValidatorInfo = struct {
     index: u32,
     address: core.types.Address,
-    stake: u64,
+    stake: u256,
 };
 
 // ── Forward Batch ───────────────────────────────────────────────────────

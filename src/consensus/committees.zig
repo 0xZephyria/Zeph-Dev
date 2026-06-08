@@ -31,7 +31,7 @@ pub const CommitteeManager = struct {
     /// Thread → list of validator indices assigned to it
     thread_committees: [types.MAX_THREADS]std.ArrayListUnmanaged(u32),
     /// Thread → total stake of committee members
-    thread_stakes: [types.MAX_THREADS]u64,
+    thread_stakes: [types.MAX_THREADS]u256,
 
     /// Validator index → thread assignment (for fast lookup)
     validator_thread: std.AutoHashMap(u32, u8),
@@ -52,7 +52,7 @@ pub const CommitteeManager = struct {
             .thread_count = 0,
             .validator_count = 0,
             .thread_committees = committees,
-            .thread_stakes = [_]u64{0} ** types.MAX_THREADS,
+            .thread_stakes = [_]u256{0} ** types.MAX_THREADS,
             .validator_thread = std.AutoHashMap(u32, u8).init(allocator),
             .shuffle_seed = [_]u8{0} ** 32,
         };
@@ -72,13 +72,13 @@ pub const CommitteeManager = struct {
         committee_seed: [32]u8,
         validator_count: u32,
         thread_count: u8,
-        validator_stakes: []const u64,
-    ) void {
+        validator_stakes: []const u256,
+    ) !void {
         // Clear previous assignments
         for (&self.thread_committees) |*committee| {
             committee.clearRetainingCapacity();
         }
-        self.thread_stakes = [_]u64{0} ** types.MAX_THREADS;
+        self.thread_stakes = [_]u256{0} ** types.MAX_THREADS;
         self.validator_thread.clearRetainingCapacity();
 
         self.shuffle_seed = committee_seed;
@@ -123,8 +123,8 @@ pub const CommitteeManager = struct {
         for (indices, 0..) |validator_idx, pos| {
             const thread_id: u8 = @intCast(pos % thread_count);
 
-            self.thread_committees[thread_id].append(self.allocator, validator_idx) catch continue;
-            self.validator_thread.put(validator_idx, thread_id) catch continue;
+            try self.thread_committees[thread_id].append(self.allocator, validator_idx);
+            try self.validator_thread.put(validator_idx, thread_id);
 
             // Track stake
             if (validator_idx < validator_stakes.len) {
@@ -140,7 +140,7 @@ pub const CommitteeManager = struct {
     }
 
     /// Get the total stake for a thread's committee.
-    pub fn getThreadStake(self: *const Self, thread_id: u8) u64 {
+    pub fn getThreadStake(self: *const Self, thread_id: u8) u256 {
         if (thread_id >= types.MAX_THREADS) return 0;
         return self.thread_stakes[thread_id];
     }

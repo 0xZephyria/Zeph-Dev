@@ -128,7 +128,7 @@ pub const VotePool = struct {
     }
 
     /// AddVote adds a vote to the pool. Returns true if new and valid.
-    pub fn add_vote(self: *VotePool, vote: types.VoteMsg) !bool {
+    pub fn addVote(self: *VotePool, vote: types.VoteMsg) !bool {
         self.votes_received += 1;
 
         // 1. Basic Validation
@@ -138,7 +138,7 @@ pub const VotePool = struct {
         }
 
         // 2. Verify Signature
-        if (!try self.engine.verify_vote_signature(vote.validatorIndex, vote.blockHash, vote.view, vote.signature)) {
+        if (!try self.engine.verifyVoteSignature(vote.validatorIndex, vote.blockHash, vote.view, vote.signature)) {
             self.votes_rejected += 1;
             return false;
         }
@@ -161,18 +161,18 @@ pub const VotePool = struct {
 
     /// Enqueue a vote thread-safely on the inbound lock-free MPMC queue.
     /// Returns true if successfully enqueued, false if queue is full.
-    pub fn enqueue_vote(self: *VotePool, vote: types.VoteMsg) bool {
+    pub fn enqueueVote(self: *VotePool, vote: types.VoteMsg) bool {
         return self.inbound_queue.tryEnqueue(vote);
     }
 
     /// Process all pending votes in the inbound queue sequentially.
     /// This should be called from the main thread / loop.
     /// Returns the number of votes processed.
-    pub fn process_inbound_queue(self: *VotePool) !usize {
+    pub fn processInboundQueue(self: *VotePool) !usize {
         var count: usize = 0;
         var vote: types.VoteMsg = undefined;
         while (self.inbound_queue.tryDequeue(&vote)) {
-            _ = try self.add_vote(vote);
+            _ = try self.addVote(vote);
             count += 1;
         }
         return count;
@@ -208,20 +208,15 @@ pub const VotePool = struct {
 
     /// CheckQuorum checks if a block has 2/3+ votes.
     /// Returns the aggregated BLS signature and validator bitmask.
-    pub fn check_quorum(self: *VotePool, block_hash: core.types.Hash) !?struct { sig: [96]u8, bitmask: []u8 } {
+    pub fn checkQuorum(self: *VotePool, block_hash: core.types.Hash) !?struct { sig: [96]u8, bitmask: []u8 } {
         const votes_map_ptr = self.votes.getPtr(block_hash);
         if (votes_map_ptr == null) return null;
         const votes_map = votes_map_ptr.*;
 
-        var total_stake: u128 = 0;
-        var voted_stake: u128 = 0;
-
-        // Calculate Total Stake
-        for (self.engine.activeValidators) |val| {
-            total_stake += val.stake;
-        }
-
+        const total_stake = self.engine.totalActiveStake;
         if (total_stake == 0) return null;
+
+        var voted_stake: u256 = 0;
 
         // Build bitmask
         const num_vals = self.engine.activeValidators.len;
@@ -252,6 +247,7 @@ pub const VotePool = struct {
             var sig_affine = std.mem.zeroes(c.blst_p2_affine);
             const res = c.blst_p2_uncompress(&sig_affine, &vote.signature);
             if (res != c.BLST_SUCCESS) continue;
+            if (!c.blst_p2_affine_in_g2(&sig_affine)) continue;
 
             var sig_jac = std.mem.zeroes(c.blst_p2);
             c.blst_p2_from_affine(&sig_jac, &sig_affine);
@@ -289,13 +285,13 @@ pub const VotePool = struct {
     }
 
     /// Tier-aware quorum check.
-    /// At Tier 1–2: standard BLS aggregate (same as check_quorum).
+    /// At Tier 1–2: standard BLS aggregate (same as checkQuorum).
     /// At Tier 3: should use Snowball instead (returns null, caller uses snowball engine).
-    pub fn check_quorum_adaptive(self: *VotePool, block_hash: core.types.Hash, tier: types.ConsensusTier) !?struct { sig: [96]u8, bitmask: []u8 } {
+    pub fn checkQuorumAdaptive(self: *VotePool, block_hash: core.types.Hash, tier: types.ConsensusTier) !?struct { sig: [96]u8, bitmask: []u8 } {
         switch (tier) {
             .FullBFT, .CommitteeLoom => {
                 // At Tier 1-2, standard BLS aggregate voting
-                return self.check_quorum(block_hash);
+                return self.checkQuorum(block_hash);
             },
             .FullLoom => {
                 // At Tier 3, Snowball finality is used instead.

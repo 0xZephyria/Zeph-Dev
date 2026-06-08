@@ -356,7 +356,7 @@ fn lz4Decompress(src: []const u8, out: []u8) !usize {
         // Copy match (byte-by-byte for overlapping copies)
         const match_start = op - offset;
         for (0..match_len) |i| {
-            out[op + i] = out[match_start + (i % offset)];
+            out[op + i] = out[match_start + i];
         }
         op += match_len;
     }

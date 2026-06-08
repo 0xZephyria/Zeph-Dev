@@ -283,6 +283,39 @@ inline fn execR(vm: *ForgeVM, r: decoder.RType) void {
     }
 }
 
+fn mulhu64(a: u64, b: u64) u64 {
+    const a_lo: u32 = @truncate(a);
+    const a_hi: u32 = @truncate(a >> 32);
+    const b_lo: u32 = @truncate(b);
+    const b_hi: u32 = @truncate(b >> 32);
+
+    const ll = @as(u64, a_lo) * b_lo;
+    const lh = @as(u64, a_lo) * b_hi;
+    const hl = @as(u64, a_hi) * b_lo;
+    const hh = @as(u64, a_hi) * b_hi;
+
+    const mid_low: u64 = (@as(u64, @truncate(ll >> 32))) +%
+        (@as(u64, @truncate(lh))) +%
+        (@as(u64, @truncate(hl)));
+    const carry = mid_low >> 32;
+    return hh + (lh >> 32) + (hl >> 32) + carry;
+}
+
+fn mulh64(a: i64, b: i64) i64 {
+    const a_neg = a < 0;
+    const b_neg = b < 0;
+    const aa: u64 = if (a_neg) ~@as(u64, @bitCast(a)) +% 1 else @as(u64, @bitCast(a));
+    const bb: u64 = if (b_neg) ~@as(u64, @bitCast(b)) +% 1 else @as(u64, @bitCast(b));
+    const prod = mulhu64(aa, bb);
+    return if (a_neg != b_neg) -@as(i64, @bitCast(prod)) else @as(i64, @bitCast(prod));
+}
+
+fn mulhsu64(a: i64, b: u64) i64 {
+    if (a >= 0) return @as(i64, @bitCast(mulhu64(@as(u64, @bitCast(a)), b)));
+    const aa: u64 = ~@as(u64, @bitCast(a)) +% 1;
+    return -@as(i64, @bitCast(mulhu64(aa, b)));
+}
+
 inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, wordOp: bool) u64 {
     const s1: i64 = @bitCast(rs1);
     const s2: i64 = @bitCast(rs2);
@@ -292,16 +325,13 @@ inline fn execMulDiv(rs1: u64, rs2: u64, funct3: u3, wordOp: bool) u64 {
             break :blk @truncate(@as(u64, @bitCast(@as(i64, s1) *% @as(i64, s2))));
         },
         decoder.Funct3.MULH => blk: {
-            const product: i128 = @as(i128, s1) * @as(i128, s2);
-            break :blk @truncate(@as(u128, @bitCast(product)) >> 64);
+            break :blk @as(u64, @bitCast(mulh64(s1, s2)));
         },
         decoder.Funct3.MULHSU => blk: {
-            const product: i128 = @as(i128, s1) * @as(i128, @intCast(rs2));
-            break :blk @truncate(@as(u128, @bitCast(product)) >> 64);
+            break :blk @as(u64, @bitCast(mulhsu64(s1, rs2)));
         },
         decoder.Funct3.MULHU => blk: {
-            const product: u128 = @as(u128, rs1) * @as(u128, rs2);
-            break :blk @truncate(product >> 64);
+            break :blk mulhu64(rs1, rs2);
         },
         decoder.Funct3.DIV => blk: {
             if (wordOp) {

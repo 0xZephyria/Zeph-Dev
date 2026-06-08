@@ -12,20 +12,18 @@
 const std = @import("std");
 const types = @import("types.zig");
 const system = @import("accounts/system.zig");
+const accounts_common = @import("accounts/common.zig");
 
 // ── System Parameters ───────────────────────────────────────────────────
 
 pub const SystemParams = struct {
-    vdfIterations: u64,
-    vdfInterval: u64,
     slotTime: u64,
     epochLength: u64,
     stakingAddr: types.Address,
     rewardAddr: types.Address,
     validatorAddr: types.Address,
     randomnessAddr: types.Address,
-    defaultGasLimit: u64,
-    defaultBaseFee: u256,
+    defaultExecutionBudget: u64,
 };
 
 // ── Network Config ──────────────────────────────────────────────────────
@@ -34,9 +32,8 @@ pub const NetworkConfig = struct {
     chainId: u256,
     genesisTime: u64,
     genesisHash: types.Hash,
-    gasLimit: u64,
-    baseFee: ?u256,
-    coinbase: types.Address,
+    executionBudget: u64,
+    producer: types.Address,
     systemParams: SystemParams,
 };
 
@@ -89,20 +86,16 @@ pub fn getNetworkConfig(network: []const u8) NetworkConfig {
             .chainId = 91919191,
             .genesisTime = 1735689600, // 2025-01-01
             .genesisHash = types.Hash.zero(),
-            .gasLimit = 60000000,
-            .baseFee = 1000000000,
-            .coinbase = deriveAddressFromSeedHex(default_dev_key),
+            .executionBudget = 60000000,
+            .producer = deriveAddressFromSeedHex(default_dev_key),
             .systemParams = SystemParams{
-                .vdfIterations = 1000,
-                .vdfInterval = 100,
                 .slotTime = 12,
                 .epochLength = 32,
                 .stakingAddr = system.STAKING_ADDRESS,
                 .rewardAddr = system.REWARDS_ADDRESS,
                 .validatorAddr = system.VALIDATOR_ADDRESS,
                 .randomnessAddr = system.RANDOMNESS_ADDRESS,
-                .defaultGasLimit = 60000000,
-                .defaultBaseFee = 1000000000,
+                .defaultExecutionBudget = 60000000,
             },
         };
     }
@@ -112,20 +105,16 @@ pub fn getNetworkConfig(network: []const u8) NetworkConfig {
             .chainId = 88888,
             .genesisTime = 1735689600,
             .genesisHash = types.Hash.zero(),
-            .gasLimit = 100000000,
-            .baseFee = 1000000000,
-            .coinbase = types.Address.zero(),
+            .executionBudget = 100000000,
+            .producer = types.Address.zero(),
             .systemParams = SystemParams{
-                .vdfIterations = 250000,
-                .vdfInterval = 25000,
                 .slotTime = 6,
                 .epochLength = 64,
                 .stakingAddr = system.STAKING_ADDRESS,
                 .rewardAddr = system.REWARDS_ADDRESS,
                 .validatorAddr = system.VALIDATOR_ADDRESS,
                 .randomnessAddr = system.RANDOMNESS_ADDRESS,
-                .defaultGasLimit = 100000000,
-                .defaultBaseFee = 1000000000,
+                .defaultExecutionBudget = 100000000,
             },
         };
     }
@@ -135,20 +124,16 @@ pub fn getNetworkConfig(network: []const u8) NetworkConfig {
         .chainId = 1,
         .genesisTime = 1735689600,
         .genesisHash = types.Hash.zero(),
-        .gasLimit = 200000000,
-        .baseFee = null,
-        .coinbase = types.Address.zero(),
-        .systemParams = SystemParams{
-            .vdfIterations = 1000000,
-            .vdfInterval = 100000,
-            .slotTime = 4,
+        .executionBudget = 200000000,
+        .producer = types.Address.zero(),
+            .systemParams = SystemParams{
+                .slotTime = 4,
             .epochLength = 128,
             .stakingAddr = system.STAKING_ADDRESS,
             .rewardAddr = system.REWARDS_ADDRESS,
             .validatorAddr = system.VALIDATOR_ADDRESS,
             .randomnessAddr = system.RANDOMNESS_ADDRESS,
-            .defaultGasLimit = 200000000,
-            .defaultBaseFee = 1000000000,
+            .defaultExecutionBudget = 200000000,
         },
     };
 }
@@ -161,24 +146,38 @@ pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis)
 
     // 1. Apply token allocations
     for (genesis.alloc) |entry| {
-        const key = state.State.balanceKey(entry.addr);
+        const addr = entry.addr;
+        const is_contract = entry.code != null;
+
+        // Write type discriminator
+        try accounts_common.writeAccountType(db, addr, if (is_contract) .ContractRoot else .EOA);
+
+        // Write balance
+        const key = state.State.balanceKey(addr);
         var balanceBytes = [_]u8{0} ** 32;
         std.mem.writeInt(u256, &balanceBytes, entry.balance, .big);
         try db.write(&key, &balanceBytes);
 
+        // Set sequence to 0 (implicitly zero, but write type to mark existence)
+        if (!is_contract) {
+            const skey = state.State.sequenceKey(addr);
+            var sequenceBytes = [_]u8{0} ** 8;
+            try db.write(&skey, &sequenceBytes);
+        }
+
         // Deploy code if present (system contracts)
         if (entry.code) |code| {
-            const codeKeyVal = state.State.codeKey(entry.addr);
+            const codeKeyVal = state.State.codeKey(addr);
             try db.write(&codeKeyVal, code);
             var codeHash: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(code, &codeHash, .{});
-            try db.write(&state.State.codeHashKey(entry.addr), &codeHash);
+            try db.write(&state.State.codeHashKey(addr), &codeHash);
         }
 
         // Set initial storage if present
         if (entry.storage) |entries| {
             for (entries) |s| {
-                const sKey = state.State.storageKey(entry.addr, s.slot);
+                const sKey = state.State.storageKey(addr, s.slot);
                 try db.write(&sKey, &s.value);
             }
         }
@@ -186,19 +185,24 @@ pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis)
 
     // 2. Deploy system contracts
     for (genesis.systemContracts) |sys| {
+        const addr = sys.address;
+
+        // Write type discriminator
+        try accounts_common.writeAccountType(db, addr, .System);
+
         // Set balance
-        const balKey = state.State.balanceKey(sys.address);
+        const balKey = state.State.balanceKey(addr);
         var balBytes = [_]u8{0} ** 32;
         std.mem.writeInt(u256, &balBytes, sys.balance, .big);
         try db.write(&balKey, &balBytes);
 
         // Deploy bytecode
         if (sys.code) |code| {
-            const codeKeyVal = state.State.codeKey(sys.address);
+            const codeKeyVal = state.State.codeKey(addr);
             try db.write(&codeKeyVal, code);
             var codeHash: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(code, &codeHash, .{});
-            try db.write(&state.State.codeHashKey(sys.address), &codeHash);
+            try db.write(&state.State.codeHashKey(addr), &codeHash);
         }
     }
 
@@ -207,13 +211,12 @@ pub fn applyGenesis(allocator: std.mem.Allocator, db: anytype, genesis: Genesis)
         .parentHash = types.Hash.zero(),
         .number = 0,
         .time = genesis.config.genesisTime,
-        .verkleRoot = types.Hash.zero(),
+        .stateRoot = types.Hash.zero(),
         .txHash = types.Hash.zero(),
-        .coinbase = genesis.config.coinbase,
+        .producer = genesis.config.producer,
         .extraData = &[_]u8{},
-        .gasLimit = genesis.config.gasLimit,
+        .executionBudget = genesis.config.executionBudget,
         .gasUsed = 0,
-        .baseFee = 0,
     };
 
     const block = try allocator.create(types.Block);

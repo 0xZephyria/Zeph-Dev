@@ -1,21 +1,9 @@
-// ============================================================================
-// Zephyria — Config Account (Type 3) & Metadata Registry
-// ============================================================================
-//
-// Contract slot classification metadata. The transpiler (Solidity → Zig)
-// populates this at deployment time, classifying each storage slot as:
-//   • PerUser — mapping(address => X) keyed by msg.sender → isolated per-user
-//   • Global — scalar variables, counters → use accumulator deltas
-//   • Immutable — constants, set once at deploy → zero conflict
-//
-// At runtime, the executor queries slot classification to determine
-// which key derivation function to use for conflict-free execution.
-// Default: unknown slots are classified as PerUser (safe — never conflicts).
-
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
 
+/// Config Account (Type 3).
+/// Contract slot classification metadata for the transpiler.
 pub const ConfigAccount = struct {
     header: AccountHeader,
 
@@ -26,6 +14,22 @@ pub const ConfigAccount = struct {
                 .owner_program = contract,
             },
         };
+    }
+
+    /// Serialize to bytes: header only (60 bytes).
+    pub fn serialize(self: *const ConfigAccount, buf: []u8) []u8 {
+        const hdr = std.mem.asBytes(&self.header);
+        @memcpy(buf[0..60], hdr);
+        return buf[0..60];
+    }
+
+    /// Deserialize from bytes.
+    pub fn deserialize(data: []const u8) ?ConfigAccount {
+        if (data.len < 60) return null;
+        var header: AccountHeader = undefined;
+        @memcpy(std.mem.asBytes(&header), data[0..60]);
+        if (header.account_type != .Config) return null;
+        return .{ .header = header };
     }
 };
 
@@ -52,7 +56,6 @@ pub const ContractMetadata = struct {
         self.immutable_slots.deinit();
     }
 
-    /// Classify a storage slot. Returns PerUser if unknown (safe default).
     pub fn classify(self: *const ContractMetadata, slot: [32]u8) types.SlotClassification {
         if (self.global_slots.contains(slot)) return .Global;
         if (self.immutable_slots.contains(slot)) return .Immutable;
@@ -75,7 +78,6 @@ pub const ContractMetadata = struct {
 // ── Metadata Registry ───────────────────────────────────────────────────
 
 /// Centralized registry of all deployed contract metadata.
-/// The executor queries this to determine slot classification.
 pub const MetadataRegistry = struct {
     allocator: std.mem.Allocator,
     contracts: std.AutoHashMap(types.Address, ContractMetadata),
@@ -104,7 +106,6 @@ pub const MetadataRegistry = struct {
         return null;
     }
 
-    /// Classify a slot for a contract. Returns PerUser if unregistered.
     pub fn classifySlot(self: *const MetadataRegistry, contract: types.Address, slot: [32]u8) types.SlotClassification {
         if (self.get(contract)) |meta| return meta.classify(slot);
         return .PerUser;

@@ -180,7 +180,7 @@ pub const Blockchain = struct {
         var key: [34]u8 = undefined;
         @memcpy(key[0..2], "b-");
         @memcpy(key[2..34], &h.bytes);
-        const encoded = try @import("encoding").rlp.encode(self.allocator, block.*);
+        const encoded = try encodeBlockBinary(self.allocator, block.*);
         defer self.allocator.free(encoded);
         try self.db.write(&key, encoded);
     }
@@ -196,11 +196,7 @@ pub const Blockchain = struct {
 
         const data = self.db.read(&key) orelse return null;
         const block = try self.allocator.create(types.Block);
-        block.* = @import("encoding").rlp.decode(self.allocator, types.Block, data) catch |err| {
-            log.err("RLP decode failed for block: {}", .{err});
-            self.allocator.destroy(block);
-            return null;
-        };
+        block.* = try decodeBlockBinary(self.allocator, data);
 
         // Recover sender addresses
         const tx_decode = @import("tx_decode.zig");
@@ -224,36 +220,6 @@ pub const Blockchain = struct {
             @memcpy(&hash.bytes, hash_bytes[0..32]);
         }
         return self.getBlockByHash(hash) catch null;
-    }
-
-    /// EIP-1559 base fee calculation
-    /// Calculates the EIP-1559 base fee for the next block based on the parent block's utilization.
-    pub fn calcBaseFee(parent: *const types.Header) u256 {
-        const elasticityMultiplier = @as(u64, 2);
-        const baseFeeChangeDenominator = @as(u64, 8);
-        const initialBaseFee = @as(u256, 1_000_000_000);
-
-        if (parent.number == 0) return initialBaseFee;
-        const parentGasTarget = parent.gasLimit / elasticityMultiplier;
-
-        if (parent.gasUsed == parentGasTarget) return parent.baseFee;
-
-        if (parent.gasUsed > parentGasTarget) {
-            const gasUsedDelta = parent.gasUsed - parentGasTarget;
-            const num = parent.baseFee * @as(u256, gasUsedDelta);
-            const den = @as(u256, parentGasTarget) * @as(u256, baseFeeChangeDenominator);
-            var delta = num / den;
-            if (delta < 1) delta = 1;
-            return parent.baseFee + delta;
-        } else {
-            const gasUnusedDelta = parentGasTarget - parent.gasUsed;
-            const num = parent.baseFee * @as(u256, gasUnusedDelta);
-            const den = @as(u256, parentGasTarget) * @as(u256, baseFeeChangeDenominator);
-            const delta = num / den;
-            const floor = @as(u256, 7);
-            if (parent.baseFee > delta + floor) return parent.baseFee - delta;
-            return floor;
-        }
     }
 
     pub const TxLocation = struct {
@@ -281,3 +247,75 @@ pub const Blockchain = struct {
         return null;
     }
 };
+
+fn encodeBlockBinary(allocator: std.mem.Allocator, block: types.Block) ![]u8 {
+    var buf = std.ArrayListUnmanaged(u8){};
+    errdefer buf.deinit(allocator);
+
+    const h = block.header;
+    try buf.appendSlice(allocator, &h.parentHash.bytes);
+    var numBuf: [8]u8 = undefined;
+    std.mem.writeInt(u64, &numBuf, h.number, .big);
+    try buf.appendSlice(allocator, &numBuf);
+    std.mem.writeInt(u64, &numBuf, h.time, .big);
+    try buf.appendSlice(allocator, &numBuf);
+    try buf.appendSlice(allocator, &h.stateRoot.bytes);
+    try buf.appendSlice(allocator, &h.txHash.bytes);
+    try buf.appendSlice(allocator, &h.producer.bytes);
+    var lenBuf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &lenBuf, @intCast(h.extraData.len), .big);
+    try buf.appendSlice(allocator, &lenBuf);
+    if (h.extraData.len > 0) try buf.appendSlice(allocator, h.extraData);
+    std.mem.writeInt(u64, &numBuf, h.executionBudget, .big);
+    try buf.appendSlice(allocator, &numBuf);
+    std.mem.writeInt(u64, &numBuf, h.gasUsed, .big);
+    try buf.appendSlice(allocator, &numBuf);
+
+    std.mem.writeInt(u32, &lenBuf, @intCast(block.transactions.len), .big);
+    try buf.appendSlice(allocator, &lenBuf);
+    for (block.transactions) |tx| {
+        var txBuf = std.ArrayListUnmanaged(u8){};
+        defer txBuf.deinit(allocator);
+        try tx.encodeBinary(txBuf.writer(allocator));
+        try buf.appendSlice(allocator, txBuf.items);
+    }
+
+    return buf.toOwnedSlice(allocator);
+}
+
+fn decodeBlockBinary(allocator: std.mem.Allocator, data: []const u8) !types.Block {
+    var pos: usize = 0;
+
+    var header: types.Header = undefined;
+    @memcpy(&header.parentHash.bytes, data[pos..][0..32]);
+    pos += 32;
+    header.number = std.mem.readInt(u64, data[pos..][0..8], .big);
+    pos += 8;
+    header.time = std.mem.readInt(u64, data[pos..][0..8], .big);
+    pos += 8;
+    @memcpy(&header.stateRoot.bytes, data[pos..][0..32]);
+    pos += 32;
+    @memcpy(&header.txHash.bytes, data[pos..][0..32]);
+    pos += 32;
+    @memcpy(&header.producer.bytes, data[pos..][0..32]);
+    pos += 32;
+    const extraLen = std.mem.readInt(u32, data[pos..][0..4], .big);
+    pos += 4;
+    header.extraData = try allocator.dupe(u8, data[pos..][0..extraLen]);
+    pos += extraLen;
+    header.executionBudget = std.mem.readInt(u64, data[pos..][0..8], .big);
+    pos += 8;
+    header.gasUsed = std.mem.readInt(u64, data[pos..][0..8], .big);
+    pos += 8;
+
+    const txCount = std.mem.readInt(u32, data[pos..][0..4], .big);
+    pos += 4;
+    const transactions = try allocator.alloc(types.Transaction, txCount);
+    for (0..txCount) |i| {
+        try transactions[i].decodeBinary(allocator, data[pos..]);
+        pos += @sizeOf(types.Transaction.BinaryFormat) + transactions[i].data.len;
+    }
+
+    return .{ .header = header, .transactions = transactions };
+}
+

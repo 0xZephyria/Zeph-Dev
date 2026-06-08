@@ -1,20 +1,9 @@
-// ============================================================================
-// Zephyria — System Account (Type 7)
-// ============================================================================
-//
-// Protocol-level accounts with restricted access. These are initialized at
-// genesis and can only be mutated by the protocol itself (consensus, staking).
-//
-// System Contract Addresses:
-//   0x1000 — Staking:    Validator deposits, delegations, slashing
-//   0x2000 — Rewards:    Block reward distribution
-//   0x3000 — Validator:  Validator registry, active set management
-//   0x4000 — Randomness: VRF-based on-chain randomness beacon
-
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
 
+/// System Account (Type 7).
+/// Protocol-level accounts with restricted access. Initialized at genesis.
 pub const SystemAccount = struct {
     header: AccountHeader,
     /// Human-readable identifier for this system account
@@ -29,6 +18,28 @@ pub const SystemAccount = struct {
             },
             .name = name,
         };
+    }
+
+    /// Serialize to bytes: header(60) + name_len(2) + name(variable)
+    pub fn serialize(self: *const SystemAccount, buf: []u8) []u8 {
+        const hdr = std.mem.asBytes(&self.header);
+        @memcpy(buf[0..60], hdr);
+        std.mem.writeInt(u16, buf[60..62], @intCast(self.name.len), .big);
+        if (self.name.len > 0) {
+            @memcpy(buf[62..][0..self.name.len], self.name);
+        }
+        return buf[0..62 + self.name.len];
+    }
+
+    /// Deserialize from bytes.
+    pub fn deserialize(data: []const u8) ?SystemAccount {
+        if (data.len < 62) return null;
+        var header: AccountHeader = undefined;
+        @memcpy(std.mem.asBytes(&header), data[0..60]);
+        if (header.account_type != .System) return null;
+        const name_len = std.mem.readInt(u16, data[60..62], .big);
+        if (data.len < 62 + name_len) return null;
+        return .{ .header = header, .name = data[62..62 + name_len] };
     }
 };
 
@@ -48,7 +59,6 @@ fn parseSystemAddress(comptime suffix: u16) types.Address {
 
 /// Check if an address is a system account
 pub fn isSystemAddress(addr: types.Address) bool {
-    // System addresses are in the range 0x0000...0000XXXX (last 2 bytes non-zero, rest zero)
     for (addr.bytes[0..18]) |b| {
         if (b != 0) return false;
     }

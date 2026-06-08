@@ -15,7 +15,6 @@ pub const block_producer = @import("block_producer.zig");
 pub const scheduler = @import("dag_scheduler.zig");
 pub const executor = @import("dag_executor.zig");
 pub const tx_pool = @import("dag_mempool.zig");
-pub const tx_list = @import("tx_list.zig");
 pub const tx_decode = @import("tx_decode.zig");
 pub const historical_state = @import("historical_state.zig");
 pub const logger = @import("logger.zig");
@@ -23,10 +22,7 @@ pub const security = @import("security.zig");
 pub const dag_mempool = @import("dag_mempool.zig");
 pub const dag_scheduler = @import("dag_scheduler.zig");
 pub const dag_executor = @import("dag_executor.zig");
-pub const block_rewards = @import("block_rewards.zig");
-pub const async_state_root = @import("async_state_root.zig");
-pub const state_prefetcher = @import("state_prefetcher.zig");
-pub const delta_merge = @import("delta_merge.zig");
+pub const state_root = @import("state_root/mod.zig");
 pub const signature = @import("signature.zig");
 
 // Shorthand re-exports for backward compatibility with p2p, rpc, node modules

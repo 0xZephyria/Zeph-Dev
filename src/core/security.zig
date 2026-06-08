@@ -124,18 +124,18 @@ pub const TxSanitizer = struct {
         maxTxSize: u32 = 128 * 1024, // 128 KB
         /// Maximum calldata size
         maxCalldata: u32 = 96 * 1024, // 96 KB
-        /// Minimum gas limit for any TX
-        minGasLimit: u64 = 21_000,
-        /// Maximum gas limit for any TX
-        maxGasLimit: u64 = 30_000_000,
+        /// Minimum execution budget for any TX
+        minExecutionBudget: u64 = 21_000,
+        /// Maximum execution budget for any TX
+        maxExecutionBudget: u64 = 30_000_000,
         /// Maximum gas price (anti-grief: 10,000 ZEE per gas)
         maxGasPrice: u256 = 10_000_000_000_000_000_000_000, // 10k ZEE
         /// Maximum value transfer
         maxValue: u256 = 1_000_000_000_000_000_000_000_000_000, // 1B ZEE
         /// Chain ID for replay protection
         chainId: u64 = 99999,
-        /// Maximum nonce gap from current state nonce
-        maxNonceGap: u64 = 64,
+        /// Maximum sequence gap from current state sequence
+        maxSequenceGap: u64 = 64,
     };
 
     pub fn init(config: SanitizerConfig) TxSanitizer {
@@ -143,16 +143,16 @@ pub const TxSanitizer = struct {
     }
 
     /// Validate a transaction. Returns error describing the rejection reason.
-    pub fn validate(self: *const TxSanitizer, allocator: std.mem.Allocator, tx: *const types.Transaction, state_nonce: u64, state_balance: u256) !void {
+    pub fn validate(self: *const TxSanitizer, allocator: std.mem.Allocator, tx: *const types.Transaction, state_sequence: u64, state_balance: u256) !void {
         // 1. Calldata size check
         if (tx.data.len > self.config.maxCalldata)
             return error.CalldataTooLarge;
 
         // 2. Gas limit bounds
-        if (tx.gasLimit < self.config.minGasLimit)
+        if (tx.executionBudget < self.config.minExecutionBudget)
             return error.IntrinsicGasTooLow;
-        if (tx.gasLimit > self.config.maxGasLimit)
-            return error.GasLimitExceeded;
+        if (tx.executionBudget > self.config.maxExecutionBudget)
+            return error.ExecutionBudgetExceeded;
 
         // 3. Gas price sanity
         if (tx.gasPrice > self.config.maxGasPrice)
@@ -162,14 +162,14 @@ pub const TxSanitizer = struct {
         if (tx.value > self.config.maxValue)
             return error.ValueTooHigh;
 
-        // 5. Nonce validation
-        if (tx.nonce < state_nonce)
-            return error.NonceTooLow;
-        if (tx.nonce > state_nonce + self.config.maxNonceGap)
-            return error.NonceTooHigh;
+        // 5. Sequence validation
+        if (tx.sequence < state_sequence)
+            return error.SequenceTooLow;
+        if (tx.sequence > state_sequence + self.config.maxSequenceGap)
+            return error.SequenceTooHigh;
 
         // 6. Balance sufficiency (value + gas * gasPrice)
-        const gas_cost = @as(u256, tx.gasLimit) * tx.gasPrice;
+        const gas_cost = @as(u256, tx.executionBudget) * tx.gasPrice;
         const total_cost = tx.value + gas_cost;
         if (total_cost > state_balance)
             return error.InsufficientFunds;
@@ -340,11 +340,9 @@ pub const GasMeter = struct {
         self.used = new_used[0];
     }
 
-    /// Refund gas (e.g., SSTORE refund). Capped at used/5 per EIP-3529.
+    /// Refund gas (simple flat cap, no EIP-3529).
     pub fn refund(self: *GasMeter, amount: u64) void {
-        const max_refund = self.used / 5;
-        const actual = @min(amount, max_refund);
-        self.used -|= actual;
+        self.used -|= amount;
     }
 
     pub fn remaining(self: *const GasMeter) u64 {
@@ -376,13 +374,13 @@ pub const SecurityConfig = struct {
 /// These protect against DAG-specific attack vectors:
 ///   • Lane depth bombs (filling one sender's lane)
 ///   • Hot-shard attacks (concentrating TXs on one shard)
-///   • Nonce gap attacks (reserving lane slots with future nonces)
+///   • Sequence gap attacks (reserving lane slots with future sequences)
 ///   • Orphan lane memory exhaustion
 ///   • Malicious dependency injection
 pub const DAGSecurityConfig = struct {
     /// Maximum pending TXs per sender lane.
     /// Prevents lane depth bomb attack where attacker fills a lane with
-    /// maxNonceGap sequential TXs each requiring separate validation.
+    /// maxSequenceGap sequential TXs each requiring separate validation.
     maxTxsPerLane: u32 = 256,
 
     /// Maximum total DAG vertices across all 256 shards.
@@ -398,10 +396,10 @@ pub const DAGSecurityConfig = struct {
     /// Prevents memory exhaustion from abandoned accounts.
     orphanTimeoutS: u64 = 60,
 
-    /// Maximum nonce gap from confirmed state nonce.
+    /// Maximum sequence gap from confirmed state sequence.
     /// Prevents attacker from creating placeholder entries in lanes
-    /// by submitting TX with nonce = state_nonce + 64.
-    maxNonceGap: u64 = 64,
+    /// by submitting TX with sequence = state_sequence + 64.
+    maxSequenceGap: u64 = 64,
 
     /// Hot-shard detection multiplier.
     /// If any shard has > (mean × multiplier) vertices, gas price premium applies.

@@ -3,11 +3,15 @@
 // Uses SIMD-accelerated 32-byte key comparisons for 4x faster merge operations
 
 const std = @import("std");
-const simd = @import("../verkle/lib/fields/simd_fields.zig");
 const Allocator = std.mem.Allocator;
 const fs = std.fs;
 const SSTableReader = @import("sstable.zig").SSTableReader;
 const SSTableWriter = @import("sstable.zig").SSTableWriter;
+
+/// 32-byte key comparison (replaces former SIMD-based comparison from verkle module)
+fn keyCompare(a: [32]u8, b: [32]u8) std.math.Order {
+    return std.mem.order(u8, &a, &b);
+}
 
 /// Compaction configuration
 pub const CompactionConfig = struct {
@@ -92,13 +96,13 @@ pub const Level = struct {
         return self.total_size > self.max_size;
     }
 
-    /// Get files overlapping with key range using SIMD key comparison
+    /// Get files overlapping with key range
     pub fn getOverlappingFiles(self: *const Self, smallest: [32]u8, largest: [32]u8) std.ArrayListUnmanaged(FileMetadata) {
         var result = std.ArrayListUnmanaged(FileMetadata){};
         for (self.files.items) |file| {
-            // Check if ranges overlap using SIMD 4×u64 comparison
-            if (simd.simdKeyCompare(file.largest_key, smallest) != .lt and
-                simd.simdKeyCompare(file.smallest_key, largest) != .gt)
+            // Check if ranges overlap
+            if (keyCompare(file.largest_key, smallest) != .lt and
+                keyCompare(file.smallest_key, largest) != .gt)
             {
                 result.append(self.allocator, file) catch continue;
             }
@@ -141,11 +145,11 @@ pub const CompactionJob = struct {
     pub fn addInputFile(self: *Self, file: FileMetadata) !void {
         try self.input_files.append(self.allocator, file);
 
-        // Update key range using SIMD comparison
-        if (simd.simdKeyCompare(file.smallest_key, self.smallest_key) == .lt) {
+        // Update key range
+        if (keyCompare(file.smallest_key, self.smallest_key) == .lt) {
             self.smallest_key = file.smallest_key;
         }
-        if (simd.simdKeyCompare(file.largest_key, self.largest_key) == .gt) {
+        if (keyCompare(file.largest_key, self.largest_key) == .gt) {
             self.largest_key = file.largest_key;
         }
     }
@@ -170,7 +174,7 @@ pub const MergeIterator = struct {
     };
 
     fn compareHeapEntries(_: void, a: HeapEntry, b: HeapEntry) std.math.Order {
-        return simd.simdKeyCompare(a.key, b.key);
+        return keyCompare(a.key, b.key);
     }
 
     const Self = @This();

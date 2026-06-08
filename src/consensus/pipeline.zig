@@ -57,7 +57,7 @@ pub const Proposal = struct {
     /// Consensus tier that produced this proposal
     tier: types.ConsensusTier,
     /// Proposer's VRF proof
-    proposerVrfProof: ?[48]u8,
+    proposerVrfProof: ?[96]u8,
 };
 
 /// Pipeline configuration (optimized for 400ms block time)

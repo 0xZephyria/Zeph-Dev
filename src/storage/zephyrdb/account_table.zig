@@ -25,7 +25,7 @@ pub const AccountEntry = extern struct {
     // ---- Cache line 1 (64 bytes): Hot data ----
     address: Address, // 32 bytes — lookup key
     flags: u32, // 4 bytes — bitfield (exists, has_code, is_contract, dirty, etc.)
-    nonce: u64, // 8 bytes — transaction nonce
+    sequence: u64, // 8 bytes — transaction sequence
     _padding: [20]u8, // 20 bytes to align to 64 bytes
 
     // ---- Cache line 2 (64 bytes): Cold data ----
@@ -241,7 +241,7 @@ pub const AccountTable = struct {
         var new_entry = AccountEntry{
             .address = address,
             .flags = FLAG_EXISTS,
-            .nonce = 0,
+            .sequence = 0,
             ._padding = [_]u8{0} ** 20,
             .balance = [_]u8{0} ** 32,
             .code_hash = EMPTY_CODE_HASH,
@@ -377,17 +377,17 @@ pub const AccountTable = struct {
         return [_]u8{0} ** 32;
     }
 
-    /// Set nonce for an account
-    pub fn setNonce(self: *Self, address: Address, nonce: u64) !void {
+    /// Set sequence for an account
+    pub fn setSequence(self: *Self, address: Address, sequence: u64) !void {
         const entry = try self.getOrCreate(address);
-        entry.nonce = nonce;
+        entry.sequence = sequence;
         entry.markDirty();
     }
 
-    /// Get nonce for an account
-    pub fn getNonce(self: *Self, address: Address) u64 {
+    /// Get sequence for an account
+    pub fn getSequence(self: *Self, address: Address) u64 {
         if (self.get(address)) |entry| {
-            return entry.nonce;
+            return entry.sequence;
         }
         return 0;
     }
@@ -498,9 +498,9 @@ test "AccountTable basic operations" {
     const got = table.getBalance(addr1);
     try std.testing.expectEqual(@as(u8, 100), got[31]);
 
-    // Set and get nonce
-    try table.setNonce(addr1, 42);
-    try std.testing.expectEqual(@as(u64, 42), table.getNonce(addr1));
+    // Set and get sequence
+    try table.setSequence(addr1, 42);
+    try std.testing.expectEqual(@as(u64, 42), table.getSequence(addr1));
 }
 
 test "AccountTable Robin Hood probing" {

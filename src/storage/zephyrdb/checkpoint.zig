@@ -403,12 +403,12 @@ pub const CheckpointManager = struct {
     /// Serialize a single account to the byte buffer
     fn serializeAccount(self: *Self, data: *std.ArrayList(u8), entry: *const AccountEntry) !void {
         _ = self;
-        // Format: address[20] + flags[4] + nonce[8] + balance[32] + code_hash[32] + storage_root[32]
+        // Format: address[20] + flags[4] + sequence[8] + balance[32] + code_hash[32] + storage_root[32]
         try data.appendSlice(&entry.address);
         const flags_bytes: [4]u8 = @bitCast(entry.flags);
         try data.appendSlice(&flags_bytes);
-        const nonce_bytes: [8]u8 = @bitCast(entry.nonce);
-        try data.appendSlice(&nonce_bytes);
+        const sequence_bytes: [8]u8 = @bitCast(entry.sequence);
+        try data.appendSlice(&sequence_bytes);
         try data.appendSlice(&entry.balance);
         try data.appendSlice(&entry.code_hash);
         try data.appendSlice(&entry.storage_root);

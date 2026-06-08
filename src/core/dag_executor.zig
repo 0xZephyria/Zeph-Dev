@@ -8,7 +8,7 @@
 // Execution Pipeline:
 //   Phase 1 — Parallel Lane Execution:
 //     Each lane runs in its own thread with its own Overlay.
-//     Within a lane, TXs execute sequentially (same sender → nonce ordering).
+//     Within a lane, TXs execute sequentially (same sender → sequence ordering).
 //     Across lanes, zero coordination — guaranteed no write-set overlap.
 //
 //   Phase 2 — Delta Merge:
@@ -18,7 +18,7 @@
 //     uses commutative accumulators.
 //
 //   Phase 3 — State Root:
-//     Batch-commit all overlays to the Verkle trie.
+//     Batch-commit all overlays to the state store.
 //     Compute state root for block header.
 //
 // Thread model:
@@ -34,9 +34,7 @@ const accounts = @import("accounts/mod.zig");
 const dag_scheduler = @import("dag_scheduler.zig");
 const security = @import("security.zig");
 const log = @import("logger.zig");
-const async_root = @import("async_state_root.zig");
-const prefetch = @import("state_prefetcher.zig");
-const delta_mod = @import("delta_merge.zig");
+const state_root_mod = @import("state_root/mod.zig");
 
 // ── Configuration ───────────────────────────────────────────────────────
 
@@ -44,18 +42,26 @@ const delta_mod = @import("delta_merge.zig");
 pub const ExecutorConfig = struct {
     /// Number of execution threads
     numThreads: u32 = 8,
-    /// Block gas limit
-    blockGasLimit: u64 = 1_000_000_000,
-    /// Coinbase for fee collection
-    coinbase: types.Address = types.Address.zero(),
-    /// Base fee
-    baseFee: u256 = 0,
+    /// Block execution budget
+    blockExecutionBudget: u64 = 1_000_000_000,
+    /// Producer for fee collection
+    producer: types.Address = types.Address.zero(),
     /// Execution timeout per TX (ms)
     txTimeoutMs: u64 = 5_000,
     /// Fast-path for simple transfers (skip VM)
     transferFastPath: bool = true,
     /// Maximum call depth
     maxCallDepth: u32 = 256,
+    /// Block reward config — applied after TX execution but before state root
+    blockReward: BlockRewardConfig = .{},
+};
+
+/// Per-block reward configuration embedded in the executor.
+pub const BlockRewardConfig = struct {
+    base_reward: u256 = 2_000_000_000_000_000_000,
+    per_gas_reward: u256 = 0,
+    per_tx_reward: u256 = 0,
+    enabled: bool = true,
 };
 
 // ── VM Callback ─────────────────────────────────────────────────────────
@@ -194,15 +200,8 @@ pub const DAGExecutor = struct {
     code_cache: std.AutoHashMap(types.Address, []const u8),
     code_cache_lock: std.Thread.Mutex = .{},
 
-    /// Async state root computer — when set, Phase 3 queues root computation
-    /// on a background thread instead of computing inline.
-    async_root_computer: ?*async_root.AsyncStateRootComputer,
-
-    /// State prefetcher — warms trie cache before lane execution.
-    state_prefetcher: ?*prefetch.StatePrefetcher,
-
-    /// Lock-free delta merger — parallel merge of lane deltas.
-    delta_merger: ?*delta_mod.DeltaMerger,
+    /// Tracks the previous block's state root for chaining with current delta.
+    lastStateRoot: [32]u8 = [_]u8{0} ** 32,
 
     // Stats
     blocksExecuted: u64,
@@ -223,9 +222,6 @@ pub const DAGExecutor = struct {
             .vmCallback = null,
             .metadata_registry = null,
             .code_cache = std.AutoHashMap(types.Address, []const u8).init(allocator),
-            .async_root_computer = null,
-            .state_prefetcher = null,
-            .delta_merger = null,
             .blocksExecuted = 0,
             .txsExecuted = 0,
             .transfersFastPath = 0,
@@ -242,23 +238,6 @@ pub const DAGExecutor = struct {
         self.metadata_registry = registry;
     }
 
-    /// Set the async state root computer. When set, Phase 3 of block execution
-    /// queues trie commitment on a background thread. Block headers will use
-    /// the state root from `root_lag` blocks ago (default 2).
-    pub fn setAsyncRoot(self: *DAGExecutor, computer: *async_root.AsyncStateRootComputer) void {
-        self.async_root_computer = computer;
-    }
-
-    /// Set the state prefetcher for trie cache warming.
-    pub fn setPrefetcher(self: *DAGExecutor, pf: *prefetch.StatePrefetcher) void {
-        self.state_prefetcher = pf;
-    }
-
-    /// Set the lock-free delta merger.
-    pub fn setDeltaMerger(self: *DAGExecutor, dm: *delta_mod.DeltaMerger) void {
-        self.delta_merger = dm;
-    }
-
     // ── Block Execution ─────────────────────────────────────────────────
 
     /// Execute a full block using the DAG execution plan.
@@ -269,20 +248,6 @@ pub const DAGExecutor = struct {
         self: *DAGExecutor,
         plan: *dag_scheduler.ExecutionPlan,
     ) !BlockResult {
-        if (plan.lanes.len == 0) {
-            return BlockResult{
-                .stateRoot = types.Hash.zero(),
-                .gasUsed = 0,
-                .txCount = 0,
-                .txResults = try self.allocator.alloc(TxResult, 0),
-                .laneCount = 0,
-                .executionTimeNs = 0,
-                .mergeTimeNs = 0,
-                .commitTimeNs = 0,
-                .receiptsRoot = types.Hash.zero(),
-            };
-        }
-
         // Clear per-block code cache (free previously cached code bytes)
         {
             var it = self.code_cache.iterator();
@@ -341,14 +306,6 @@ pub const DAGExecutor = struct {
         for (plan.lanes, 0..) |*lane, i| {
             lane_offsets[i] = offset;
             offset += @intCast(lane.txs.len);
-        }
-
-        // ── Phase 0: State Prefetch (cache warming) ─────────────────────
-        //
-        // Scan all TXs and batch-read their nonce/balance/code keys from
-        // the trie to warm the cache before parallel execution.
-        if (self.state_prefetcher) |pf| {
-            _ = pf.prefetchForPlan(plan);
         }
 
         // ── Phase 0.5: AOT Cache Pre-warming ───────────────────────────
@@ -436,79 +393,52 @@ pub const DAGExecutor = struct {
 
         const exec_end = std.time.nanoTimestamp();
 
-        // ── Phase 1.5: Block-STM-Lite Conflict Detection & Re-execution ─
-        //
-        // After all lanes execute in parallel, scan for read-write conflicts
-        // across overlays. A conflict exists when lane A wrote to a key that
-        // lane B read — meaning B may have read a stale value.
-        //
-        // Only global/shared storage reads are tracked (per-sender keys are
-        // conflict-free by design of the DAG mempool). Expected rate: <1%
-        // of blocks have any conflict (only DEX/lending txs touching the
-        // same pool). Re-execution is sequential and deterministic.
-        //
-        // Algorithm: O(N²) pair scan over N lanes. N is bounded by the
-        // block gas limit (typically 10-200 lanes per block), making this
-        // fast in practice. A bitset could optimize to O(N) but adds
-        // complexity not yet justified.
+        // ── Phase 1.5: Cross-Lane Conflict Re-execution ─────────────────
+        // Scans for read-write conflicts across lanes (same recipient balance,
+        // shared storage). Conflicted lanes are re-executed sequentially against
+        // the correct state. Expected rate: <1% of blocks.
 
-        var conflict_stats: u32 = 0;
+        var had_conflicts = false;
         if (overlays.len > 1) {
-            // Pass 1: find conflicting lane pairs
             var conflicted = try self.allocator.alloc(bool, overlays.len);
             defer self.allocator.free(conflicted);
             @memset(conflicted, false);
+            var conflict_count: u32 = 0;
 
-            for (0..overlays.len) |b| {
+            for (1..overlays.len) |b| {
                 for (0..b) |a| {
                     if (overlays[b].hasReadConflictWith(&overlays[a])) {
                         conflicted[b] = true;
-                        conflict_stats += 1;
-                        break; // Lane b is conflicted, no need to check other parent lanes
+                        conflict_count += 1;
+                        break;
                     }
                 }
             }
 
-            // Pass 2: re-execute conflicting lanes sequentially on fresh overlays.
-            // First, commit non-conflicting lanes so conflicting lanes read correct state.
-            for (0..overlays.len) |i| {
-                if (!conflicted[i]) {
+            if (conflict_count > 0) {
+                had_conflicts = true;
+                for (0..overlays.len) |i| {
+                    if (!conflicted[i]) overlays[i].commit() catch {};
+                }
+                for (0..overlays.len) |i| {
+                    if (!conflicted[i]) continue;
+                    overlays[i].deinit();
+                    overlays[i] = state_mod.Overlay.init(self.allocator, self.state);
+                    overlays[i].finalizeInit();
+                    delta_queues[i].clear();
+                    receipt_queues[i].clear();
+                    self.executeLaneSequential(
+                        &plan.lanes[i],
+                        &overlays[i],
+                        tx_results[lane_offsets[i]..lane_offsets[i] + plan.lanes[i].txs.len],
+                        &delta_queues[i],
+                        &receipt_queues[i],
+                        @intCast(i),
+                        lane_offsets[i],
+                    );
                     overlays[i].commit() catch {};
                 }
-            }
-
-            // Re-execute each conflicting lane in deterministic order (lane index order).
-            for (0..overlays.len) |i| {
-                if (!conflicted[i]) continue;
-
-                // Deinit the stale overlay and create a fresh one
-                overlays[i].deinit();
-                overlays[i] = state_mod.Overlay.init(self.allocator, self.state);
-                overlays[i].finalizeInit();
-
-                // Clear the lane's delta and receipt queues — stale results
-                delta_queues[i].clear();
-                receipt_queues[i].clear();
-
-                // Re-execute sequentially. Results overwrite the stale parallel results.
-                const lane = &plan.lanes[i];
-                self.executeLaneSequential(
-                    lane,
-                    &overlays[i],
-                    tx_results[lane_offsets[i]..lane_offsets[i] + lane.txs.len],
-                    &delta_queues[i],
-                    &receipt_queues[i],
-                    @intCast(i),
-                    lane_offsets[i],
-                );
-
-                // Commit the re-executed overlay immediately so the next
-                // conflicting lane reads the correct updated state.
-                overlays[i].commit() catch {};
-            }
-
-            if (conflict_stats > 0) {
-                log.info("Block-STM: {} cross-lane conflict(s) detected and re-executed\n", .{conflict_stats});
+                log.info("Block-STM: {} cross-lane conflict(s) re-executed\n", .{conflict_count});
             }
         }
 
@@ -576,7 +506,7 @@ pub const DAGExecutor = struct {
         // Note: conflicting overlays were already committed in Phase 1.5
         // sequentially. Non-conflicting overlays were committed there too
         // when conflicts were present. Only commit here when no conflicts ran.
-        if (conflict_stats == 0) {
+        if (!had_conflicts) {
             for (overlays) |*overlay| {
                 overlay.commit() catch {};
             }
@@ -584,27 +514,77 @@ pub const DAGExecutor = struct {
 
         const merge_end = std.time.nanoTimestamp();
 
-        // ── Phase 3: State Root Computation ─────────────────────────────
-        //
-        // Two modes:
-        //   A) Async mode (production): Queue root computation on a
-        //      background thread. Block header uses the root from
-        //      block N - root_lag (default 2). This removes ~2.5s from
-        //      the critical path at 400K+ TXs/block.
-        //
-        //   B) Sync mode (fallback/testing): Compute root inline.
-        //      Simpler but blocks the production pipeline.
+        // ── Phase 2.5: Block Rewards (applied through overlay → captured in StateDelta) ──
+
+        var reward_overlay: ?state_mod.Overlay = null;
+        if (self.config.blockReward.enabled and self.config.blockReward.base_reward > 0) {
+            var ro = state_mod.Overlay.init(self.allocator, self.state);
+            ro.finalizeInit();
+
+            const current_balance = ro.getBalance(self.config.producer);
+            ro.setBalance(self.config.producer, current_balance + self.config.blockReward.base_reward) catch {};
+            reward_overlay = ro;
+        }
+
+        // ── Phase 3: State Root Computation (synchronous) ───────────────
+        // Compute exact per-block state root from sorted delta chain.
+        // No lag, no background thread — just a quick Blake3 hash.
 
         const commit_start = std.time.nanoTimestamp();
 
-        const state_root: types.Hash = if (self.async_root_computer) |arc| blk: {
-            const block_number = self.blocksExecuted + 1;
-            arc.queueCommit(block_number, 0);
-            break :blk arc.getLaggedRoot(block_number);
-        } else blk: {
-            // Flat KV mode: no per-block state root
-            break :blk types.Hash.zero();
+        const state_root: types.Hash = blk: {
+            // Merge dirty entries from all lane overlays + reward overlay into a StateDelta.
+            var total: usize = 0;
+            for (overlays[0..initialized_overlays]) |*o| {
+                total += o.dirty.count();
+            }
+            if (reward_overlay) |*ro| total += ro.dirty.count();
+
+            if (total == 0) break :blk types.Hash{ .bytes = self.lastStateRoot };
+
+            // Build delta from all dirty entries
+            const keys = try self.allocator.alloc([32]u8, total);
+            defer self.allocator.free(keys);
+            const values = try self.allocator.alloc([]const u8, total);
+            var idx: usize = 0;
+            for (overlays[0..initialized_overlays]) |*o| {
+                var it = o.dirty.iterator();
+                while (it.next()) |entry| {
+                    keys[idx] = entry.key_ptr.*;
+                    values[idx] = try self.allocator.dupe(u8, entry.value_ptr.*);
+                    idx += 1;
+                }
+            }
+            if (reward_overlay) |*ro| {
+                var it = ro.dirty.iterator();
+                while (it.next()) |entry| {
+                    keys[idx] = entry.key_ptr.*;
+                    values[idx] = try self.allocator.dupe(u8, entry.value_ptr.*);
+                    idx += 1;
+                }
+            }
+
+            // Compute root synchronously
+            var delta = state_root_mod.StateDelta{
+                .keys = keys,
+                .values = values,
+                .count = total,
+            };
+            const result_bytes = state_root_mod.sorted_delta.compute(self.allocator, &delta, self.lastStateRoot) catch self.lastStateRoot;
+            self.lastStateRoot = result_bytes;
+
+            // Free duped values (delta no longer needed)
+            for (values) |v| self.allocator.free(v);
+            self.allocator.free(values);
+
+            break :blk types.Hash{ .bytes = result_bytes };
         };
+
+        // Commit reward overlay to base state (after StateDelta capture)
+        if (reward_overlay) |*ro| {
+            ro.commit() catch {};
+            ro.deinit();
+        }
 
         const commit_end = std.time.nanoTimestamp();
 
@@ -683,23 +663,26 @@ pub const DAGExecutor = struct {
         receipt_queue: ?*accounts.ReceiptQueue,
         tx_idx: u32,
     ) TxResult {
-        // 1. Verify nonce
-        const current_nonce = overlay.getNonce(tx.from);
-        if (tx.nonce != current_nonce) {
+        // 1. Verify sequence
+        const current_sequence = overlay.getSequence(tx.from);
+        if (tx.sequence != current_sequence) {
             return TxResult{
                 .success = false,
                 .gasUsed = 0,
                 .fee = 0,
                 .txHash = tx.hash(),
-                .errorMessage = "nonce mismatch",
+                .errorMessage = "sequence mismatch",
                 .laneId = 0,
                 .txIndex = 0,
             };
         }
 
+        // 1.5 Ensure sender EOA type discriminator exists (for new accounts)
+        overlay.ensureSenderEOA(tx.from) catch {};
+
         // 2. Compute intrinsic gas
         const intrinsic: u64 = computeIntrinsicGas(&tx);
-        if (intrinsic > tx.gasLimit) {
+        if (intrinsic > tx.executionBudget) {
             return TxResult{
                 .success = false,
                 .gasUsed = intrinsic,
@@ -713,7 +696,7 @@ pub const DAGExecutor = struct {
 
         // 3. Check balance for gas + value
         const sender_balance = overlay.getBalance(tx.from);
-        const max_fee = @as(u256, tx.gasLimit) * tx.gasPrice;
+        const max_fee = @as(u256, tx.executionBudget) * tx.gasPrice;
         const total_cost = tx.value + max_fee;
         if (total_cost > sender_balance) {
             return TxResult{
@@ -727,18 +710,21 @@ pub const DAGExecutor = struct {
             };
         }
 
-        // 4. Deduct max gas and increment nonce
+        // 4. Deduct max gas and increment sequence
         overlay.setBalance(tx.from, sender_balance - max_fee) catch
             return TxResult{ .success = false, .gasUsed = 0, .fee = 0, .txHash = tx.hash(), .errorMessage = "state error", .laneId = 0, .txIndex = 0 };
-        overlay.setNonce(tx.from, current_nonce + 1) catch
+        overlay.setSequence(tx.from, current_sequence + 1) catch
             return TxResult{ .success = false, .gasUsed = 0, .fee = 0, .txHash = tx.hash(), .errorMessage = "state error", .laneId = 0, .txIndex = 0 };
 
         // 5. Execute
         var gas_used: u64 = intrinsic;
         var success = true;
 
+        // 5a. Resolve target account type and validate
         if (tx.to) |to_addr| {
-            // Transfer value
+            const resolution = accounts.resolver.resolve(&self.state.db, to_addr);
+
+            // Transfer value — any address type can receive value
             if (tx.value > 0) {
                 overlay.addBalance(to_addr, @intCast(tx.value)) catch {
                     success = false;
@@ -747,9 +733,22 @@ pub const DAGExecutor = struct {
 
             // Contract call (if data present)
             if (tx.data.len > 0 and self.vmCallback != null) {
+                // Type check: only ContractRoot and System accounts are callable
+                if (resolution.exists and resolution.account_type != .ContractRoot and resolution.account_type != .System) {
+                    return TxResult{
+                        .success = false,
+                        .gasUsed = 0,
+                        .fee = 0,
+                        .txHash = tx.hash(),
+                        .errorMessage = "target not callable",
+                        .laneId = 0,
+                        .txIndex = 0,
+                    };
+                }
+
                 const code_data = self.fetchCode(to_addr) catch &[_]u8{};
                 if (code_data.len > 0) {
-                    const remaining_gas = tx.gasLimit - intrinsic;
+                    const remaining_gas = tx.executionBudget - intrinsic;
                     const vm_result = self.vmCallback.?.execute(
                         code_data,
                         tx.data,
@@ -772,7 +771,7 @@ pub const DAGExecutor = struct {
         } else {
             // Contract creation
             const new_addr = tx.deriveContractAddress();
-            overlay.markCreated(new_addr) catch {};
+            overlay.markCreated(new_addr, .ContractRoot) catch {};
 
             if (tx.value > 0) {
                 overlay.addBalance(new_addr, @intCast(tx.value)) catch {
@@ -781,7 +780,7 @@ pub const DAGExecutor = struct {
             }
 
             if (self.vmCallback != null and tx.data.len > 0) {
-                const remaining_gas = tx.gasLimit - intrinsic;
+                const remaining_gas = tx.executionBudget - intrinsic;
                 const vm_result = self.vmCallback.?.execute(
                     tx.data,
                     &[_]u8{},
@@ -815,9 +814,10 @@ pub const DAGExecutor = struct {
             overlay.addBalance(tx.from, @intCast(refund_amount)) catch {};
         }
 
-        // 7. Pay fee to coinbase
+        // 7. Pay fee to producer
+
         if (actual_fee > 0) {
-            overlay.addBalance(self.config.coinbase, @intCast(actual_fee)) catch {};
+            overlay.addBalance(self.config.producer, @intCast(actual_fee)) catch {};
         }
 
         return TxResult{

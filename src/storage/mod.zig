@@ -1,4 +1,4 @@
-// Storage Module - High-Performance Database and Verkle Trie
+// Storage Module - High-Performance Database Engine
 // Designed for 1M+ TPS with production-grade implementations
 
 const std = @import("std");
@@ -123,29 +123,6 @@ pub const lsm = struct {
     pub const SSTableWriter = sstable.SSTableWriter;
     pub const BloomFilter = sstable.BloomFilter;
     pub const CompactionManager = compaction.CompactionManager;
-};
-
-/// Verkle Trie Components (for state storage)
-pub const verkle = struct {
-    /// Node types (Internal, Leaf, Hashed)
-    pub const node = @import("verkle/node.zig");
-
-    /// Verkle Trie implementation
-    pub const trie = @import("verkle/trie.zig");
-
-    /// Cryptographic primitives (Banderwagon, IPA, CRS)
-    pub const crypto = @import("verkle/lib/main.zig");
-
-    /// Convenience re-exports
-    pub const VerkleTrie = trie.VerkleTrie;
-    pub const VerkleProof = trie.VerkleProof;
-    pub const VerkleWriteBatch = trie.WriteBatch;
-    pub const InternalNode = node.InternalNode;
-    pub const LeafNode = node.LeafNode;
-    pub const Node = node.Node;
-    pub const Element = node.Element;
-    pub const Fr = node.Fr;
-    pub const CRS = node.CRS;
 };
 
 /// FlatKV — Pure Flat KV state storage (Solana approach)
@@ -459,8 +436,8 @@ pub const HybridDB = struct {
             }
         }
 
-        // Fetch from persistent DB
-        if (self.persistent_db.asAbstractDB().read(key)) |val| {
+        // Fetch from persistent DB (must use padded key32 — matches what background writer stores)
+        if (self.persistent_db.asAbstractDB().read(&key32)) |val| {
             defer self.persistent_db.allocator.free(val);
             // Cache in FlatTable for future fast reads
             self.flat_kv.put(key32, val) catch {};

@@ -1,7 +1,6 @@
 const log = @import("core").logger;
 const std = @import("std");
 pub const types = @import("types.zig");
-pub const vdf = @import("vdf.zig");
 pub const vrf = @import("vrf.zig");
 pub const zelius = @import("zelius.zig");
 pub const votepool = @import("votepool.zig");
@@ -16,7 +15,6 @@ pub const thread_pool = @import("thread_pool.zig");
 
 // Re-export specific structs for easier access
 pub const ValidatorInfo = types.ValidatorInfo;
-pub const VDF = vdf.VDF;
 pub const VRF = vrf.VRF;
 pub const ZeliusEngine = zelius.ZeliusEngine;
 pub const VotePool = votepool.VotePool;
@@ -41,5 +39,5 @@ pub const SlashReason = zelius.SlashReason;
 pub const EpochConfig = zelius.EpochConfig;
 
 pub fn init() void {
-    log.debug("Consensus module initialized with VDF/VRF/Zelius (Loom Genesis Adaptive)\n", .{});
+    log.debug("Consensus module initialized with VRF/Zelius (Loom Genesis Adaptive)\n", .{});
 }

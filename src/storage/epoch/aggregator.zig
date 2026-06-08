@@ -164,10 +164,10 @@ pub const EpochAggregator = struct {
         if (block.header.extraData.len >= 96) {
             // Get proposer's public key and add signature
             // Note: In production, validator index should be derived from proposer address
-            const validator_index = block.header.coinbase.bytes[0] % 100; // Simplified
+            const validator_index = block.header.producer.bytes[0] % 100; // Simplified
 
             // For epoch aggregation, we sign the state root
-            const msg = &block.header.verkleRoot.bytes;
+            const msg = &block.header.stateRoot.bytes;
 
             // Skip signature aggregation if we don't have pubkey
             // In production, lookup from validator registry
@@ -420,8 +420,8 @@ test "EpochAggregator reset logic" {
     const MockBlock = struct {
         header: struct {
             number: u64,
-            verkleRoot: @import("core").types.Hash = @import("core").types.Hash.zero(),
-            coinbase: @import("core").types.Address = @import("core").types.Address.zero(),
+            stateRoot: @import("core").types.Hash = @import("core").types.Hash.zero(),
+            producer: @import("core").types.Address = @import("core").types.Address.zero(),
             extraData: []const u8 = &[_]u8{},
         },
         transactions: []const @import("core").types.Transaction = &[_]@import("core").types.Transaction{},

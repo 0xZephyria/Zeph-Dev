@@ -1,20 +1,5 @@
-// ============================================================================
-// Zephyria — Core Types
-// ============================================================================
-//
-// Foundational data structures for the Zephyria blockchain.
-// Zephyria is a native L1 — NOT EVM-based. Key differences:
-//   • RISC-V VM execution (not EVM)
-//   • DAG-based mempool for tx ordering (no access lists)
-//   • Per-slot isolated accounts for zero-conflict parallelism
-//   • Native parallel execution — no sequential fallback ever
-
 const std = @import("std");
-const rlp = @import("encoding").rlp;
 
-// ── Primitives ──────────────────────────────────────────────────────────
-
-/// Represents a 32-byte account address.
 pub const Address = extern struct {
     bytes: [32]u8,
 
@@ -31,17 +16,8 @@ pub const Address = extern struct {
     pub fn eql(self: Address, other: Address) bool {
         return std.mem.eql(u8, &self.bytes, &other.bytes);
     }
-
-    pub fn decodeFromRLP(self: *Address, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        return try rlp.deserialize([32]u8, allocator, serialized, &self.bytes);
-    }
-
-    pub fn encodeToRLP(self: Address, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        try rlp.serialize([32]u8, allocator, self.bytes, listData);
-    }
 };
 
-/// Represents a 32-byte cryptographic hash (Blake3).
 pub const Hash = extern struct {
     bytes: [32]u8,
 
@@ -58,120 +34,47 @@ pub const Hash = extern struct {
     pub fn eql(self: Hash, other: Hash) bool {
         return std.mem.eql(u8, &self.bytes, &other.bytes);
     }
-
-    pub fn decodeFromRLP(self: *Hash, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        return try rlp.deserialize([32]u8, allocator, serialized, &self.bytes);
-    }
-
-    pub fn encodeToRLP(self: Hash, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        try rlp.serialize([32]u8, allocator, self.bytes, listData);
-    }
 };
 
-// ── Block Header ────────────────────────────────────────────────────────
-
-/// Represents a block header containing metadata and commitments.
 pub const Header = struct {
     parentHash: Hash,
     number: u64,
     time: u64,
-    verkleRoot: Hash,
+    stateRoot: Hash,
     txHash: Hash,
-    coinbase: Address,
+    producer: Address,
     extraData: []const u8,
-    gasLimit: u64,
+    executionBudget: u64,
     gasUsed: u64,
-    baseFee: u256,
-
-    pub fn rlpEncode(self: Header, allocator: std.mem.Allocator) ![]u8 {
-        var list = std.ArrayListUnmanaged(u8){};
-        defer list.deinit(allocator);
-        try self.encodeToRLP(allocator, &list);
-        return list.toOwnedSlice(allocator);
-    }
-
-    pub fn rlpDecode(allocator: std.mem.Allocator, data: []const u8) !Header {
-        var header: Header = undefined;
-        _ = try header.decodeFromRLP(allocator, data);
-        return header;
-    }
-
-    pub fn encodeToRLP(self: Header, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        var inner = std.ArrayListUnmanaged(u8){};
-        defer inner.deinit(allocator);
-        try self.parentHash.encodeToRLP(allocator, &inner);
-        try rlp.serialize(u64, allocator, self.number, &inner);
-        try rlp.serialize(u64, allocator, self.time, &inner);
-        try self.verkleRoot.encodeToRLP(allocator, &inner);
-        try self.txHash.encodeToRLP(allocator, &inner);
-        try self.coinbase.encodeToRLP(allocator, &inner);
-        try rlp.serialize([]const u8, allocator, self.extraData, &inner);
-        try rlp.serialize(u64, allocator, self.gasLimit, &inner);
-        try rlp.serialize(u64, allocator, self.gasUsed, &inner);
-        try rlp.serialize(u256, allocator, self.baseFee, &inner);
-        try rlp.encodeListHeader(allocator, inner.items.len, listData);
-        try listData.appendSlice(allocator, inner.items);
-    }
-
-    pub fn decodeFromRLP(self: *Header, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        var offset: usize = 0;
-        if (serialized.len == 0) return error.Truncated;
-        const prefix = serialized[offset];
-
-        var list_len: usize = 0;
-        if (prefix >= 0xc0 and prefix <= 0xf7) {
-            list_len = @as(usize, prefix - 0xc0);
-            offset += 1;
-        } else if (prefix >= 0xf8) {
-            const ll = @as(usize, prefix - 0xf7);
-            if (offset + 1 + ll > serialized.len) return error.Truncated;
-            for (serialized[offset + 1 .. offset + 1 + ll]) |b| list_len = (list_len << 8) | b;
-            offset += 1 + ll;
-        } else {
-            return error.ExpectedList;
-        }
-
-        if (offset + list_len > serialized.len) return error.Truncated;
-        const listData = serialized[offset .. offset + list_len];
-        var itemOffset: usize = 0;
-
-        itemOffset += try self.parentHash.decodeFromRLP(allocator, listData[itemOffset..]);
-        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.number);
-        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.time);
-        itemOffset += try self.verkleRoot.decodeFromRLP(allocator, listData[itemOffset..]);
-        itemOffset += try self.txHash.decodeFromRLP(allocator, listData[itemOffset..]);
-        itemOffset += try self.coinbase.decodeFromRLP(allocator, listData[itemOffset..]);
-        itemOffset += try rlp.deserialize([]const u8, allocator, listData[itemOffset..], &self.extraData);
-        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.gasLimit);
-        itemOffset += try rlp.deserialize(u64, allocator, listData[itemOffset..], &self.gasUsed);
-        itemOffset += try rlp.deserialize(u256, allocator, listData[itemOffset..], &self.baseFee);
-
-        return offset + list_len;
-    }
+    quorumCertificate: ?QuorumCertificate = null,
 
     pub fn deinit(self: Header, allocator: std.mem.Allocator) void {
         allocator.free(self.extraData);
     }
 };
 
-// ── Transaction ─────────────────────────────────────────────────────────
-//
-// Zephyria native transaction format. No EVM access lists.
-// The DAG-based mempool analyzes account dependencies from tx.from, tx.to,
-// and contract storage touch patterns (via static analysis at submission)
-// to construct the dependency graph for parallel execution ordering.
+/// BLS aggregate signature from 2/3+ validators, attesting to a block.
+/// Never included in Block.hash() (QC signs the hash, so it cannot be part of it).
+/// Block.hash() includes only this many bytes of extraData.
+/// The remaining bytes (if any) carry the BLS block signature
+/// and would create a circular dependency if included in the hash.
+pub const EXTRA_DATA_HASH_LEN: usize = 96;
 
-/// Represents a Zephyria native transaction.
-/// Note: This format does not include EVM-style access lists; dependencies
-/// are determined by the DAG mempool.
+pub const QuorumCertificate = struct {
+    /// Aggregate BLS signature from voting validators (96 bytes, G2 compressed)
+    aggregateSignature: [96]u8,
+    /// Bitmap of which validator indices signed (up to 256 validators)
+    voterBitmap: [32]u8,
+};
+
 pub const Transaction = struct {
-    pub_key: [32]u8 = [_]u8{0} ** 32,  // Sender's Ed25519 public key
-    from: Address = Address.zero(),    // Cached derived address: blake3(pub_key)
+    pub_key: [32]u8 = [_]u8{0} ** 32,
+    from: Address = Address.zero(),
     to: ?Address = null,
     value: u256 = 0,
-    gasLimit: u64 = 0,
+    executionBudget: u64 = 0,
     gasPrice: u64 = 0,
-    nonce: u64 = 0,
+    sequence: u64 = 0,
     signature: [64]u8 = [_]u8{0} ** 64,
     data: []const u8 = &[_]u8{},
 
@@ -179,9 +82,9 @@ pub const Transaction = struct {
         pub_key: [32]u8,
         target: [32]u8,
         value: [32]u8,
-        gasLimit: u64,
+        executionBudget: u64,
         gasPrice: u64,
-        nonce: u64,
+        sequence: u64,
         signature: [64]u8,
         calldata_len: u32,
     };
@@ -195,9 +98,9 @@ pub const Transaction = struct {
             @memset(&bf.target, 0);
         }
         std.mem.writeInt(u256, &bf.value, self.value, .big);
-        bf.gasLimit = self.gasLimit;
+        bf.executionBudget = self.executionBudget;
         bf.gasPrice = self.gasPrice;
-        bf.nonce = self.nonce;
+        bf.sequence = self.sequence;
         @memcpy(&bf.signature, &self.signature);
         bf.calldata_len = @intCast(self.data.len);
 
@@ -227,9 +130,9 @@ pub const Transaction = struct {
             self.to = Address{ .bytes = bf.target };
         }
         self.value = std.mem.readInt(u256, &bf.value, .big);
-        self.gasLimit = bf.gasLimit;
+        self.executionBudget = bf.executionBudget;
         self.gasPrice = bf.gasPrice;
-        self.nonce = bf.nonce;
+        self.sequence = bf.sequence;
         self.signature = bf.signature;
         self.data = try allocator.dupe(u8, calldata);
     }
@@ -256,25 +159,11 @@ pub const Transaction = struct {
             self.to = Address{ .bytes = bf.target };
         }
         self.value = std.mem.readInt(u256, &bf.value, .big);
-        self.gasLimit = bf.gasLimit;
+        self.executionBudget = bf.executionBudget;
         self.gasPrice = bf.gasPrice;
-        self.nonce = bf.nonce;
+        self.sequence = bf.sequence;
         self.signature = bf.signature;
         self.data = calldata;
-    }
-
-    pub fn encodeToRLP(self: Transaction, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        var arr = std.ArrayListUnmanaged(u8).empty;
-        defer arr.deinit(allocator);
-        try self.encodeBinary(arr.writer(allocator));
-        try rlp.serialize([]const u8, allocator, arr.items, listData);
-    }
-
-    pub fn decodeFromRLP(self: *Transaction, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        var bytes: []const u8 = undefined;
-        const consumed = try rlp.deserialize([]const u8, allocator, serialized, &bytes);
-        try self.decodeBinary(allocator, bytes);
-        return consumed;
     }
 
     pub fn getSigningMessage(self: *const Transaction, allocator: std.mem.Allocator) ![]u8 {
@@ -286,9 +175,9 @@ pub const Transaction = struct {
             @memset(&bf.target, 0);
         }
         std.mem.writeInt(u256, &bf.value, self.value, .big);
-        bf.gasLimit = self.gasLimit;
+        bf.executionBudget = self.executionBudget;
         bf.gasPrice = self.gasPrice;
-        bf.nonce = self.nonce;
+        bf.sequence = self.sequence;
         @memset(&bf.signature, 0);
         bf.calldata_len = @intCast(self.data.len);
 
@@ -309,9 +198,9 @@ pub const Transaction = struct {
             @memset(&bf.target, 0);
         }
         std.mem.writeInt(u256, &bf.value, self.value, .big);
-        bf.gasLimit = self.gasLimit;
+        bf.executionBudget = self.executionBudget;
         bf.gasPrice = self.gasPrice;
-        bf.nonce = self.nonce;
+        bf.sequence = self.sequence;
         @memcpy(&bf.signature, &self.signature);
         bf.calldata_len = @intCast(self.data.len);
 
@@ -328,117 +217,47 @@ pub const Transaction = struct {
     pub fn deriveContractAddress(self: *const Transaction) Address {
         var hasher = std.crypto.hash.Blake3.init(.{});
         hasher.update(&self.from.bytes);
-        var nonceBuf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &nonceBuf, self.nonce, .big);
-        hasher.update(&nonceBuf);
+        var sequenceBuf: [8]u8 = undefined;
+        std.mem.writeInt(u64, &sequenceBuf, self.sequence, .big);
+        hasher.update(&sequenceBuf);
         var addr: Address = undefined;
         hasher.final(&addr.bytes);
         return addr;
     }
 };
 
-// ── Block ───────────────────────────────────────────────────────────────
-
-/// Represents a complete block consisting of a header and a list of transactions.
 pub const Block = struct {
     header: Header,
     transactions: []Transaction,
 
-    pub fn rlpEncode(self: Block, allocator: std.mem.Allocator) ![]u8 {
-        return try rlp.encode(allocator, self);
-    }
-
-    pub fn rlpDecode(allocator: std.mem.Allocator, data: []const u8) !Block {
-        return try rlp.decode(allocator, Block, data);
-    }
-
     pub fn hash(self: *const Block) Hash {
         var h_res = Hash.zero();
         var hasher = std.crypto.hash.Blake3.init(.{});
-        const ally = std.heap.page_allocator;
-        const encoded = self.header.rlpEncode(ally) catch return h_res;
-        defer ally.free(encoded);
-        hasher.update(encoded);
+        var buf8: [8]u8 = undefined;
+        hasher.update(&self.header.parentHash.bytes);
+        std.mem.writeInt(u64, &buf8, self.header.number, .big);
+        hasher.update(&buf8);
+        hasher.update(&self.header.stateRoot.bytes);
+        hasher.update(&self.header.txHash.bytes);
+        std.mem.writeInt(u64, &buf8, self.header.time, .big);
+        hasher.update(&buf8);
+        hasher.update(&self.header.producer.bytes);
+        std.mem.writeInt(u64, &buf8, self.header.executionBudget, .big);
+        hasher.update(&buf8);
+        std.mem.writeInt(u64, &buf8, self.header.gasUsed, .big);
+        hasher.update(&buf8);
+        if (self.header.extraData.len > 0) {
+            const hash_len = @min(self.header.extraData.len, EXTRA_DATA_HASH_LEN);
+            hasher.update(self.header.extraData[0..hash_len]);
+        }
+        // NOTE: quorumCertificate is deliberately excluded — QC signs this hash,
+        // so it cannot be part of the hash itself (circular dependency).
+        for (self.transactions) |*tx| {
+            const tx_hash = tx.hash();
+            hasher.update(&tx_hash.bytes);
+        }
         hasher.final(&h_res.bytes);
         return h_res;
-    }
-
-    pub fn encodeToRLP(self: Block, allocator: std.mem.Allocator, listData: *std.ArrayListUnmanaged(u8)) !void {
-        var inner = std.ArrayListUnmanaged(u8){};
-        defer inner.deinit(allocator);
-
-        // 1. Header
-        try self.header.encodeToRLP(allocator, &inner);
-
-        // 2. Transactions (List of items)
-        var txList = std.ArrayListUnmanaged(u8){};
-        defer txList.deinit(allocator);
-        for (self.transactions) |tx| {
-            try tx.encodeToRLP(allocator, &txList);
-        }
-        try rlp.encodeListHeader(allocator, txList.items.len, &inner);
-        try inner.appendSlice(allocator, txList.items);
-
-        try rlp.encodeListHeader(allocator, inner.items.len, listData);
-        try listData.appendSlice(allocator, inner.items);
-    }
-
-    pub fn decodeFromRLP(self: *Block, allocator: std.mem.Allocator, serialized: []const u8) !usize {
-        var offset: usize = 0;
-        if (serialized.len == 0) return error.Truncated;
-        const prefix = serialized[offset];
-
-        var list_len: usize = 0;
-        if (prefix >= 0xc0 and prefix <= 0xf7) {
-            list_len = @as(usize, prefix - 0xc0);
-            offset += 1;
-        } else if (prefix >= 0xf8) {
-            const ll = @as(usize, prefix - 0xf7);
-            if (offset + 1 + ll > serialized.len) return error.Truncated;
-            for (serialized[offset + 1 .. offset + 1 + ll]) |b| list_len = (list_len << 8) | b;
-            offset += 1 + ll;
-        } else {
-            return error.ExpectedList;
-        }
-
-        if (offset + list_len > serialized.len) return error.Truncated;
-        const listData = serialized[offset .. offset + list_len];
-        var itemOffset: usize = 0;
-
-        // 1. Header
-        itemOffset += try self.header.decodeFromRLP(allocator, listData[itemOffset..]);
-
-        // 2. Transactions
-        const txPrefix = listData[itemOffset];
-        var txList_len: usize = 0;
-        var txOffsetStart: usize = 0;
-        if (txPrefix >= 0xc0 and txPrefix <= 0xf7) {
-            txList_len = @as(usize, txPrefix - 0xc0);
-            txOffsetStart = 1;
-        } else if (txPrefix >= 0xf8) {
-            const tx_ll = @as(usize, txPrefix - 0xf7);
-            for (listData[itemOffset + 1 .. itemOffset + 1 + tx_ll]) |b| txList_len = (txList_len << 8) | b;
-            txOffsetStart = 1 + tx_ll;
-        } else {
-            return error.ExpectedList;
-        }
-
-        const txData = listData[itemOffset + txOffsetStart .. itemOffset + txOffsetStart + txList_len];
-        var tx_itemOffset: usize = 0;
-        var txs = std.ArrayListUnmanaged(Transaction){};
-        defer txs.deinit(allocator);
-
-        while (tx_itemOffset < txData.len) {
-            var tx: Transaction = undefined;
-            const consumed = try tx.decodeFromRLP(allocator, txData[tx_itemOffset..]);
-            try txs.append(allocator, tx);
-            tx_itemOffset += consumed;
-        }
-
-        itemOffset += txOffsetStart + txList_len;
-
-        self.transactions = try txs.toOwnedSlice(allocator);
-        return offset + list_len;
     }
 
     pub fn deinit(self: Block, allocator: std.mem.Allocator) void {
@@ -450,9 +269,6 @@ pub const Block = struct {
     }
 };
 
-// ── Account Type Classification ─────────────────────────────────────────
-
-/// Classification of account types in the Verkle trie.
 pub const AccountType = enum(u8) {
     EOA = 0,
     ContractRoot = 1,
@@ -464,20 +280,12 @@ pub const AccountType = enum(u8) {
     System = 7,
 };
 
-// ── Slot Classification ─────────────────────────────────────────────────
-
-/// Classification of storage slots for parallel execution analysis.
 pub const SlotClassification = enum {
     PerUser,
     Global,
     Immutable,
 };
 
-// ── Parallel Execution Types ────────────────────────────────────────────
-
-/// Credit receipt for cross-user state changes during parallel execution.
-/// Phase 1 (parallel): each TX produces receipts for effects on OTHER users.
-/// Phase 2 (sequential): receipts applied in TX-index order.
 pub const CreditReceipt = struct {
     recipient: Address,
     contract: Address,
@@ -487,9 +295,6 @@ pub const CreditReceipt = struct {
     txIndex: u32,
 };
 
-/// Accumulator delta for commutative global state (totalSupply, reserves).
-/// These merge order-independently — final result is the same regardless
-/// of which thread produced them first.
 pub const AccumulatorDelta = struct {
     contract: Address,
     slot: [32]u8,
@@ -498,8 +303,6 @@ pub const AccumulatorDelta = struct {
     txIndex: u32,
 };
 
-/// Result of parallel transaction execution
-/// Result of parallel transaction execution, including gas usage and state deltas.
 pub const ParallelTxResult = struct {
     success: bool,
     gasUsed: u64,

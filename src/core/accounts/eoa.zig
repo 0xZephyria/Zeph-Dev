@@ -1,16 +1,10 @@
-// ============================================================================
-// Zephyria — Externally Owned Account (Type 0)
-// ============================================================================
-//
-// User wallet account. Each EOA is its own isolated state object.
-// Parallel transactions from the same sender conflict ONLY on nonce,
-// matching Ethereum semantics. No global nonce lock.
-
 const std = @import("std");
 const types = @import("../types.zig");
 const AccountHeader = @import("header.zig").AccountHeader;
-const Blake3 = std.crypto.hash.Blake3;
+const common = @import("common.zig");
 
+/// Externally Owned Account (Type 0).
+/// User wallet. Header stores sequence + balance directly.
 pub const EOA = struct {
     header: AccountHeader,
 
@@ -23,13 +17,13 @@ pub const EOA = struct {
         };
     }
 
-    pub fn withBalance(address: types.Address, balance: u128, nonce: u64) EOA {
+    pub fn withBalance(address: types.Address, balance: u128, sequence: u64) EOA {
         return .{
             .header = .{
                 .account_type = .EOA,
                 .owner_program = address,
                 .balance = balance,
-                .nonce = nonce,
+                .sequence = sequence,
             },
         };
     }
@@ -42,37 +36,61 @@ pub const EOA = struct {
         return self.header.balance;
     }
 
-    pub fn getNonce(self: *const EOA) u64 {
-        return self.header.nonce;
+    pub fn getSequence(self: *const EOA) u64 {
+        return self.header.sequence;
+    }
+
+    /// Serialize this EOA account to a byte buffer.
+    /// EOA has no payload beyond the header — all state is in header fields.
+    pub fn serialize(self: *const EOA, buf: []u8) []u8 {
+        @memcpy(buf[0..60], std.mem.asBytes(&self.header));
+        return buf[0..60];
+    }
+
+    /// Deserialize an EOA account from a byte buffer.
+    pub fn deserialize(data: []const u8) ?EOA {
+        if (data.len < 60) return null;
+        var header: AccountHeader = undefined;
+        @memcpy(std.mem.asBytes(&header), data[0..60]);
+        if (header.account_type != .EOA) return null;
+        return .{ .header = header };
+    }
+
+    /// Verify the sequence matches an expected value.
+    pub fn verifySequence(self: *const EOA, expected: u64) bool {
+        return self.header.sequence == expected;
+    }
+
+    /// Verify the balance covers a required amount.
+    pub fn hasSufficientBalance(self: *const EOA, required: u128) bool {
+        return self.header.balance >= required;
+    }
+
+    /// Subtract from balance (returns new balance or error if insufficient).
+    pub fn debit(self: *EOA, amount: u128) !void {
+        if (self.header.balance < amount) return error.InsufficientBalance;
+        self.header.balance -= amount;
+    }
+
+    /// Add to balance.
+    pub fn credit(self: *EOA, amount: u128) void {
+        self.header.balance += amount;
+    }
+
+    /// Increment sequence.
+    pub fn incrementSequence(self: *EOA) void {
+        self.header.sequence += 1;
     }
 };
 
-// ── Key Derivation ──────────────────────────────────────────────────────
-
-/// Derive the Verkle stem/hash for an EOA address using BLAKE3.
-/// stem = blake3(address)[0..31]
-pub fn accountStem(addr: types.Address) [31]u8 {
-    var h: [32]u8 = undefined;
-    std.crypto.hash.Blake3.hash(&addr.bytes, &h, .{});
-    var stem: [31]u8 = undefined;
-    @memcpy(&stem, h[0..31]);
-    return stem;
-}
-
-/// Nonce key: stem || 0x00
-pub fn nonceKey(addr: types.Address) [32]u8 {
-    var key: [32]u8 = undefined;
-    @memcpy(key[0..31], &accountStem(addr));
-    key[31] = 0x00;
-    return key;
+/// Sequence key: stem || 0x00
+pub fn sequenceKey(addr: types.Address) [32]u8 {
+    return common.sequenceKey(addr);
 }
 
 /// Balance key: stem || 0x01
 pub fn balanceKey(addr: types.Address) [32]u8 {
-    var key: [32]u8 = undefined;
-    @memcpy(key[0..31], &accountStem(addr));
-    key[31] = 0x01;
-    return key;
+    return common.balanceKey(addr);
 }
 
 /// Derive address from private key bytes (Ed25519 seed)

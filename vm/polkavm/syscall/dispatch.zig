@@ -203,9 +203,8 @@ pub const HostEnv = struct {
     chainId: u64,
     txOrigin: [32]u8,
     gasPrice: u64,
-    coinbase: [32]u8,
-    gasLimit: u64,
-    baseFee: u64,
+    producer: [32]u8,
+    executionBudget: u64,
     prevrandao: [32]u8,
 
     // Logs accumulated during execution
@@ -321,9 +320,9 @@ pub const HostEnv = struct {
             .chainId = 1,
             .txOrigin = [_]u8{0} ** 32,
             .gasPrice = 0,
-            .coinbase = [_]u8{0} ** 32,
-            .gasLimit = 30_000_000,
-            .baseFee = 0,
+            .producer = [_]u8{0} ** 32,
+
+            .executionBudget = 30_000_000,
             .prevrandao = [_]u8{0} ** 32,
             .logs = .empty,
             .allocator = allocator,
@@ -839,19 +838,14 @@ fn getGasPrice(vm: *ForgeVM, env: *HostEnv) void {
 
 /// Syscall 0x17: get_coinbase → writes 32 bytes to memory at a1
 fn getCoinbase(vm: *ForgeVM, env: *HostEnv) void {
-    const bufPtr = vm.regs[11]; // a1 — a0 is the syscall ID
+    const bufPtr = vm.regs[11];
     const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
-    @memcpy(slice, &env.coinbase);
+    @memcpy(slice, &env.producer);
 }
 
-/// Syscall 0x18: get_gaslimit → a0 = gas limit (low 32 bits)
+/// Syscall 0x18: get_execution_budget → a0 = execution budget (low 32 bits)
 fn getGasLimit(vm: *ForgeVM, env: *HostEnv) void {
-    vm.regs[10] = @truncate(env.gasLimit);
-}
-
-/// Syscall 0x19: get_basefee → a0 = base fee (low 32 bits)
-fn getBaseFee(vm: *ForgeVM, env: *HostEnv) void {
-    vm.regs[10] = @truncate(env.baseFee);
+    vm.regs[10] = @truncate(env.executionBudget);
 }
 
 /// Syscall GET_BLOCK_HASH / prevrandao
@@ -2486,17 +2480,17 @@ fn reviveBalanceOf(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 }
 
 fn reviveBaseFee(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
+    _ = env;
     const out_ptr = vm.regs[11];
     const out_slice = vm.memory.getSliceMut(out_ptr, 32) catch return SyscallError.SegFault;
     @memset(out_slice, 0);
-    std.mem.writeInt(u64, out_slice[0..8], env.baseFee, .little);
     vm.regs[10] = 0;
 }
 
 fn reviveBlockAuthor(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const out_ptr = vm.regs[11];
     const out_slice = vm.memory.getSliceMut(out_ptr, 20) catch return SyscallError.SegFault;
-    translateAddrToGuest(env.coinbase, out_slice);
+    translateAddrToGuest(env.producer, out_slice);
     vm.regs[10] = 0;
 }
 

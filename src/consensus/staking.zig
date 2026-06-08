@@ -441,20 +441,20 @@ pub const Staking = struct {
         return @import("adaptive.zig").AdaptiveConsensus.computeTier(self.validatorCount());
     }
 
-    /// Get all active validator stakes as a u64 slice (for committee formation).
-    pub fn getValidatorStakes(self: *Self) ![]u64 {
-        var stakes = std.ArrayListUnmanaged(u64){};
+    /// Get all active validator stakes as a u256 slice (for committee formation).
+    pub fn getValidatorStakes(self: *Self) ![]u256 {
+        var stakes = std.ArrayListUnmanaged(u256){};
         defer stakes.deinit(self.allocator);
 
         var it = self.validators.iterator();
         while (it.next()) |entry| {
             const v = entry.value_ptr.*;
             if (v.isActive() and v.total_stake() >= self.config.min_stake) {
-                try stakes.append(self.allocator, @truncate(v.total_stake()));
+                try stakes.append(self.allocator, v.total_stake());
             }
         }
 
-        const result = try self.allocator.alloc(u64, stakes.items.len);
+        const result = try self.allocator.alloc(u256, stakes.items.len);
         @memcpy(result, stakes.items);
         return result;
     }
@@ -534,13 +534,12 @@ pub const Staking = struct {
             del_address_count += 1;
         }
 
-        var meta_buf: [28]u8 = undefined;
+        var meta_buf: [52]u8 = undefined;
         std.mem.writeInt(u32, meta_buf[0..4], val_count, .big);
         std.mem.writeInt(u32, meta_buf[4..8], del_count, .big);
         std.mem.writeInt(u32, meta_buf[8..12], @intCast(self.unbonding.items.len), .big);
         std.mem.writeInt(u64, meta_buf[12..20], self.current_block, .big);
-        // total_staked as u64 (truncated for metadata — full value in validator records)
-        std.mem.writeInt(u64, meta_buf[20..28], @truncate(self.total_staked), .big);
+        std.mem.writeInt(u256, meta_buf[20..52], self.total_staked, .big);
         const meta_key = core.State.stakingMetaKey(0x01);
         try db.write(&meta_key, &meta_buf);
 
@@ -642,7 +641,7 @@ pub const Staking = struct {
         // ── 1. Read metadata ─────────────────────────────────────────────
         const meta_key = core.State.stakingMetaKey(0x01);
         const meta_raw = db.read(&meta_key) orelse return; // No data = fresh node
-        if (meta_raw.len < 28) return;
+        if (meta_raw.len < 52) return;
 
         const val_count = std.mem.readInt(u32, meta_raw[0..4], .big);
         self.current_block = std.mem.readInt(u64, meta_raw[12..20], .big);

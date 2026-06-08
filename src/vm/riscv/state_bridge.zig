@@ -29,7 +29,7 @@
 //      Overlay (same TX isolation boundary).
 //
 //   5. Each StateBridge carries full execution context (timestamp,
-//      tx_origin, gas_price, coinbase, prevRandao, base_fee) so
+//      tx_origin, gas_price, producer, prevRandao) so
 //      nested calls see correct block/tx environment.
 
 const std = @import("std");
@@ -70,10 +70,8 @@ pub const StateBridge = struct {
     txOrigin: [32]u8,
     /// Transaction gas price
     gasPrice: u64,
-    /// Block coinbase (validator/miner address)
-    coinbase: [32]u8,
-    /// Block base fee (EIP-1559)
-    baseFee: u64,
+    /// Block producer (validator/miner address)
+    producer: [32]u8,
     /// Block prevRandao (VRF randomness from consensus)
     prevRandao: [32]u8,
 
@@ -132,8 +130,7 @@ pub const StateBridge = struct {
             .chainId = 99999,
             .txOrigin = [_]u8{0} ** 32,
             .gasPrice = 0,
-            .coinbase = [_]u8{0} ** 32,
-            .baseFee = 0,
+            .producer = [_]u8{0} ** 32,
             .prevRandao = [_]u8{0} ** 32,
             .deltaQueue = null,
             .receiptQueue = null,
@@ -176,8 +173,7 @@ pub const StateBridge = struct {
         self.chainId = parent.chainId;
         self.txOrigin = parent.txOrigin;
         self.gasPrice = parent.gasPrice;
-        self.coinbase = parent.coinbase;
-        self.baseFee = parent.baseFee;
+        self.producer = parent.producer;
         self.prevRandao = parent.prevRandao;
         // Inherit write-key restrictions to sub-calls
         self.allowedWriteKeys = parent.allowedWriteKeys;
