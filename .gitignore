@@ -5,6 +5,8 @@ zig-out/
 
 # object files
 *.o
+src/crypto/blst
+src/crypto/blst/wrapper
 
 # logs
 node.log
@@ -31,3 +33,4 @@ contracts/bin/resolc
 #md file
 tasks copy.md
 tasks copy 2.md
+tasks.md

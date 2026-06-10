@@ -200,6 +200,10 @@ pub const DAGExecutor = struct {
     code_cache: std.AutoHashMap(types.Address, []const u8),
     code_cache_lock: std.Thread.Mutex = .{},
 
+    /// Per-lane arena allocators — zero-syscall bump allocation during execution,
+    /// bulk-reset after each block. Replaces per-allocation free overhead.
+    lane_arenas: []std.heap.ArenaAllocator = &[_]std.heap.ArenaAllocator{},
+
     /// Tracks the previous block's state root for chaining with current delta.
     lastStateRoot: [32]u8 = [_]u8{0} ** 32,
 
@@ -238,11 +242,18 @@ pub const DAGExecutor = struct {
         self.metadata_registry = registry;
     }
 
+    /// Reset per-lane arena allocators — bulk-frees all execution memory
+    /// allocated during the previous block. Call this AFTER the caller has
+    /// finished reading BlockResult data (returnData, logs, etc.).
+    pub fn resetLaneArenas(self: *DAGExecutor) void {
+        for (self.lane_arenas) |*la| la.deinit();
+        self.allocator.free(self.lane_arenas);
+        self.lane_arenas = &[_]std.heap.ArenaAllocator{};
+    }
+
     // ── Block Execution ─────────────────────────────────────────────────
 
     /// Execute a full block using the DAG execution plan.
-    /// All lanes execute in parallel. Zero conflicts guaranteed.
-    /// Executes a full block using the DAG execution plan.
     /// All lanes execute in parallel. Zero conflicts guaranteed by Phase 1.
     pub fn executeBlock(
         self: *DAGExecutor,
@@ -289,8 +300,15 @@ pub const DAGExecutor = struct {
             self.allocator.free(receipt_queues);
         }
 
+        // Clean up previous block's arenas (if any)
+        for (self.lane_arenas) |*la| la.deinit();
+        self.allocator.free(self.lane_arenas);
+
+        // Create per-lane ArenaAllocators — zero-syscall bump allocation
+        self.lane_arenas = try self.allocator.alloc(std.heap.ArenaAllocator, num_lanes);
         for (0..num_lanes) |i| {
-            overlays[i] = state_mod.Overlay.init(self.allocator, self.state);
+            self.lane_arenas[i] = std.heap.ArenaAllocator.init(self.allocator);
+            overlays[i] = state_mod.Overlay.init(self.lane_arenas[i].allocator(), self.state);
             overlays[i].finalizeInit();
             initialized_overlays += 1;
             delta_queues[i] = accounts.DeltaQueue.init(self.allocator);
@@ -422,8 +440,11 @@ pub const DAGExecutor = struct {
                 }
                 for (0..overlays.len) |i| {
                     if (!conflicted[i]) continue;
-                    overlays[i].deinit();
-                    overlays[i] = state_mod.Overlay.init(self.allocator, self.state);
+                    // Reset the lane arena instead of individual overlay deinit
+                    // — bulk-free all allocations from the previous execution.
+                    self.lane_arenas[i].deinit();
+                    self.lane_arenas[i] = std.heap.ArenaAllocator.init(self.allocator);
+                    overlays[i] = state_mod.Overlay.init(self.lane_arenas[i].allocator(), self.state);
                     overlays[i].finalizeInit();
                     delta_queues[i].clear();
                     receipt_queues[i].clear();
@@ -438,7 +459,7 @@ pub const DAGExecutor = struct {
                     );
                     overlays[i].commit() catch {};
                 }
-                log.info("Block-STM: {} cross-lane conflict(s) re-executed\n", .{conflict_count});
+                log.info("Zelius-OPE: {} cross-lane conflict(s) re-executed\n", .{conflict_count});
             }
         }
 
@@ -571,7 +592,6 @@ pub const DAGExecutor = struct {
                 .count = total,
             };
             const result_bytes = state_root_mod.sorted_delta.compute(self.allocator, &delta, self.lastStateRoot) catch self.lastStateRoot;
-            self.lastStateRoot = result_bytes;
 
             // Free duped values (delta no longer needed)
             for (values) |v| self.allocator.free(v);
@@ -592,6 +612,8 @@ pub const DAGExecutor = struct {
         if (plan.totalTxs > 0 and std.mem.eql(u8, &state_root.bytes, &self.lastStateRoot)) {
             return error.StateRootNotAdvanced;
         }
+        // Commit new state root AFTER firewall check
+        self.lastStateRoot = state_root.bytes;
 
         // Compute total budget used
         var total_budget: u64 = 0;

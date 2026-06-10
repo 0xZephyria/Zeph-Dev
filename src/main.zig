@@ -605,6 +605,7 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
         validatorAddr,
         @as(u64, @intCast(network.executionBudget)),
     );
+    defer producer.deinit();
     producer.setDAGPipeline(dagPool, &dagExecutor);
     printComponentLine("├─", "BlockProducer ", "DAG-native + inline root");
 

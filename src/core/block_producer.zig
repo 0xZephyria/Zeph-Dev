@@ -40,8 +40,9 @@ pub const BlockProducer = struct {
     dagExecutor: ?*dag_executor_mod.DAGExecutor,
 
     // Pre-allocated buffer for block production hot path (16 MB).
-    // Reset at the start of each produce() call to avoid heap reallocations.
-    block_buf: [16 * 1024 * 1024]u8,
+    // Heap-allocated to avoid 16 MB stack frame when BlockProducer is used
+    // as a stack variable (e.g., in main.startNode).
+    block_buf: []u8,
     block_fba: std.heap.FixedBufferAllocator,
 
     pub fn init(
@@ -51,6 +52,15 @@ pub const BlockProducer = struct {
         producer: types.Address,
         executionBudget: u64,
     ) BlockProducer {
+        const size = 16 * 1024 * 1024;
+        const buf = std.posix.mmap(
+            null,
+            size,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+            -1,
+            0,
+        ) catch @panic("mmap failed for block_buf");
         var bp = BlockProducer{
             .allocator = allocator,
             .chain = chain,
@@ -59,11 +69,19 @@ pub const BlockProducer = struct {
             .executionBudget = executionBudget,
             .dagPool = null,
             .dagExecutor = null,
-            .block_buf = undefined,
+            .block_buf = buf,
             .block_fba = undefined,
         };
-        bp.block_fba = std.heap.FixedBufferAllocator.init(&bp.block_buf);
+        bp.block_fba = std.heap.FixedBufferAllocator.init(bp.block_buf);
         return bp;
+    }
+
+    pub fn deinit(self: *BlockProducer) void {
+        std.posix.munmap(@alignCast(self.block_buf));
+    }
+
+    pub fn reuse(self: *BlockProducer) void {
+        self.block_fba = std.heap.FixedBufferAllocator.init(self.block_buf);
     }
 
     pub fn setDAGPipeline(
@@ -78,7 +96,7 @@ pub const BlockProducer = struct {
     pub fn produce(self: *BlockProducer) !BuildResult {
         // Reset the fixed-buffer arena for this block's transient allocations.
         // This avoids heap reallocations on every ArrayList append in the hot path.
-        self.block_fba = std.heap.FixedBufferAllocator.init(&self.block_buf);
+        self.block_fba = std.heap.FixedBufferAllocator.init(self.block_buf);
         const hot_alloc = self.block_fba.allocator();
 
         const start = std.time.nanoTimestamp();

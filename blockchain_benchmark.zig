@@ -46,8 +46,7 @@ fn printHelp(writer: anytype) !void {
 }
 
 pub fn main() !void {
-    // Use c_allocator (thread-safe malloc/free) instead of GPA.
-    // GPA has internal locking that serializes multi-threaded allocations.
+    // Per-thread arena allocator for the hot execution path.
     const allocator = std.heap.c_allocator;
 
     var stdout_wrapper = std.fs.File.stdout().writer(&.{});
@@ -114,15 +113,12 @@ pub fn main() !void {
     defer allocator.free(bytecode);
 
     // Create Arena-backed FlatTable directly (ZephyrDB backend — no checkpoint/WAL)
+    // Use page_allocator: the 256 MB arena is a large contiguous region better
+    // served by direct mmap than by the general-purpose allocator.
     try stdout.print("Initializing Arena + FlatTable...\n", .{});
     var arena = try storage.zephyrdb.Arena.initForTesting(allocator, 256 * 1024 * 1024);
-    errdefer arena.deinit();
 
     var flat_kv = try storage.zephyrdb.FlatTable.init(&arena, null);
-    errdefer {
-        flat_kv.deinit();
-        arena.deinit();
-    }
 
     const db_adapter = storage.DB{
         .ptr = &flat_kv,
@@ -235,7 +231,10 @@ pub fn main() !void {
 
     // Execute Block
     try stdout.print("Executing block with {} lanes...\n", .{plan.lanes.len});
-    var block_res = try dagExecutor.executeBlock(&plan);
+    var block_res = dagExecutor.executeBlock(&plan) catch |err| {
+        try stderr.print("executeBlock failed: {}\n", .{err});
+        return err;
+    };
     defer block_res.deinit(allocator);
 
     var succeeded: u32 = 0;
