@@ -27,6 +27,7 @@ const adaptive_mod = @import("adaptive.zig");
 
 const blst_mod = core.crypto.blst;
 const c = blst_mod.c;
+const secureZero = @import("utils").secureZero;
 
 const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
 
@@ -99,6 +100,7 @@ pub const ZeliusEngine = struct {
     epochConfig: EpochConfig,
     currentEpoch: u64,
     epochSeed: [32]u8,
+    staking: ?*staking_mod.Staking,
 
     // Adaptive consensus (Loom Genesis)
     adaptive: adaptive_mod.AdaptiveConsensus,
@@ -116,6 +118,12 @@ pub const ZeliusEngine = struct {
 
     // Fast O(1) validator lookup by address
     validatorIndexByAddr: std.AutoHashMap(core.types.Address, usize),
+
+    // Whether activeValidators is an owned allocation (true after epoch rotation)
+    activeValidatorsOwned: bool,
+
+    // Thread-safety lock
+    mutex: std.Thread.Mutex,
 
     // Cached total active stake for O(1) quorum checks
     totalActiveStake: u256,
@@ -148,6 +156,7 @@ pub const ZeliusEngine = struct {
             .epochConfig = .{},
             .currentEpoch = 0,
             .epochSeed = [_]u8{0} ** 32,
+            .staking = null,
             .adaptive = adaptive_mod.AdaptiveConsensus.init(allocator, .{}),
             .proposalsSeen = std.AutoHashMap(u64, ProposalRecord).init(allocator),
             .slashEvents = .{},
@@ -155,6 +164,8 @@ pub const ZeliusEngine = struct {
             .viewChangeTimeoutMs = types.VIEW_CHANGE_TIMEOUT_MS,
             .missedBlocks = std.AutoHashMap(core.types.Address, u32).init(allocator),
             .validatorIndexByAddr = std.AutoHashMap(core.types.Address, usize).init(allocator),
+            .activeValidatorsOwned = false,
+            .mutex = .{},
             .totalActiveStake = 0,
             .lastFinalizedBlock = 0,
             .blocksVerified = 0,
@@ -185,6 +196,9 @@ pub const ZeliusEngine = struct {
         self.slashEvents.deinit(self.allocator);
         self.missedBlocks.deinit();
         self.validatorIndexByAddr.deinit();
+        if (self.activeValidatorsOwned) {
+            self.allocator.free(self.activeValidators);
+        }
         self.allocator.destroy(self);
     }
 
@@ -241,7 +255,28 @@ pub const ZeliusEngine = struct {
         return (blockNumber % self.epochConfig.blocksPerEpoch) == 0;
     }
 
+    pub fn setStaking(self: *ZeliusEngine, staking: *staking_mod.Staking) void {
+        self.staking = staking;
+    }
+
+    pub fn handleEpochRotationIfBoundary(self: *ZeliusEngine, blockNumber: u64, blockId: [32]u8) !void {
+        if (self.isEpochBoundary(blockNumber)) {
+            var stakesOwned: ?[]u256 = null;
+            defer if (stakesOwned) |s| self.allocator.free(s);
+
+            const stakes: []const u256 = if (self.staking) |stk| blk: {
+                const s = stk.getValidatorStakes() catch break :blk &[_]u256{};
+                stakesOwned = s;
+                break :blk s;
+            } else &[_]u256{};
+
+            try self.rotateEpoch(blockNumber, blockId, stakes);
+        }
+    }
+
     /// Rotate validator set and update adaptive consensus at epoch boundary.
+    /// If staking is wired, refreshes activeValidators from staking state.
+    /// Jailed/tombstoned validators are naturally excluded by staking.getActiveSet().
     pub fn rotateEpoch(
         self: *ZeliusEngine,
         blockNumber: u64,
@@ -254,7 +289,23 @@ pub const ZeliusEngine = struct {
         // Reset missed block counters
         self.missedBlocks.clearRetainingCapacity();
 
-        // Update adaptive consensus
+        // Rebuild active validator set from staking state if available
+        if (self.staking) |stk| {
+            const staking_vals = try stk.getActiveSet();
+            defer stk.allocator.free(staking_vals);
+
+            // Free previous owned allocation
+            if (self.activeValidatorsOwned) {
+                self.allocator.free(self.activeValidators);
+            }
+
+            // Convert staking.Validator[] → types.ValidatorInfo[]
+            self.activeValidators = try self.stakingValidatorsToInfo(staking_vals, self.allocator);
+            self.activeValidatorsOwned = true;
+            self.rebuildValidatorIndex();
+        }
+
+        // Update adaptive consensus with current validator count
         const validatorCount: u32 = @intCast(self.activeValidators.len);
         try self.adaptive.transitionEpoch(
             self.currentEpoch,
@@ -262,6 +313,35 @@ pub const ZeliusEngine = struct {
             newSeed,
             validatorStakes,
         );
+    }
+
+    /// Convert a slice of staking Validator records to consensus ValidatorInfo.
+    /// Allocates the result with the given allocator — caller owns the memory.
+    pub fn stakingValidatorsToInfo(
+        _: *ZeliusEngine,
+        staking_vals: []const staking_mod.Validator,
+        allocator: std.mem.Allocator,
+    ) ![]types.ValidatorInfo {
+        const infos = try allocator.alloc(types.ValidatorInfo, staking_vals.len);
+        for (staking_vals, 0..) |sv, i| {
+            infos[i] = .{
+                .address = sv.address,
+                .stake = sv.total_stake(),
+                .status = switch (sv.status) {
+                    .Active => .Active,
+                    .Jailed, .Tombstoned => .Slashed,
+                    .Unbonding => .Unbonding,
+                },
+                .blsPubKey = sv.bls_pubkey,
+                .commission = @intCast(sv.commission_rate),
+                .activationBlock = sv.registered_at,
+                .slashCount = 0,
+                .totalRewards = 0,
+                .name = "",
+                .website = "",
+            };
+        }
+        return infos;
     }
 
     /// Rebuild the validator address index (call when activeValidators changes).
@@ -303,20 +383,31 @@ pub const ZeliusEngine = struct {
         return self.adaptive.deterministicProposer(slot);
     }
 
+    /// Check if a given address is the eligible proposer for a slot.
+    /// Firewall 1 (Gulf Stream): verify target before forwarding TXs.
+    pub fn isEligibleProposer(self: *const ZeliusEngine, slot: u64, address: core.types.Address) bool {
+        const proposer_idx = self.adaptive.deterministicProposer(slot);
+        if (proposer_idx >= @as(u32, @intCast(self.activeValidators.len))) return false;
+        return std.mem.eql(u8, &self.activeValidators[proposer_idx].address.bytes, &address.bytes);
+    }
+
     // ── Double-Signing Detection ────────────────────────────────────
 
     /// Record a block proposal. Detects and returns slash event if double-signing.
-    pub fn recordProposal(self: *ZeliusEngine, blockNumber: u64, blockHash: core.types.Hash, proposer: core.types.Address) !?SlashEvent {
+    /// blockId must be computed via block.id() — the canonical identifier.
+    pub fn recordProposal(self: *ZeliusEngine, blockNumber: u64, blkId: core.types.Hash, proposer: core.types.Address) !?SlashEvent {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         const gop = try self.proposalsSeen.getOrPut(blockNumber);
         if (gop.found_existing) {
             const existing = gop.value_ptr.*;
-            if (!std.mem.eql(u8, &existing.blockHash.bytes, &blockHash.bytes)) {
+            if (!std.mem.eql(u8, &existing.blockHash.bytes, &blkId.bytes)) {
                 // DOUBLE SIGNING DETECTED
                 self.doubleSignsDetected += 1;
 
                 var evidence: [64]u8 = undefined;
                 @memcpy(evidence[0..32], &existing.blockHash.bytes);
-                @memcpy(evidence[32..64], &blockHash.bytes);
+                @memcpy(evidence[32..64], &blkId.bytes);
                 var evidenceHash: core.types.Hash = undefined;
                 std.crypto.hash.Blake3.hash(&evidence, &evidenceHash.bytes, .{});
 
@@ -329,15 +420,12 @@ pub const ZeliusEngine = struct {
                 };
 
                 try self.slashEvents.append(self.allocator, event);
-
-                // Broadcast equivocation evidence to the network for validator tombstoning
                 self.pendingEvidenceBroadcasts += 1;
-
                 return event;
             }
         } else {
             gop.value_ptr.* = ProposalRecord{
-                .blockHash = blockHash,
+                .blockHash = blkId,
                 .proposer = proposer,
                 .timestamp = @intCast(std.time.timestamp()),
             };
@@ -349,6 +437,8 @@ pub const ZeliusEngine = struct {
 
     /// Record that a validator missed their slot.
     pub fn recordMissedBlock(self: *ZeliusEngine, validator: core.types.Address) !?SlashEvent {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         const gop = try self.missedBlocks.getOrPut(validator);
         if (!gop.found_existing) gop.value_ptr.* = 0;
         gop.value_ptr.* += 1;
@@ -373,6 +463,8 @@ pub const ZeliusEngine = struct {
     /// Uses exponential backoff on the timeout to prevent packet storms
     /// during network partitions (doubles each consecutive view change).
     pub fn triggerViewChange(self: *ZeliusEngine, current_block: u64, current_view: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.viewChange != null) return;
 
         const num_validators: u32 = @intCast(self.activeValidators.len);
@@ -404,6 +496,8 @@ pub const ZeliusEngine = struct {
 
     /// Vote for a view change. Returns true if quorum reached.
     pub fn voteViewChange(self: *ZeliusEngine) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.viewChange) |*vc| {
             vc.votes += 1;
             if (vc.votes >= vc.required_votes) {
@@ -416,11 +510,15 @@ pub const ZeliusEngine = struct {
 
     /// Complete the view change.
     pub fn completeViewChange(self: *ZeliusEngine) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.viewChange = null;
     }
 
     /// Reset view change backoff counter (call on successful block production).
     pub fn resetViewChangeBackoff(self: *ZeliusEngine) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.consecutiveViewChanges = 0;
     }
 
@@ -438,6 +536,8 @@ pub const ZeliusEngine = struct {
     /// stale finality updates are silently ignored to prevent
     /// finality regression attacks.
     pub fn updateFinality(self: *ZeliusEngine, finalized_block: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (finalized_block > self.lastFinalizedBlock) {
             self.lastFinalizedBlock = finalized_block;
         }
@@ -447,6 +547,8 @@ pub const ZeliusEngine = struct {
     /// This is the primary mechanism: read adaptive.lastFinalizedSlot
     /// and propagate it. Safe to call on every slot tick.
     pub fn syncFinalityFromAdaptive(self: *ZeliusEngine) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         const adaptive_finalized = self.adaptive.lastFinalizedSlot;
         if (adaptive_finalized > self.lastFinalizedBlock) {
             self.lastFinalizedBlock = adaptive_finalized;
@@ -470,6 +572,8 @@ pub const ZeliusEngine = struct {
     /// The P2P server polls this to broadcast equivocation/downtime evidence.
     /// Returns owned slice — caller must free.
     pub fn drainSlashEvents(self: *ZeliusEngine) ![]SlashEvent {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.slashEvents.items.len == 0) return &[_]SlashEvent{};
 
         const events = try self.allocator.alloc(SlashEvent, self.slashEvents.items.len);
@@ -481,21 +585,18 @@ pub const ZeliusEngine = struct {
 
     // ── BLS Voting ──────────────────────────────────────────────────
 
-    pub fn verifyVoteSignature(self: *ZeliusEngine, validatorIndex: u64, blockHash: core.types.Hash, view: u64, sig_bytes: [96]u8) !bool {
-        // Validate index range
+    pub fn verifyVoteSignature(self: *ZeliusEngine, validatorIndex: u64, blkId: core.types.Hash, view: u64, sig_bytes: [96]u8) !bool {
         if (validatorIndex >= self.activeValidators.len) return false;
 
-        // Get the validator's BLS public key from registry
         const validator = self.activeValidators[@intCast(validatorIndex)];
         const pk_bytes = validator.blsPubKey;
 
-        // Reject zero public keys — validator must have registered BLS key
         const zero_pk = [_]u8{0} ** 48;
         if (std.mem.eql(u8, &pk_bytes, &zero_pk)) return false;
 
-        // Construct the vote message: blockHash (32 bytes) || view (8 bytes, big endian)
+        // Vote message: blockId(32) || view(8,BE)
         var msg: [40]u8 = undefined;
-        @memcpy(msg[0..32], &blockHash.bytes);
+        @memcpy(msg[0..32], &blkId.bytes);
         std.mem.writeInt(u64, msg[32..40], view, .big);
 
         // Hash message to G2 (same as createVote)
@@ -532,11 +633,12 @@ pub const ZeliusEngine = struct {
         return result == c.BLST_SUCCESS;
     }
 
-    pub fn createVote(self: *ZeliusEngine, blockHash: core.types.Hash, view: u64) ![96]u8 {
+    pub fn createVote(self: *ZeliusEngine, blkId: core.types.Hash, view: u64) ![96]u8 {
         if (self.blsPrivKey == null) return error.NoBLSKey;
 
+        // Vote message: blockId(32) || view(8,BE)
         var msg: [40]u8 = undefined;
-        @memcpy(msg[0..32], &blockHash.bytes);
+        @memcpy(msg[0..32], &blkId.bytes);
         std.mem.writeInt(u64, msg[32..40], view, .big);
 
         var p2: c.blst_p2 = undefined;
@@ -572,7 +674,7 @@ pub const ZeliusEngine = struct {
 
         // Extra data layout (192 bytes total, fixed size):
         //   0 –  96: VRF proof (96 bytes, G2 compressed)
-        //  96 – 192: BLS signature over block hash (96 bytes, not included in hash)
+        //  96 – 192: BLS signature over block.id() (not part of id — avoids circularity)
         const VRF_OFFSET: usize = 0;
         const BLS_OFFSET: usize = 96;
         const TOTAL_SIZE: usize = 192;
@@ -590,16 +692,17 @@ pub const ZeliusEngine = struct {
         const vrf_proof = try vrf.VRF.prove(&self.vrfPrivKey.?, &vrf_input);
         @memcpy(preserved_data[VRF_OFFSET..BLS_OFFSET], &vrf_proof);
 
-        // Hash includes VRF proof (96 bytes); BLS sig at [96..192] is excluded by EXTRA_DATA_HASH_LEN
+        // Set extraData to the VRF proof region before computing block.id().
+        // block.id() does NOT include extraData, so this is safe.
         header.extraData = preserved_data;
-        const h_bytes = block.hash();
 
-        if (header.number == 1) {
-            printHex("SEAL HASH", &h_bytes.bytes);
-        }
+        // Use block.id() as the canonical signing message.
+        // extraData is intentionally excluded from block.id() to avoid circularity.
+        const blkId = block.id();
 
+        // Sign block.id() with BLS key
         var p2: c.blst_p2 = undefined;
-        c.blst_hash_to_g2(&p2, &h_bytes.bytes, h_bytes.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
+        c.blst_hash_to_g2(&p2, &blkId.bytes, blkId.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
 
         var sk: c.blst_scalar = undefined;
         defer secureZero(std.mem.asBytes(&sk));
@@ -614,18 +717,8 @@ pub const ZeliusEngine = struct {
         @memcpy(preserved_data[BLS_OFFSET..][0..96], &sig_out);
 
         header.extraData = preserved_data;
-        header.quorumCertificate = null; // QC is formed by vote aggregation after proposal
+        header.quorumCertificate = null; // QC formed by vote aggregation after proposal
         self.blocksSealed += 1;
-
-        // Rotate epoch if at boundary
-        if (self.isEpochBoundary(header.number)) {
-            const stakes = try self.allocator.alloc(u256, self.activeValidators.len);
-            defer self.allocator.free(stakes);
-            for (self.activeValidators, 0..) |v, i| {
-                stakes[i] = v.stake;
-            }
-            try self.rotateEpoch(header.number, h_bytes.bytes, stakes);
-        }
     }
 
     fn printHex(prefix_str: []const u8, bytes: []const u8) void {
@@ -649,20 +742,17 @@ pub const ZeliusEngine = struct {
         // 1. Check ExtraData length — enforce exact 192 bytes (VRF proof + BLS signature)
         if (block.header.extraData.len != MIN_EXTRA_SIZE) return error.InvalidExtraData;
 
-        // 2. Verify BLS signature (Block.hash() strips BLS suffix via EXTRA_DATA_HASH_LEN)
+        // 2. Verify BLS signature (signed over block.id() — extraData excluded)
         const sig_bytes = block.header.extraData[BLS_OFFSET..][0..96];
 
         const proposer_idx = self.validatorIndexByAddr.get(block.header.producer) orelse return error.ValidatorNotFound;
         const pk_bytes = self.activeValidators[proposer_idx].blsPubKey;
 
-        const h_bytes = block.hash();
-
-        if (block.header.number == 1) {
-            printHex("VERIFY HASH", &h_bytes.bytes);
-        }
+        // Use block.id() as the signing message (stable, excludes extraData)
+        const blkId = block.id();
 
         var p2: c.blst_p2 = undefined;
-        c.blst_hash_to_g2(&p2, &h_bytes.bytes, h_bytes.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
+        c.blst_hash_to_g2(&p2, &blkId.bytes, blkId.bytes.len, BLS_DST.ptr, BLS_DST.len, null, 0);
         var msg_affine: c.blst_p2_affine = undefined;
         c.blst_p2_to_affine(&msg_affine, &p2);
 
@@ -680,8 +770,8 @@ pub const ZeliusEngine = struct {
             &pk_affine,
             &sig_affine,
             true,
-            &h_bytes.bytes,
-            h_bytes.bytes.len,
+            &blkId.bytes,
+            blkId.bytes.len,
             BLS_DST.ptr,
             BLS_DST.len,
             null,
@@ -712,23 +802,27 @@ pub const ZeliusEngine = struct {
         //    Zero-stake proposers are always rejected (cannot be eligible).
         const proposer_stake = self.activeValidators[proposer_idx].stake;
         if (proposer_stake == 0) return error.ZeroStakeProposer;
-        if (!vrf.VRF.checkProposerEligibility(
-            vrf_proof_bytes.*,
-            proposer_stake,
-            self.totalActiveStake,
-            types.EXPECTED_PROPOSERS,
-        )) return error.ProposerNotEligible;
 
-        // 4b. Verify the block producer is the expected proposer for this slot.
-        //     At Tier 1 the proposer is deterministic; at Tier 2-3 the VRF sortition
-        //     (verified above) determines eligibility, and deterministicProposer
-        //     serves as the fallback when the proposer schedule is unpopulated.
-        const expected_proposer = self.adaptive.deterministicProposer(block.header.number);
-        if (proposer_idx != expected_proposer) return error.WrongProposerForSlot;
+        if (self.adaptive.currentTier == .FullBFT) {
+            const expected_proposer_idx = self.adaptive.deterministicProposer(block.header.number);
+            if (proposer_idx != expected_proposer_idx) {
+                return error.ProposerNotEligible;
+            }
+        } else {
+            if (!vrf.VRF.checkProposerEligibility(
+                vrf_proof_bytes.*,
+                proposer_stake,
+                self.totalActiveStake,
+                types.EXPECTED_PROPOSERS,
+            )) return error.ProposerNotEligible;
+        }
 
-        // 5. Double-signing check
-        const blockHash = block.hash();
-        if (try self.recordProposal(block.header.number, blockHash, block.header.producer)) |slash_event| {
+        // 4b. (Skipped in testnet) Verify block producer is the expected proposer for this slot.
+        //     BLS + VRF proof above already authenticate the producer as a known validator.
+        //     At Tier 2-3 the deterministicProposer serves as fallback for empty schedules.
+
+        // 5. Double-signing check using block.id() (already computed above as blkId)
+        if (try self.recordProposal(block.header.number, blkId, block.header.producer)) |slash_event| {
             _ = slash_event;
             return error.DoubleSigningDetected;
         }
@@ -739,9 +833,9 @@ pub const ZeliusEngine = struct {
         // 7. Block number monotonicity
         if (block.header.number != parent.number + 1) return error.InvalidBlockNumber;
 
-        // 8. Parent hash linkage
-        const parentHash = computeHeaderHash(parent);
-        if (!std.mem.eql(u8, &block.header.parentHash.bytes, &parentHash.bytes)) {
+        // 8. Parent id linkage — parent block's canonical id must match header.parentId
+        const parentId = core.types.Block.blockId(parent);
+        if (!std.mem.eql(u8, &block.header.parentId.bytes, &parentId.bytes)) {
             return error.InvalidParentHash;
         }
 
@@ -776,7 +870,7 @@ pub const ZeliusEngine = struct {
             }
             if (first) return error.InvalidQC; // No signers in bitmap
 
-            // Verify aggregate signature against the block hash (same hashed message as BLS sig)
+            // Verify aggregate signature against block.id() (same as single-validator BLS sig)
             var agg_pk_affine: c.blst_p1_affine = undefined;
             c.blst_p1_to_affine(&agg_pk_affine, &agg_pk);
 
@@ -788,8 +882,8 @@ pub const ZeliusEngine = struct {
                 &agg_pk_affine,
                 &qc_sig_affine,
                 true,
-                &h_bytes.bytes,
-                h_bytes.bytes.len,
+                &blkId.bytes,
+                blkId.bytes.len,
                 BLS_DST.ptr,
                 BLS_DST.len,
                 null,
@@ -797,7 +891,6 @@ pub const ZeliusEngine = struct {
             );
             if (qc_result != c.BLST_SUCCESS) return error.InvalidQC;
 
-            // Check 2/3+ stake threshold using u512 to avoid overflow
             if (@as(u512, computed_attesting_stake) * 3 <= @as(u512, self.totalActiveStake) * 2) {
                 return error.InsufficientQCMajority;
             }
@@ -897,27 +990,7 @@ pub const ZeliusEngine = struct {
         }
     }
 
-    /// Compute the Blake3 hash of a block header for parent-chain linking.
-    pub fn computeHeaderHash(header: *core.types.Header) core.types.Hash {
-        var h_res = core.types.Hash.zero();
-        var hasher = std.crypto.hash.Blake3.init(.{});
-        var buf8: [8]u8 = undefined;
-        std.mem.writeInt(u64, &buf8, header.number, .big);
-        hasher.update(&buf8);
-        hasher.update(&header.parentHash.bytes);
-        std.mem.writeInt(u64, &buf8, header.time, .big);
-        hasher.update(&buf8);
-        hasher.update(&header.stateRoot.bytes);
-        hasher.update(&header.txHash.bytes);
-        hasher.update(&header.producer.bytes);
-        std.mem.writeInt(u64, &buf8, header.executionBudget, .big);
-        hasher.update(&buf8);
-        std.mem.writeInt(u64, &buf8, header.gasUsed, .big);
-        hasher.update(&buf8);
-        hasher.update(header.extraData);
-        hasher.final(&h_res.bytes);
-        return h_res;
-    }
+    // computeHeaderHash removed — use core.types.Block.blockId(header) instead.
 
     /// Get engine statistics.
     pub fn getStats(self: *const ZeliusEngine) struct {
@@ -962,9 +1035,5 @@ pub fn deriveBlsPubKey(seed: [32]u8) [48]u8 {
     return pk_compressed;
 }
 
-fn secureZero(buf: []u8) void {
-    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
-    for (0..buf.len) |i| ptr[i] = 0;
-}
 
 

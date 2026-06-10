@@ -125,10 +125,10 @@ pub const EpochIntegration = struct {
         }
     }
 
-    /// Track gas usage
-    pub fn recordGas(self: *Self, gas: u64) void {
+    /// Track budget usage
+    pub fn recordbudget(self: *Self, budget: u64) void {
         if (self.current_delta) |delta| {
-            delta.recordGas(gas);
+            delta.recordbudget(budget);
         }
     }
 
@@ -146,7 +146,7 @@ pub const EpochIntegration = struct {
         // Track transactions in index
         const current_epoch_num = block.header.number / self.blocks_per_epoch;
         for (block.transactions) |*tx| {
-            const tx_hash = tx.hash();
+            const tx_hash = tx.id();
             try self.tx_index.recordActivity(tx.from.bytes, current_epoch_num, tx_hash.bytes);
             if (tx.to) |to| {
                 try self.tx_index.recordActivity(to.bytes, current_epoch_num, null);

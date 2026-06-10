@@ -3,182 +3,55 @@
 // ============================================================================
 //
 // Speculative transaction forwarding to predicted block producers.
+// Reads pending transactions from DAG Mempool — no internal queuing.
 //
 // Features:
-//   • Batch size 4096 for high-throughput forwarding
-//   • Compressed TX batches via LZ4 compressor
+//   • DAG Mempool integration — reads pending TXs directly from the shared pool
 //   • VRF-based leader prediction (adaptive: deterministic at Tier 1, VRF at Tier 2-3)
-//   • Forward queue with slot-based expiry
 //   • Per-slot throttling to prevent flood
-//   • Thread-aware: partitions forwarded TXs by destination thread
-//   • Statistics: forwarded, hit rate, miss rate, latency
+//   • Statistics: forwarded, bytes, latency
 
 const std = @import("std");
 const core = @import("core");
+const consensus = @import("consensus");
 const types = @import("types.zig");
-const compression = @import("compression.zig");
+const rlp = @import("encoding").rlp;
 const log = core.logger;
 
 // ── Constants ───────────────────────────────────────────────────────────
 
 const MAX_BATCH_SIZE: usize = 4096;
-const MAX_QUEUE_DEPTH: usize = 16;
-const LEADER_LOOKAHEAD: usize = 3;
-const BATCH_EXPIRY_SLOTS: u64 = 2;
+const LEADER_LOOKAHEAD: usize = 2; // current + next slot only
 const MAX_FORWARD_BYTES_PER_SLOT: u64 = 50 * 1024 * 1024; // 50 MB per slot
+const MAX_FORWARD_BATCHES_PER_TARGET: u32 = 10; // Firewall 3: per-peer rate limit
 
-// ── Leader Schedule ─────────────────────────────────────────────────────
+// ── Forward Target ────────────────────────────────────────────────────
 
-pub const LeaderSlot = struct {
+pub const ForwardTarget = struct {
     slot: u64,
-    validatorIndex: u32,
     validatorAddress: core.types.Address,
-    epoch: u64,
-};
-
-pub const LeaderSchedule = struct {
-    allocator: std.mem.Allocator,
-    slots: [LEADER_LOOKAHEAD]?LeaderSlot,
-    currentSlot: u64,
-    currentEpoch: u64,
-
-    const Self = @This();
-
-    pub fn init(allocator: std.mem.Allocator) Self {
-        return Self{
-            .allocator = allocator,
-            .slots = [_]?LeaderSlot{null} ** LEADER_LOOKAHEAD,
-            .currentSlot = 0,
-            .currentEpoch = 0,
-        };
-    }
-
-    /// Update the leader schedule from committee information.
-    /// `committee_seed` and slot number determine the leader via deterministic selection.
-    pub fn update(self: *Self, currentSlot: u64, epoch: u64, validators: []const ValidatorInfo) void {
-        self.currentSlot = currentSlot;
-        self.currentEpoch = epoch;
-
-        for (0..LEADER_LOOKAHEAD) |i| {
-            const target_slot = currentSlot + @as(u64, @intCast(i));
-            if (validators.len == 0) {
-                self.slots[i] = null;
-                continue;
-            }
-
-            // Deterministic leader selection from committee
-            // Hash(epoch || slot) mod committee_size
-            var seed_buf: [16]u8 = undefined;
-            std.mem.writeInt(u64, seed_buf[0..8], epoch, .little);
-            std.mem.writeInt(u64, seed_buf[8..16], target_slot, .little);
-            var hash: [32]u8 = undefined;
-            std.crypto.hash.Blake3.hash(&seed_buf, &hash, .{});
-            const idx = std.mem.readInt(u64, hash[0..8], .little) % validators.len;
-
-            self.slots[i] = .{
-                .slot = target_slot,
-                .validatorIndex = validators[idx].index,
-                .validatorAddress = validators[idx].address,
-                .epoch = epoch,
-            };
-        }
-    }
-
-    /// Get the predicted leader for the current slot.
-    pub fn currentLeader(self: *const Self) ?LeaderSlot {
-        return self.slots[0];
-    }
-
-    /// Get all predicted leaders for forwarding.
-    pub fn getForwardTargets(self: *const Self) [LEADER_LOOKAHEAD]?LeaderSlot {
-        return self.slots;
-    }
-};
-
-pub const ValidatorInfo = struct {
-    index: u32,
-    address: core.types.Address,
-    stake: u256,
-};
-
-// ── Forward Batch ───────────────────────────────────────────────────────
-
-pub const ForwardBatch = struct {
-    batchId: u64,
-    slot: u64,
-    txCount: u32,
-    txHashes: std.ArrayListUnmanaged(core.types.Hash),
-    txData: std.ArrayListUnmanaged([]const u8),
-    createdAt: i64,
-    compressed: bool,
-    totalBytes: u64,
-
-    const Self = @This();
-
-    pub fn init(slot: u64, batchId: u64) Self {
-        return Self{
-            .batchId = batchId,
-            .slot = slot,
-            .txCount = 0,
-            .txHashes = std.ArrayListUnmanaged(core.types.Hash){},
-            .txData = std.ArrayListUnmanaged([]const u8){},
-            .createdAt = std.time.milliTimestamp(),
-            .compressed = false,
-            .totalBytes = 0,
-        };
-    }
-
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        self.txHashes.deinit(allocator);
-        for (self.txData.items) |data| {
-            allocator.free(data);
-        }
-        self.txData.deinit(allocator);
-    }
-
-    /// Add a transaction to this batch.
-    pub fn addTransaction(self: *Self, allocator: std.mem.Allocator, hash: core.types.Hash, data: []const u8) !bool {
-        if (self.txCount >= MAX_BATCH_SIZE) return false;
-
-        try self.txHashes.append(allocator, hash);
-        const data_copy = try allocator.dupe(u8, data);
-        try self.txData.append(allocator, data_copy);
-        self.txCount += 1;
-        self.totalBytes += data.len;
-        return true;
-    }
-
-    /// Check if batch is full.
-    pub fn isFull(self: *const Self) bool {
-        return self.txCount >= MAX_BATCH_SIZE;
-    }
-
-    /// Check if batch has expired (older than BATCH_EXPIRY_SLOTS).
-    pub fn isExpired(self: *const Self, current_slot: u64) bool {
-        return current_slot > self.slot + BATCH_EXPIRY_SLOTS;
-    }
 };
 
 // ── Gulf Stream Engine ──────────────────────────────────────────────────
 
 pub const GulfStream = struct {
     allocator: std.mem.Allocator,
-    schedule: LeaderSchedule,
-    compressor: compression.Compressor,
+    engine: ?*consensus.ZeliusEngine,
+    dagPool: *core.dag_mempool.DAGMempool,
     mutex: std.Thread.Mutex,
-
-    // Pending batches
-    pendingBatch: ?ForwardBatch,
-    queue: std.ArrayListUnmanaged(ForwardBatch),
-    nextBatchId: u64,
 
     // Current slot tracking
     current_slot: u64,
-    current_epoch: u64,
 
     // Per-slot throttling
     slotBytesForwarded: u64,
     throttleSlot: u64,
+
+    // Track transactions forwarded during the current slot to prevent duplicate sends
+    forwardedTxs: std.AutoHashMap(core.types.Hash, void),
+
+    // Firewall 3: Per-target rate limiting
+    peerForwardCount: std.AutoHashMap(core.types.Address, u32),
 
     // Stats
     stats: GulfStreamStats,
@@ -187,11 +60,9 @@ pub const GulfStream = struct {
 
     pub const GulfStreamStats = struct {
         batchesForwarded: u64,
-        batchesExpired: u64,
         txsForwarded: u64,
         txsDropped: u64,
         bytesForwarded: u64,
-        bytesCompressed: u64,
         forwardLatencySumMs: u64,
         forwardCount: u64,
 
@@ -202,141 +73,66 @@ pub const GulfStream = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator) Self {
+    pub fn init(allocator: std.mem.Allocator, engine: ?*consensus.ZeliusEngine, dagPool: *core.dag_mempool.DAGMempool) Self {
         return Self{
             .allocator = allocator,
-            .schedule = LeaderSchedule.init(allocator),
-            .compressor = compression.Compressor.init(allocator),
+            .engine = engine,
+            .dagPool = dagPool,
             .mutex = .{},
-            .pendingBatch = null,
-            .queue = .{},
-            .nextBatchId = 1,
             .current_slot = 0,
-            .current_epoch = 0,
             .slotBytesForwarded = 0,
             .throttleSlot = 0,
+            .forwardedTxs = std.AutoHashMap(core.types.Hash, void).init(allocator),
+            .peerForwardCount = std.AutoHashMap(core.types.Address, u32).init(allocator),
             .stats = std.mem.zeroes(GulfStreamStats),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.pendingBatch) |*batch| {
-            batch.deinit(self.allocator);
-        }
-        for (self.queue.items) |*batch| {
-            batch.deinit(self.allocator);
-        }
-        self.queue.deinit(self.allocator);
-        self.compressor.deinit();
+        self.forwardedTxs.deinit();
+        self.peerForwardCount.deinit();
     }
 
-    /// Update slot and epoch — called by the consensus layer.
-    pub fn advanceSlot(self: *Self, slot: u64, epoch: u64, validators: []const ValidatorInfo) void {
+    /// Update slot — called by the consensus layer on each new block.
+    pub fn advanceSlot(self: *Self, slot: u64) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         self.current_slot = slot;
-        self.current_epoch = epoch;
-        self.schedule.update(slot, epoch, validators);
 
-        // Reset per-slot throttle
+        // Reset per-slot throttle, already-forwarded set, and per-target counters on slot change
         if (slot != self.throttleSlot) {
             self.slotBytesForwarded = 0;
             self.throttleSlot = slot;
+            self.forwardedTxs.clearRetainingCapacity();
+            self.peerForwardCount.clearRetainingCapacity();
         }
+    }
 
-        // Expire old batches (including pending)
-        self.expireOldBatches();
+    /// Get current forward targets (predicted leaders via consensus VRF-based proposer selection).
+    /// Firewall 1 + 2: Only returns targets verified as eligible proposers within valid slot range.
+    pub fn getForwardTargets(self: *Self) [LEADER_LOOKAHEAD]?ForwardTarget {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-        // Also expire pending batch if stale
-        if (self.pendingBatch) |*batch| {
-            if (batch.isExpired(self.current_slot)) {
-                self.stats.batchesExpired += 1;
-                self.stats.txsDropped += batch.txCount;
-                batch.deinit(self.allocator);
-                self.pendingBatch = null;
+        const eng = self.engine orelse return [_]?ForwardTarget{null} ** LEADER_LOOKAHEAD;
+        var targets: [LEADER_LOOKAHEAD]?ForwardTarget = [_]?ForwardTarget{null} ** LEADER_LOOKAHEAD;
+        for (0..LEADER_LOOKAHEAD) |i| {
+            const target_slot = self.current_slot + @as(u64, @intCast(i));
+            // Firewall 2: Only forward for current (i=0) and next (i=1) slot
+            if (i > 1) break;
+            const proposer_idx = eng.getExpectedProposer(target_slot);
+            if (proposer_idx < eng.activeValidators.len) {
+                const addr = eng.activeValidators[proposer_idx].address;
+                // Firewall 1: Verify target is the eligible proposer
+                if (!eng.isEligibleProposer(target_slot, addr)) continue;
+                targets[i] = .{
+                    .slot = target_slot,
+                    .validatorAddress = addr,
+                };
             }
         }
-    }
-
-    /// Queue a transaction for forwarding to the predicted leader.
-    /// Returns true if queued successfully, false if throttled or queue full.
-    pub fn queueTransaction(self: *Self, tx_hash: core.types.Hash, tx_data: []const u8) !bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        // Check per-slot throttle
-        if (self.slotBytesForwarded + tx_data.len > MAX_FORWARD_BYTES_PER_SLOT) {
-            self.stats.txsDropped += 1;
-            return false;
-        }
-
-        // Get or create pending batch
-        if (self.pendingBatch == null) {
-            self.pendingBatch = ForwardBatch.init(self.current_slot, self.nextBatchId);
-            self.nextBatchId += 1;
-        }
-
-        var batch = &self.pendingBatch.?;
-
-        // Add transaction
-        const added = try batch.addTransaction(self.allocator, tx_hash, tx_data);
-        if (!added) {
-            // Batch full — move to queue and create new one
-            try self.flushPendingBatch();
-            self.pendingBatch = ForwardBatch.init(self.current_slot, self.nextBatchId);
-            self.nextBatchId += 1;
-            _ = try self.pendingBatch.?.addTransaction(self.allocator, tx_hash, tx_data);
-        }
-
-        self.slotBytesForwarded += tx_data.len;
-        return true;
-    }
-
-    /// Flush the pending batch to the queue.
-    fn flushPendingBatch(self: *Self) !void {
-        if (self.pendingBatch) |batch| {
-            if (batch.txCount > 0) {
-                // Check queue depth
-                if (self.queue.items.len >= MAX_QUEUE_DEPTH) {
-                    // Drop oldest
-                    var oldest = self.queue.orderedRemove(0);
-                    self.stats.batchesExpired += 1;
-                    self.stats.txsDropped += oldest.txCount;
-                    oldest.deinit(self.allocator);
-                }
-                try self.queue.append(self.allocator, batch);
-                self.stats.batchesForwarded += 1;
-                self.stats.txsForwarded += batch.txCount;
-                self.stats.bytesForwarded += batch.totalBytes;
-            } else {
-                var b = batch;
-                b.deinit(self.allocator);
-            }
-            self.pendingBatch = null;
-        }
-    }
-
-    /// Get the next batch ready for forwarding. Returns null if none available.
-    /// Caller does NOT own the returned batch — it's removed from the queue.
-    pub fn getNextBatch(self: *Self) ?ForwardBatch {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        // Flush pending batch first
-        self.flushPendingBatch() catch {};
-
-        if (self.queue.items.len > 0) {
-            return self.queue.orderedRemove(0);
-        }
-        return null;
-    }
-
-    /// Get current forward targets (predicted leaders).
-    pub fn getForwardTargets(self: *Self) [LEADER_LOOKAHEAD]?LeaderSlot {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        return self.schedule.getForwardTargets();
+        return targets;
     }
 
     /// Record a forward latency measurement.
@@ -347,94 +143,139 @@ pub const GulfStream = struct {
         self.stats.forwardCount += 1;
     }
 
-    /// Expire batches older than BATCH_EXPIRY_SLOTS.
-    fn expireOldBatches(self: *Self) void {
-        var i: usize = 0;
-        while (i < self.queue.items.len) {
-            if (self.queue.items[i].isExpired(self.current_slot)) {
-                var batch = self.queue.orderedRemove(i);
-                self.stats.batchesExpired += 1;
-                self.stats.txsDropped += batch.txCount;
-                batch.deinit(self.allocator);
-            } else {
-                i += 1;
-            }
-        }
-    }
-
     pub fn getStats(self: *const Self) GulfStreamStats {
         return self.stats;
     }
 
-    /// Get the current queue depth (number of pending batches).
-    pub fn queueDepth(self: *Self) usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        const pending: usize = if (self.pendingBatch != null and self.pendingBatch.?.txCount > 0) 1 else 0;
-        return self.queue.items.len + pending;
-    }
-
     // ── Drain API ────────────────────────────────────────────────────────
     //
-    // drainBatch() is the production forwarding path: called periodically
-    // by the P2P server loop to forward ready batches to the predicted
-    // proposer. Returns an owned slice of ForwardBatch items that the
-    // caller encodes and transmits. Caller must call deinit() on each
-    // returned batch and free the slice with the provided allocator.
+    // drainBatch() reads pending transactions from the DAG Mempool and
+    // returns them as an owned slice of RLP-encoded TX data, ready for
+    // wire transmission to the predicted proposer.
 
     pub const DrainResult = struct {
-        batches: []ForwardBatch,
-        target: ?LeaderSlot,
+        txData: [][]const u8,
+        target: ?ForwardTarget,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *DrainResult) void {
-            for (self.batches) |*b| {
-                b.deinit(self.allocator);
-            }
-            self.allocator.free(self.batches);
+            for (self.txData) |data| self.allocator.free(data);
+            self.allocator.free(self.txData);
         }
     };
 
-    /// Drain all ready forward batches for the current leader.
-    /// Returns null if no batches are ready or no leader is predicted.
-    /// The caller is responsible for calling DrainResult.deinit().
+    /// Drain all pending transactions from DAG Mempool for forwarding.
+    /// Returns null if no transactions or no leader predicted.
+    /// Caller is responsible for calling DrainResult.deinit().
     pub fn drainBatch(self: *Self) !?DrainResult {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Flush any pending partial batch first
-        self.flushPendingBatch() catch {};
+        // Get target for current slot
+        const target: ?ForwardTarget = if (self.engine) |eng| blk: {
+            const proposer_idx = eng.getExpectedProposer(self.current_slot);
+            if (proposer_idx >= eng.activeValidators.len) break :blk null;
 
-        if (self.queue.items.len == 0) return null;
+            const addr = eng.activeValidators[proposer_idx].address;
 
-        // Get the current forward target
-        const target = self.schedule.currentLeader();
+            // ── Firewall 1: Verify target is eligible proposer for this slot
+            if (!eng.isEligibleProposer(self.current_slot, addr)) break :blk null;
 
-        // Drain all queued batches into an owned slice
-        const batch_count = self.queue.items.len;
-        const batches = try self.allocator.alloc(ForwardBatch, batch_count);
-        for (0..batch_count) |i| {
-            batches[i] = self.queue.items[i];
+            break :blk ForwardTarget{
+                .slot = self.current_slot,
+                .validatorAddress = addr,
+            };
+        } else null;
+        const target_val = target orelse return null;
+
+        // ── Firewall 3: Per-target rate limit ─────────────────────────────
+        {
+            const count = self.peerForwardCount.get(target_val.validatorAddress) orelse 0;
+            if (count >= MAX_FORWARD_BATCHES_PER_TARGET) return null;
         }
-        // Clear the queue (items moved to caller ownership)
-        self.queue.clearRetainingCapacity();
+
+        // Read pending TXs from DAG Mempool
+        const pending_txs = try self.dagPool.pending(self.allocator);
+        if (pending_txs.len == 0) return null;
+
+        // Encode up to MAX_BATCH_SIZE TXs, respecting per-slot throttle and 55KB packet limit
+        var encoded_list = std.ArrayList([]const u8).empty;
+        errdefer {
+            for (encoded_list.items) |d| self.allocator.free(d);
+            encoded_list.deinit(self.allocator);
+        }
+
+        var current_batch_size: usize = 0;
+        for (pending_txs) |*tx| {
+            if (encoded_list.items.len >= MAX_BATCH_SIZE) break;
+
+            const txId = tx.id();
+            if (self.forwardedTxs.contains(txId)) continue;
+
+            const encoded = rlp.encode(self.allocator, tx.*) catch |err| {
+                log.warn("Failed to encode TX for forwarding: {}\n", .{err});
+                continue;
+            };
+
+            // Limit single batch payload size to 55 KB to fit cleanly under UDP MTU and Packet.DATA_SIZE
+            if (current_batch_size + encoded.len > 55_000) {
+                self.allocator.free(encoded);
+                break;
+            }
+
+            if (self.slotBytesForwarded + encoded.len > MAX_FORWARD_BYTES_PER_SLOT) {
+                self.allocator.free(encoded);
+                break;
+            }
+
+            self.forwardedTxs.put(txId, {}) catch |err| {
+                log.warn("Failed to record forwarded TX hash: {}\n", .{err});
+            };
+
+            current_batch_size += encoded.len;
+            self.slotBytesForwarded += encoded.len;
+            try encoded_list.append(self.allocator, encoded);
+        }
+        self.allocator.free(pending_txs);
+
+        if (encoded_list.items.len == 0) {
+            encoded_list.deinit(self.allocator);
+            return null;
+        }
+
+        self.stats.batchesForwarded += 1;
+        self.stats.txsForwarded += @intCast(encoded_list.items.len);
+        self.stats.bytesForwarded += current_batch_size;
+
+        // Firewall 3: Increment per-target batch counter
+        const prev_count = self.peerForwardCount.get(target_val.validatorAddress) orelse 0;
+        self.peerForwardCount.put(target_val.validatorAddress, prev_count + 1) catch {
+            log.warn("Failed to update per-target forward count\n", .{});
+        };
 
         return DrainResult{
-            .batches = batches,
-            .target = target,
+            .txData = try encoded_list.toOwnedSlice(self.allocator),
+            .target = target_val,
             .allocator = self.allocator,
         };
     }
 
-    /// Drop all pending and queued batches (used on leader change or shutdown).
-    pub fn drainAll(self: *Self) void {
+    /// Check if forwarding to a given target is within per-slot rate limit (Firewall 3).
+    pub fn canForwardToTarget(self: *Self, address: core.types.Address) bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.pendingBatch) |*b| {
-            b.deinit(self.allocator);
-            self.pendingBatch = null;
-        }
-        for (self.queue.items) |*b| b.deinit(self.allocator);
-        self.queue.clearRetainingCapacity();
+        const count = self.peerForwardCount.get(address) orelse 0;
+        return count < MAX_FORWARD_BATCHES_PER_TARGET;
+    }
+
+    /// Drop any pending state (used on leader change or shutdown).
+    pub fn drainAll(self: *Self) void {
+        _ = self;
+    }
+
+    /// Current queue depth (always 0 — no internal queue).
+    pub fn queueDepth(self: *Self) usize {
+        _ = self;
+        return 0;
     }
 };

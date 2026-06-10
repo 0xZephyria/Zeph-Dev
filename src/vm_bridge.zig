@@ -61,8 +61,8 @@ pub const ExecutionContext = struct {
     timestamp: u64 = 0,
     /// Transaction originator (tx.origin)
     txOrigin: [32]u8 = [_]u8{0} ** 32,
-    /// Transaction gas price
-    gasPrice: u64 = 0,
+    /// Transaction compute price
+    computePrice: u64 = 0,
     /// Block producer (validator address from consensus)
     producer: [32]u8 = [_]u8{0} ** 32,
     /// Block prevRandao (VRF output from adaptive consensus)
@@ -99,7 +99,7 @@ pub const VMBridge = struct {
     allocator: std.mem.Allocator,
     config: VMConfig,
     executionCount: std.atomic.Value(u64),
-    totalGasUsed: std.atomic.Value(u64),
+    totalBudgetUsed: std.atomic.Value(u64),
     /// Current execution context (set per-block by the miner/block producer)
     /// Read by parallel lanes — set once before block execution, immutable during.
     execCtx: ExecutionContext,
@@ -112,7 +112,7 @@ pub const VMBridge = struct {
             .allocator = allocator,
             .config = config,
             .executionCount = std.atomic.Value(u64).init(0),
-            .totalGasUsed = std.atomic.Value(u64).init(0),
+            .totalBudgetUsed = std.atomic.Value(u64).init(0),
             .execCtx = .{},
             .vm_pool = try vm.vmPool.VMPool.init(allocator, .{
                 .pool_size = 128,
@@ -164,11 +164,11 @@ pub const VMBridge = struct {
     }
 
     /// Get execution statistics (thread-safe reads)
-    /// Returns thread-safe execution statistics (total count and gas used).
-    pub fn getStats(self: *const VMBridge) struct { count: u64, gas: u64 } {
+    /// Returns thread-safe execution statistics (total count and budget used).
+    pub fn getStats(self: *const VMBridge) struct { count: u64, budget: u64 } {
         return .{
             .count = self.executionCount.load(.monotonic),
-            .gas = self.totalGasUsed.load(.monotonic),
+            .budget = self.totalBudgetUsed.load(.monotonic),
         };
     }
 
@@ -188,7 +188,7 @@ pub const VMBridge = struct {
         ctx: *anyopaque,
         code: []const u8,
         input: []const u8,
-        gas: u64,
+        budget: u64,
         overlay: *state_mod.Overlay,
         caller: core.types.Address,
         self_address: core.types.Address,
@@ -205,7 +205,7 @@ pub const VMBridge = struct {
         if (code.len == 0) {
             return VMResult{
                 .success = true,
-                .gasUsed = 0,
+                .budgetUsed = 0,
                 .returnData = &[_]u8{},
             };
         }
@@ -219,7 +219,7 @@ pub const VMBridge = struct {
             self_address.bytes, // self_address (contract being called)
             caller.bytes, // caller (msg.sender)
             u256ToBytes(value), // call value
-            gas,
+            budget,
         );
         sb.deltaQueue = delta_queue;
         sb.receiptQueue = receipt_queue;
@@ -233,7 +233,7 @@ pub const VMBridge = struct {
         sb.timestamp = bridge.execCtx.timestamp;
         sb.chainId = bridge.execCtx.chainId;
         sb.txOrigin = bridge.execCtx.txOrigin;
-        sb.gasPrice = bridge.execCtx.gasPrice;
+        sb.computePrice = bridge.execCtx.computePrice;
         sb.producer = bridge.execCtx.producer;
         sb.prevRandao = bridge.execCtx.prevRandao;
 
@@ -243,17 +243,17 @@ pub const VMBridge = struct {
             bridge.allocator,
             code,
             input,
-            gas,
+            budget,
             @ptrCast(&sb),
         ) catch {
             return VMResult{
                 .success = false,
-                .gasUsed = gas,
+                .budgetUsed = budget,
                 .returnData = &[_]u8{},
             };
         };
 
-        _ = bridge.totalGasUsed.fetchAdd(exec_result.gasUsed, .monotonic);
+        _ = bridge.totalBudgetUsed.fetchAdd(exec_result.budgetUsed, .monotonic);
 
         const ret_buf = if (exec_result.returnData.len > 0)
             bridge.allocator.dupe(u8, exec_result.returnData) catch &[_]u8{}
@@ -262,7 +262,7 @@ pub const VMBridge = struct {
 
         return VMResult{
             .success = exec_result.success,
-            .gasUsed = exec_result.gasUsed,
+            .budgetUsed = exec_result.budgetUsed,
             .returnData = ret_buf,
         };
     }

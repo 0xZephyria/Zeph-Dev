@@ -51,9 +51,9 @@ const C_BOX = "\x1b[38;5;240m";
 /// Main entry point for the Zephyria blockchain node.
 /// Parses CLI commands and dispatches to the appropriate handlers.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -274,7 +274,10 @@ fn printComponentFmt(comptime connector: []const u8, comptime name: []const u8, 
 /// Initializes and starts a Zephyria blockchain node.
 /// Orchestrates the setup of storage, consensus, networking (P2P), RPC, and VM components.
 /// If `shouldMine` is true, begins active block production.
-fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
+fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !void {
+    var thread_safe_allocator = std.heap.ThreadSafeAllocator{ .child_allocator = backing_allocator };
+    const allocator = thread_safe_allocator.allocator();
+
     // ── Parse Arguments ──
     var p2pPort: u16 = 30303;
     var httpPort: u16 = 8545;
@@ -292,6 +295,11 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var enableStun: bool = true;
     var stunHost: []const u8 = "stun.l.google.com";
     var stunPort: u16 = 19302;
+
+    var testnetValidators: u32 = 0;
+    var testnetIndex: u32 = 0;
+    var txInject: bool = false;
+    var txIntervalMs: u64 = 2000;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -363,6 +371,23 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             }
         } else if (std.mem.eql(u8, args[i], "--passive")) {
             passive = true;
+        } else if (std.mem.eql(u8, args[i], "--testnet-validators")) {
+            if (i + 1 < args.len) {
+                testnetValidators = try std.fmt.parseUnsigned(u32, args[i + 1], 10);
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--testnet-index")) {
+            if (i + 1 < args.len) {
+                testnetIndex = try std.fmt.parseUnsigned(u32, args[i + 1], 10);
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--tx-inject")) {
+            txInject = true;
+        } else if (std.mem.eql(u8, args[i], "--tx-interval")) {
+            if (i + 1 < args.len) {
+                txIntervalMs = try std.fmt.parseUnsigned(u64, args[i + 1], 10);
+                i += 1;
+            }
         }
     }
 
@@ -435,12 +460,10 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     }
 
     // 3. Blockchain
-    var chain = try core.blockchain.Blockchain.init(allocator, db_adapter, @as(u64, @intCast(network.chainId)));
+    var chain = try core.blockchain.Blockchain.init(allocator, db_adapter, @as(u64, @intCast(network.genesisConfig.chainId)));
     defer chain.deinit();
 
-    var genesisHash: Hash = Hash.zero();
     if (chain.getHead()) |head| {
-        genesisHash = head.hash();
         printComponentFmt("├─", "Chain         ", "Block #{d}", head.header.number);
     } else {
         const alloc = core.genesis.getGenesisAllocations(allocator, networkName) catch |err| {
@@ -458,17 +481,20 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             .alloc = alloc,
             .systemContracts = sysContracts,
         };
-        const genesisBlock = core.genesis.applyGenesis(allocator, db_adapter, genesis) catch |err| {
+        var genesisBlock = core.genesis.applyGenesis(allocator, db_adapter, genesis) catch |err| {
             log.err("Failed to create genesis block: {}", .{err});
             return;
         };
-        try chain.addBlock(genesisBlock);
-        genesisHash = genesisBlock.hash();
+        _ = try chain.addBlock(genesisBlock);
+        const genesisId = genesisBlock.id();
+        chain.setGenesisId(genesisId);
+        const gh_hex = std.fmt.bytesToHex(genesisId.bytes, .lower);
+        log.debug("Genesis id: 0x{s}", .{gh_hex});
         printComponentLine("├─", "Genesis       ", "New chain created");
     }
 
     // 4. Consensus Engine (Zelius PoS)
-    const val_count: usize = 1;
+    const val_count: usize = if (testnetValidators > 0) @intCast(testnetValidators) else 1;
     const validators = try allocator.alloc(consensus.types.ValidatorInfo, val_count);
     defer {
         for (validators) |v| {
@@ -477,18 +503,47 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         allocator.free(validators);
     }
 
-    if (std.mem.eql(u8, networkName, "devnet")) {
-        // Devnet always uses the first standard dev key as the sole consensus validator
-        var seed_bytes: [32]u8 = undefined;
-        defer @memset(&seed_bytes, 0);
-        _ = std.fmt.hexToBytes(&seed_bytes, core.genesis.default_dev_key) catch unreachable;
-        const val_addr = try core.accounts.eoa.addressFromPrivKey(seed_bytes);
+    if (testnetValidators > 0) {
+        // Testnet mode: derive all validator keys from a well-known master seed
+        const master_seed = "zephyria-testnet-2026";
+        for (0..val_count) |vi| {
+            // Derive a unique 32-byte seed per validator: blake3(master_seed ++ little_endian(vi))
+            var seed_bytes: [32]u8 = undefined;
+            var hasher = std.crypto.hash.Blake3.init(.{});
+            hasher.update(master_seed);
+            var idx_le: [4]u8 = undefined;
+            std.mem.writeInt(u32, &idx_le, @intCast(vi), .little);
+            hasher.update(&idx_le);
+            hasher.final(&seed_bytes);
 
+            const val_addr = try core.accounts.eoa.addressFromPrivKey(seed_bytes);
+            const name = try std.fmt.allocPrint(allocator, "validator-{d}", .{vi});
+            validators[vi] = .{
+                .address = val_addr,
+                .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
+                .status = .Active,
+                .blsPubKey = consensus.zelius.deriveBlsPubKey(seed_bytes),
+                .commission = 500,
+                .activationBlock = 0,
+                .slashCount = 0,
+                .totalRewards = 0,
+                .name = name,
+                .website = "",
+            };
+            // If this validator is us, keep the key
+            if (vi == testnetIndex) {
+                minerPrivKey = seed_bytes;
+                validatorAddr = val_addr;
+            }
+        }
+    } else if (std.mem.eql(u8, networkName, "devnet")) {
+        // Devnet: register the actual miner identity as the sole validator.
+        // For multi-validator devnet testing, use --testnet-validators N --testnet-index M.
         validators[0] = .{
-            .address = val_addr,
+            .address = validatorAddr,
             .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
             .status = .Active,
-            .blsPubKey = consensus.zelius.deriveBlsPubKey(seed_bytes),
+            .blsPubKey = consensus.zelius.deriveBlsPubKey(minerPrivKey),
             .commission = 500, // 5%
             .activationBlock = 0,
             .slashCount = 0,
@@ -522,7 +577,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         const initial_stakes = try allocator.alloc(u256, validators.len);
         defer allocator.free(initial_stakes);
         @memset(initial_stakes, 100_000_000_000);
-        engine.rotateEpoch(0, genesisHash.bytes, initial_stakes) catch |err| {
+        engine.rotateEpoch(0, chain.genesisId.bytes, initial_stakes) catch |err| {
             log.err("Initial epoch rotation failed: {}", .{err});
         };
     }
@@ -562,6 +617,9 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             break;
         }
     }
+    if (our_val_idx == 9999) {
+        log.warn("Validator address not found in validator set (idx=9999)\n", .{});
+    }
 
     // 5c. Consensus subsystems
     var pipeline = consensus.Pipeline.init(allocator, .{
@@ -575,6 +633,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     var staking = consensus.Staking.init(allocator, .{});
     defer staking.deinit();
+    engine.setStaking(&staking);
 
     // Restore persisted staking state from DB (no-op on fresh node).
     // Must run before genesis validator registration — persisted state
@@ -591,11 +650,15 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // Register validators from config (genesis set or reconnecting validators).
     // On restart these calls are idempotent: registerValidator returns
     // error.AlreadyRegistered for validators already loaded from DB, which we ignore.
+    // Genesis validators use zero PoP (implicit trust for bootstrap config).
+    const zero_pop = [_]u8{0} ** 96;
     for (validators) |v| {
         staking.registerValidator(
             v.address,
             v.stake,
             v.commission,
+            v.blsPubKey,
+            zero_pop,
             0,
         ) catch {};
     }
@@ -622,7 +685,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
         .blockNumber = 0,
         .chainId = 99999,
         .producer = validatorAddr.bytes,
-        .prevRandao = genesisHash.bytes,
+        .prevRandao = chain.genesisId.bytes,
     });
 
     // Wire VM callback to executor
@@ -665,24 +728,20 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     defer historicalState.deinit();
     historicalState.setHead(chain.getHeadNumber());
 
-    // P2: Shred Signature Verifier — Ed25519 + 10% sampling
-    var shredVerifier = p2p.shred_verifier.ShredVerifier.init(allocator, .{
-        .sampleRate = 0.10,
-        .enabled = true,
-    });
-    defer shredVerifier.deinit();
-
-    // Register all validators in shredVerifier
-    for (validators) |v| {
-        try shredVerifier.addValidator(.{
-            .address = v.address,
-            .pubkey = [_]u8{0} ** 32,
-            .stake = 100_000_000_000,
-            .active = true,
-        });
-    }
-
     // 10. P2P Server
+    if (testnetValidators > 0) {
+        enableStun = false; // Disable STUN for local testnet
+        if (bootstrapAddrs.items.len == 0) {
+            // Auto-generate bootstrap addresses for all validators except ourselves
+            const basePort: u16 = 30300;
+            for (0..testnetValidators) |vi| {
+                if (vi == testnetIndex) continue;
+                const addr_str = try std.fmt.allocPrint(allocator, "127.0.0.1:{d}", .{basePort + vi});
+                try bootstrapAddrs.append(allocator, addr_str);
+            }
+            log.info("Testnet: Auto-bootstrapping to {d} peers on localhost\n", .{bootstrapAddrs.items.len});
+        }
+    }
     var p2pServer = try p2p.Server.init(allocator, chain, engine, dagPool, .{
         .listenPort = p2pPort,
         .validatorAddress = validatorAddr,
@@ -738,13 +797,11 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
             .pingFailures = 0,
             .peerRole = .Validator,
             .validatorAddress = core.types.Address.zero(),
-            .subscribedSubnets = [_]u8{0} ** 8,
+            .subscribedSubnets = [_]u8{0} ** 16,
             .stakeAmount = 0,
         };
         try p2pServer.discovery.addBootstrapNode(node_entry);
     }
-
-    p2pServer.setShredVerifier(&shredVerifier);
 
     try p2pServer.start();
 
@@ -769,7 +826,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     rpcServer.setHistoricalState(historicalState);
     rpcServer.setDAGPool(dagPool);
     try rpcServer.start();
-    printComponentFmt("└─", "JSON-RPC      ", "Port {d}", httpPort);
+    printComponentFmt("└─", "JSON-RPC      ", "Port {d}", rpcServer.port);
 
     // ── Node Dashboard ──
     var addr_buf: [66]u8 = undefined;
@@ -795,7 +852,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Network, Chain ID, Validator — each as its own print call
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Network" ++ RST ++ "       " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{networkName});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Chain ID" ++ RST ++ "      " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{network.chainId});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Chain ID" ++ RST ++ "      " ++ C_WHT ++ "{d: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{network.genesisConfig.chainId});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Validator" ++ RST ++ "   " ++ C_CYAN ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{addr_hex});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Mining" ++ RST ++ "          " ++ C_WHT ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{if (shouldMine) "● Active" else "○ Standby"});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Consensus" ++ RST ++ "       " ++ C_MAG ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{@tagName(engine.getCurrentTier())});
@@ -804,7 +861,7 @@ fn startNode(allocator: std.mem.Allocator, args: []const []const u8) !void {
     // Endpoints section
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ BOLD ++ C_PUR ++ "ENDPOINTS" ++ RST ++ "                                               " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "P2P Address" ++ RST ++ "   " ++ C_BLUE ++ "{s: <38}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{p2p_addr_str});
-    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "JSON-RPC" ++ RST ++ "      " ++ C_BLUE ++ "http://127.0.0.1:{d: <23}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{httpPort});
+    std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "JSON-RPC" ++ RST ++ "      " ++ C_BLUE ++ "http://127.0.0.1:{d: <23}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{rpcServer.port});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "  " ++ C_TEAL ++ "Data Dir" ++ RST ++ "      " ++ C_DIM ++ "{s: <40}" ++ RST ++ "  " ++ C_GLW ++ "║" ++ RST ++ "\n", .{dataDir});
     std.debug.print("  " ++ C_GLW ++ "║" ++ RST ++ "                                                          " ++ C_GLW ++ "║" ++ RST ++ "\n", .{});
     // Bottom border

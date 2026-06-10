@@ -11,25 +11,26 @@ const discovery = @import("discovery.zig");
 const gulf_stream = @import("gulf_stream.zig");
 const peer_mod = @import("peer.zig");
 const core = @import("core");
+const consensus = @import("consensus");
 
 // ── Subnet Bitmap Tests ─────────────────────────────────────────────────
 
 test "Subnet bitmap - set and check" {
-    var bitmap: [8]u8 = [_]u8{0} ** 8;
+    var bitmap: [16]u8 = [_]u8{0} ** 16;
 
     types.setSubnetBit(&bitmap, 0);
     try testing.expect(types.isSubnetSubscribed(bitmap, 0));
     try testing.expect(!types.isSubnetSubscribed(bitmap, 1));
 
-    types.setSubnetBit(&bitmap, 63);
-    try testing.expect(types.isSubnetSubscribed(bitmap, 63));
+    types.setSubnetBit(&bitmap, 127);
+    try testing.expect(types.isSubnetSubscribed(bitmap, 127));
 
-    types.setSubnetBit(&bitmap, 32);
-    try testing.expect(types.isSubnetSubscribed(bitmap, 32));
+    types.setSubnetBit(&bitmap, 64);
+    try testing.expect(types.isSubnetSubscribed(bitmap, 64));
 }
 
 test "Subnet bitmap - clear" {
-    var bitmap: [8]u8 = [_]u8{0xFF} ** 8;
+    var bitmap: [16]u8 = [_]u8{0xFF} ** 16;
 
     types.clearSubnetBit(&bitmap, 10);
     try testing.expect(!types.isSubnetSubscribed(bitmap, 10));
@@ -38,9 +39,9 @@ test "Subnet bitmap - clear" {
 }
 
 test "Subnet bitmap - out of range" {
-    var bitmap: [8]u8 = [_]u8{0} ** 8;
-    types.setSubnetBit(&bitmap, 64); // Should be no-op
-    try testing.expect(!types.isSubnetSubscribed(bitmap, 64));
+    var bitmap: [16]u8 = [_]u8{0} ** 16;
+    types.setSubnetBit(&bitmap, 128); // Should be no-op
+    try testing.expect(!types.isSubnetSubscribed(bitmap, 128));
 }
 
 // ── Participation Bitmap Tests ──────────────────────────────────────────
@@ -276,10 +277,11 @@ test "ShredCollector - collect and reconstruct" {
         block_data[i] = @intCast(i % 256);
     }
 
-    const sig = [_]u8{0xAB} ** 64;
+    const sig = [_]u8{0xAB} ** 96;
 
     // Shred the block
-    const shreds = try engine.shredBlock(block_data, 42, sig, null);
+    const bid = core.types.Hash.zero();
+    const shreds = try engine.shredBlock(block_data, 42, bid, sig, null);
     defer engine.freeShreds(shreds);
 
     try testing.expect(shreds.len > 0);
@@ -310,7 +312,15 @@ test "PropagationTree - build with fanout" {
     var tree = turbine.PropagationTree.init(testing.allocator);
     defer tree.deinit();
 
-    try tree.build(100, 2560);
+    const peers = try testing.allocator.alloc(turbine.StakeWeightedPeer, 100);
+    defer testing.allocator.free(peers);
+    for (peers, 0..) |*p, i| {
+        var addr = core.types.Address.zero();
+        addr.bytes[0] = @intCast(i + 1);
+        p.* = .{ .address = addr, .stake = 1 };
+    }
+
+    try tree.build(peers, 2560);
 
     // Root should exist
     try testing.expect(tree.nodes.items.len > 0);
@@ -325,7 +335,15 @@ test "PropagationTree - shred assignment" {
     var tree = turbine.PropagationTree.init(testing.allocator);
     defer tree.deinit();
 
-    try tree.build(10, 100);
+    const peers = try testing.allocator.alloc(turbine.StakeWeightedPeer, 10);
+    defer testing.allocator.free(peers);
+    for (peers, 0..) |*p, i| {
+        var addr = core.types.Address.zero();
+        addr.bytes[0] = @intCast(i + 1);
+        p.* = .{ .address = addr, .stake = 1 };
+    }
+
+    try tree.build(peers, 100);
 
     const assignment = tree.getShredAssignment(0);
     try testing.expect(assignment != null);
@@ -357,7 +375,7 @@ test "Discovery - add and find nodes" {
             .pingFailures = 0,
             .peerRole = .Validator,
             .validatorAddress = core.types.Address.zero(),
-            .subscribedSubnets = [_]u8{0} ** 8,
+            .subscribedSubnets = [_]u8{0} ** 16,
             .stakeAmount = 0,
         };
         try d.addNode(node);
@@ -383,7 +401,7 @@ test "Discovery - subnet-aware search" {
     var hash: [32]u8 = undefined;
     std.crypto.hash.Blake3.hash(&id, &hash, .{});
 
-    var subnets: [8]u8 = [_]u8{0} ** 8;
+    var subnets: [16]u8 = [_]u8{0} ** 16;
     types.setSubnetBit(&subnets, 10);
 
     const node = discovery.Node{
@@ -431,7 +449,7 @@ test "Discovery - ZNR connection string roundtrip" {
     var znr = discovery.ZnrRecord.init(pubkey, [4]u8{ 8, 8, 8, 8 }, 30303);
     znr.seq = 100;
     znr.stake = 50000;
-    znr.subnets = [_]u8{0x55} ** 8;
+    znr.subnets = [_]u8{0x55} ** 16;
     
     // Set a dummy validator address
     var val_addr_bytes = [_]u8{0xCC} ** 32;
@@ -515,7 +533,7 @@ test "Peer - get subscribed subnets" {
     p.subscribeSubnet(7);
     p.subscribeSubnet(63);
 
-    var buf: [64]types.SubnetID = undefined;
+    var buf: [128]types.SubnetID = undefined;
     const count = p.getSubscribedSubnets(&buf);
     try testing.expectEqual(@as(u32, 3), count);
 }
@@ -553,7 +571,7 @@ test "Peer - committee assignment" {
         .slotEnd = 100,
         .committeeIndex = 5,
         .role = .Attestor,
-        .aggregationSubnet = 3,
+        .threadId = 3,
     });
 
     try testing.expect(p.isCommitteeMember);
@@ -578,57 +596,38 @@ test "Peer - stats" {
 
 // ── Gulf Stream Tests ───────────────────────────────────────────────────
 
-test "GulfStream - queue transaction" {
-    var gs = gulf_stream.GulfStream.init(testing.allocator);
+test "GulfStream - advance slot resets throttle" {
+    var gs = gulf_stream.GulfStream.init(testing.allocator, null, undefined);
     defer gs.deinit();
 
-    const tx_data = [_]u8{ 0xDE, 0xAD } ** 50;
-    const tx_hash = core.types.Hash.zero();
-
-    const queued = try gs.queueTransaction(tx_hash, &tx_data);
-    try testing.expect(queued);
-    try testing.expect(gs.queueDepth() > 0);
+    gs.advanceSlot(100);
+    try testing.expectEqual(@as(u64, 100), gs.current_slot);
 }
 
-test "GulfStream - batch expiry" {
-    var gs = gulf_stream.GulfStream.init(testing.allocator);
+test "GulfStream - leader schedule (no engine — all null targets)" {
+    var gs = gulf_stream.GulfStream.init(testing.allocator, null, undefined);
     defer gs.deinit();
 
-    // Queue a transaction at slot 0
-    const tx_data = [_]u8{0xFF} ** 10;
-    _ = try gs.queueTransaction(core.types.Hash.zero(), &tx_data);
-
-    // Advance slot beyond expiry
-    gs.advanceSlot(10, 0, &[_]gulf_stream.ValidatorInfo{});
-
-    // Queue should be empty after expiry
-    const batch = gs.getNextBatch();
-    try testing.expect(batch == null);
-}
-
-test "GulfStream - leader schedule update" {
-    var gs = gulf_stream.GulfStream.init(testing.allocator);
-    defer gs.deinit();
-
-    const validators = [_]gulf_stream.ValidatorInfo{
-        .{ .index = 0, .address = core.types.Address.zero(), .stake = 100 },
-        .{ .index = 1, .address = core.types.Address.zero(), .stake = 200 },
-        .{ .index = 2, .address = core.types.Address.zero(), .stake = 300 },
-    };
-
-    gs.advanceSlot(100, 5, &validators);
+    gs.advanceSlot(100);
 
     const targets = gs.getForwardTargets();
-    // At least one target should be set
-    var has_target = false;
+    // Without engine, all targets should be null
     for (targets) |t| {
-        if (t != null) has_target = true;
+        try testing.expect(t == null);
     }
-    try testing.expect(has_target);
+}
+
+test "GulfStream - drain batch returns null without engine" {
+    var gs = gulf_stream.GulfStream.init(testing.allocator, null, undefined);
+    defer gs.deinit();
+
+    gs.advanceSlot(100);
+    const result = try gs.drainBatch();
+    try testing.expect(result == null);
 }
 
 test "GulfStream - stats" {
-    var gs = gulf_stream.GulfStream.init(testing.allocator);
+    var gs = gulf_stream.GulfStream.init(testing.allocator, null, undefined);
     defer gs.deinit();
 
     const stats = gs.getStats();
@@ -639,7 +638,15 @@ test "Turbine - parent index resolution" {
     var tree = turbine.PropagationTree.init(testing.allocator);
     defer tree.deinit();
 
-    try tree.build(5, 100);
+    const peers = try testing.allocator.alloc(turbine.StakeWeightedPeer, 5);
+    defer testing.allocator.free(peers);
+    for (peers, 0..) |*p, i| {
+        var addr = core.types.Address.zero();
+        addr.bytes[0] = @intCast(i + 1);
+        p.* = .{ .address = addr, .stake = 1 };
+    }
+
+    try tree.build(peers, 100);
 
     try testing.expectEqual(@as(?u32, null), tree.getParentIndex(0));
 
@@ -651,7 +658,6 @@ test "Turbine - parent index resolution" {
 
 test "Turbine - mock network propagation with 30% packet loss and repair recovery" {
     const allocator = testing.allocator;
-    const shred_verifier = @import("shred_verifier.zig");
 
     var addrs: [5]core.types.Address = undefined;
     for (0..5) |i| {
@@ -659,28 +665,13 @@ test "Turbine - mock network propagation with 30% packet loss and repair recover
         addrs[i].bytes[0] = @intCast(i + 1);
     }
 
-    var verifiers: [5]shred_verifier.ShredVerifier = undefined;
     var engines: [5]turbine.TurbineEngine = undefined;
 
     for (0..5) |i| {
-        verifiers[i] = shred_verifier.ShredVerifier.init(allocator, .{
-            .sampleRate = 1.0,
-            .enabled = true,
-        });
         engines[i] = turbine.TurbineEngine.init(allocator);
-
-        for (addrs) |addr| {
-            try verifiers[i].addValidator(.{
-                .address = addr,
-                .pubkey = [_]u8{0} ** 32,
-                .stake = 1000,
-                .active = true,
-            });
-        }
     }
     defer {
         for (0..5) |i| {
-            verifiers[i].deinit();
             engines[i].deinit();
         }
     }
@@ -690,10 +681,10 @@ test "Turbine - mock network propagation with 30% packet loss and repair recover
     defer allocator.free(block_data);
     for (0..block_size) |i| block_data[i] = @intCast(i % 256);
 
-    var producer_sig: [64]u8 = [_]u8{0} ** 64;
-    @memcpy(producer_sig[0..32], &addrs[0].bytes);
+    const producer_sig: [96]u8 = [_]u8{0} ** 96;
+    const bid = core.types.Hash.zero();
 
-    const shreds = try engines[0].shredBlock(block_data, 1, producer_sig, 0.25);
+    const shreds = try engines[0].shredBlock(block_data, 1, bid, producer_sig, 0.25);
     defer engines[0].freeShreds(shreds);
 
     var prng = std.Random.DefaultPrng.init(0xABC123);
@@ -829,5 +820,183 @@ test "STUN - mapped address parsing" {
     
     const parsed_ip_bytes = @as(*const [4]u8, @ptrCast(&parsed_addr.in.sa.addr)).*;
     try testing.expectEqualSlices(u8, &target_ip_bytes, &parsed_ip_bytes);
+}
+
+// ── Phase 3: Turbine Shred Firewall Tests ─────────────────────────────
+
+test "Turbine - reject shred with invalid threadId (Firewall 3)" {
+    const allocator = testing.allocator;
+    var engine = turbine.TurbineEngine.init(allocator);
+    defer engine.deinit();
+
+    const block_data = try allocator.alloc(u8, 200);
+    defer allocator.free(block_data);
+    for (0..200) |i| block_data[i] = @intCast(i % 256);
+
+    const sig: [96]u8 = [_]u8{0} ** 96;
+    var blockId = core.types.Hash.zero();
+    blockId.bytes[0] = 0xAB;
+
+    const shreds = try engine.shredBlock(block_data, 1, blockId, sig, 0.25);
+    defer engine.freeShreds(shreds);
+
+    // Modify the first shred's threadId to 200 (>= 128, invalid)
+    var bad_shred = shreds[0];
+    bad_shred.threadId = 200;
+    bad_shred.payload = try allocator.dupe(u8, shreds[0].payload);
+    defer allocator.free(bad_shred.payload);
+
+    try testing.expectError(error.InvalidThreadId, engine.receiveShred(&bad_shred));
+}
+
+test "Turbine - reject shred with inconsistent blockId (Firewall 4)" {
+    const allocator = testing.allocator;
+    var engine = turbine.TurbineEngine.init(allocator);
+    defer engine.deinit();
+
+    // Use block > MAX_SHRED_PAYLOAD (1100) to require at least 2 data shreds
+    const block_data = try allocator.alloc(u8, 1200);
+    defer allocator.free(block_data);
+    for (0..1200) |i| block_data[i] = @intCast(i % 256);
+
+    const sig: [96]u8 = [_]u8{0} ** 96;
+    var blockIdA = core.types.Hash.zero();
+    blockIdA.bytes[0] = 0xAA;
+    var blockIdB = core.types.Hash.zero();
+    blockIdB.bytes[0] = 0xBB;
+
+    const shreds = try engine.shredBlock(block_data, 2, blockIdA, sig, 0.25);
+    defer engine.freeShreds(shreds);
+
+    // First shred with blockIdA is OK — not yet reconstructable (needs 2nd data shred)
+    {
+        var first = shreds[0];
+        first.payload = try allocator.dupe(u8, shreds[0].payload);
+        defer allocator.free(first.payload);
+        const result = try engine.receiveShred(&first);
+        try testing.expect(result == null); // Not yet reconstructable
+    }
+
+    // Second shred with wrong blockIdB should be rejected
+    {
+        var second = shreds[1];
+        second.blockId = blockIdB;
+        second.payload = try allocator.dupe(u8, shreds[1].payload);
+        defer allocator.free(second.payload);
+        // CRC does NOT cover blockId, so no need to recompute
+
+        try testing.expectError(error.ShredBlockIdMismatch, engine.receiveShred(&second));
+    }
+}
+
+test "Turbine - reject shred with invalid shredIndex (Firewall 2)" {
+    const allocator = testing.allocator;
+    var engine = turbine.TurbineEngine.init(allocator);
+    defer engine.deinit();
+
+    const block_data = try allocator.alloc(u8, 200);
+    defer allocator.free(block_data);
+    for (0..200) |i| block_data[i] = @intCast(i % 256);
+
+    const sig: [96]u8 = [_]u8{0} ** 96;
+    var blockId = core.types.Hash.zero();
+    blockId.bytes[0] = 0xCC;
+
+    const shreds = try engine.shredBlock(block_data, 3, blockId, sig, 0.25);
+    defer engine.freeShreds(shreds);
+
+    var bad_shred = shreds[0];
+    bad_shred.shredIndex = 999;
+    bad_shred.payload = try allocator.dupe(u8, shreds[0].payload);
+    defer allocator.free(bad_shred.payload);
+
+    // Fix CRC since shredIndex changed
+    bad_shred.crc32 = bad_shred.computeCrc();
+
+    try testing.expectError(error.InvalidShredIndex, engine.receiveShred(&bad_shred));
+}
+
+// ── Phase 4: Gulf Stream Firewall Tests ───────────────────────────────
+
+test "GulfStream - canForwardToTarget respects per-target rate limit (Firewall 3)" {
+    var gs = gulf_stream.GulfStream.init(testing.allocator, null, undefined);
+    defer gs.deinit();
+
+    gs.advanceSlot(100);
+
+    var addr = core.types.Address.zero();
+    addr.bytes[0] = 0xDD;
+
+    // Initially should be allowed
+    try testing.expect(gs.canForwardToTarget(addr));
+
+    // Simulate forwarding to this target 11 times
+    for (0..11) |i| {
+        gs.peerForwardCount.put(addr, @intCast(i + 1)) catch {};
+    }
+
+    // Now should be blocked (exceeds MAX_FORWARD_BATCHES_PER_TARGET = 10)
+    try testing.expect(!gs.canForwardToTarget(addr));
+
+    // Advance slot — counter should reset
+    gs.advanceSlot(101);
+    try testing.expect(gs.canForwardToTarget(addr));
+}
+
+test "GulfStream - advance slot resets per-target counter (Firewall 3)" {
+    var gs = gulf_stream.GulfStream.init(testing.allocator, null, undefined);
+    defer gs.deinit();
+
+    gs.advanceSlot(10);
+
+    var addr = core.types.Address.zero();
+    addr.bytes[0] = 0xEE;
+    gs.peerForwardCount.put(addr, 9) catch {};
+
+    try testing.expect(gs.canForwardToTarget(addr));
+
+    // Advance to next slot — counter cleared
+    gs.advanceSlot(11);
+    const count = gs.peerForwardCount.get(addr);
+    try testing.expect(count == null); // Should be reset
+}
+
+// ── Phase 6: Pipeline Firewall Tests ──────────────────────────────────
+
+test "Pipeline - reject stale blockNumber (Firewall 2)" {
+    var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
+    defer pipe.deinit();
+
+    // First proposal for block 1 succeeds with non-zero parentId
+    var parentId1 = core.types.Hash.zero();
+    parentId1.bytes[0] = 0xF1;
+    _ = try pipe.propose(1, parentId1, &[_]core.types.Hash{});
+
+    // Proposing block 1 again should fail (stale)
+    try testing.expectError(error.BlockNumberStale, pipe.propose(1, parentId1, &[_]core.types.Hash{}));
+}
+
+test "Pipeline - genesis block with zero parentId is allowed (Firewall 1)" {
+    var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
+    defer pipe.deinit();
+
+    // Block 0 with zero parentId should be accepted (genesis case — head is 0 so BlockNumberStale is skipped)
+    _ = try pipe.propose(0, core.types.Hash.zero(), &[_]core.types.Hash{});
+}
+
+test "Pipeline - reject skipping blockNumber (Firewall 2)" {
+    var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
+    defer pipe.deinit();
+
+    // Proposing block 2 when head is 0 should fail (skip)
+    try testing.expectError(error.BlockNumberSkipsSlot, pipe.propose(2, core.types.Hash.zero(), &[_]core.types.Hash{}));
+}
+
+test "Pipeline - reject zero parentId for non-genesis (Firewall 1)" {
+    var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
+    defer pipe.deinit();
+
+    // Block 1 with zero parentId should be rejected (non-genesis must have valid parent)
+    try testing.expectError(error.InvalidParentId, pipe.propose(1, core.types.Hash.zero(), &[_]core.types.Hash{}));
 }
 

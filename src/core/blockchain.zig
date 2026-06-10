@@ -4,6 +4,16 @@
 //
 // Chain management: block storage, retrieval, fork choice, head tracking.
 // Thread-safe with RwLock for concurrent read access.
+//
+// Database key space:
+//   "b-" ++ blockId(32)    → serialized block bytes
+//   "H-" ++ number(8,BE)   → blockId(32)   (number → canonical block)
+//   "tx_lookup_" ++ txId   → blockId(32) ++ txIndex(8,BE)
+//   "head"                 → blockId(32)   (current head block id)
+//   "genesis_id"           → blockId(32)   (immutable genesis id)
+//
+// All block identifiers use Block.id() — the single canonical 32-byte hash.
+// There is no separate "header hash" vs "block hash" in external usage.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -11,15 +21,23 @@ const storage = @import("storage");
 const DB = storage.DB;
 const log = @import("logger.zig");
 
+/// Maximum allowed reorg depth before emitting a warning.
+const MAX_REORG_DEPTH: u64 = 128;
+
+/// Maximum blocks ahead of head we will accept (sync tolerance window).
+const MAX_FUTURE_BLOCKS: u64 = 10;
+
 /// Manages the blockchain state, including block storage, retrieval, and head tracking.
-/// Provides thread-safe access to the chain data using a read-write lock.
+/// Provides thread-safe access to chain data using a read-write lock.
 pub const Blockchain = struct {
     allocator: std.mem.Allocator,
     db: DB,
     currentBlock: ?*types.Block,
-    cachedHeadHash: types.Hash,
+    /// Cached id of the current head block (= Block.id() of currentBlock).
+    cachedHeadId: types.Hash,
     chainId: u64,
-    genesisHash: types.Hash,
+    /// The id of the genesis block (immutable after initialization).
+    genesisId: types.Hash,
     lock: std.Thread.RwLock,
 
     /// Initializes a new Blockchain instance, loading the persisted head from the database.
@@ -29,38 +47,34 @@ pub const Blockchain = struct {
             .allocator = allocator,
             .db = db,
             .currentBlock = null,
-            .cachedHeadHash = types.Hash.zero(),
+            .cachedHeadId = types.Hash.zero(),
             .chainId = chainId,
-            .genesisHash = types.Hash.zero(),
+            .genesisId = types.Hash.zero(),
             .lock = .{},
         };
 
-        // Load persisted head
-        if (db.read("head")) |hashBytes| {
-            if (hashBytes.len == 32) {
-                var hash: types.Hash = undefined;
-                @memcpy(&hash.bytes, hashBytes[0..32]);
-                if (try self.getBlockByHash(hash)) |block| {
-                    self.currentBlock = block;
-                    self.cachedHeadHash = block.hash();
-                }
+        // Load persisted genesis id
+        if (db.read("genesis_id")) |idBytes| {
+            if (idBytes.len == 32) {
+                @memcpy(&self.genesisId.bytes, idBytes[0..32]);
             }
         }
 
-        // Load genesis hash
-        var genKey: [10]u8 = undefined;
-        @memcpy(genKey[0..2], "H-");
-        std.mem.writeInt(u64, genKey[2..10], 0, .big);
-        if (db.read(&genKey)) |hashBytes| {
-            if (hashBytes.len == 32) {
-                @memcpy(&self.genesisHash.bytes, hashBytes[0..32]);
+        // Load persisted head block
+        if (db.read("head")) |idBytes| {
+            if (idBytes.len == 32) {
+                var blkId: types.Hash = undefined;
+                @memcpy(&blkId.bytes, idBytes[0..32]);
+                if (try self.getBlockById(blkId)) |block| {
+                    self.currentBlock = block;
+                    self.cachedHeadId = block.id();
+                }
             }
         }
 
         return self;
     }
 
-    /// Deinitializes the Blockchain instance and frees the current head block.
     pub fn deinit(self: *Blockchain) void {
         if (self.currentBlock) |block| {
             self.freeBlock(block);
@@ -68,25 +82,26 @@ pub const Blockchain = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setGenesisHash(self: *Blockchain, hash: types.Hash) void {
-        self.genesisHash = hash;
+    pub fn setGenesisId(self: *Blockchain, id: types.Hash) void {
+        self.genesisId = id;
+        self.db.write("genesis_id", &id.bytes) catch {};
     }
 
-    /// Returns the current head block of the chain.
+    // ── Head Access (thread-safe) ─────────────────────────────────────
+
     pub fn getHead(self: *Blockchain) ?*types.Block {
         self.lock.lockShared();
         defer self.lock.unlockShared();
         return self.currentBlock;
     }
 
-    /// Returns the hash of the current head block.
-    pub fn getHeadHash(self: *Blockchain) types.Hash {
+    /// Returns the canonical id of the current head block.
+    pub fn getHeadId(self: *Blockchain) types.Hash {
         self.lock.lockShared();
         defer self.lock.unlockShared();
-        return self.cachedHeadHash;
+        return self.cachedHeadId;
     }
 
-    /// Returns the block number of the current head block.
     pub fn getHeadNumber(self: *Blockchain) u64 {
         self.lock.lockShared();
         defer self.lock.unlockShared();
@@ -96,51 +111,50 @@ pub const Blockchain = struct {
         return 0;
     }
 
-    /// Internal: update the head pointer. Must be called under exclusive lock.
-    /// Frees the previous head block if it differs from the new one.
-    fn setHeadLocked(self: *Blockchain, block: *types.Block, blockHash: types.Hash) void {
-        if (self.currentBlock) |old| {
-            if (old != block) self.freeBlock(old);
-        }
-        self.currentBlock = block;
-        self.cachedHeadHash = blockHash;
-        self.db.write("head", &blockHash.bytes) catch {};
-    }
+    // ── Block Addition ────────────────────────────────────────────────
 
-    /// Frees the memory associated with a block.
-    pub fn freeBlock(self: *Blockchain, block: *types.Block) void {
-        block.deinit(self.allocator);
-        self.allocator.destroy(block);
-    }
-
-    /// Add a block to the chain (validates and stores)
-    /// Adds a new block to the chain, updates the transaction index, and performs fork choice.
-    pub fn addBlock(self: *Blockchain, block: *types.Block) !void {
-        // Cache the block hash once before taking the lock — avoids repeated
-        // hashing (which allocates internally) while holding the write lock.
-        const blkHash = block.hash();
+    /// Add a new block to the chain (validates, stores, and performs fork choice).
+    ///
+    /// Security checks performed before storage:
+    ///   1. Block number must be within sync window of current head
+    ///   2. Parent id must reference a known block (anti-orphan)
+    ///   3. Block id must be deterministically derivable (anti-substitution)
+    pub fn addBlock(self: *Blockchain, block: *types.Block) !bool {
+        // Compute the single canonical block id
+        const blkId = block.id();
 
         self.lock.lock();
         defer self.lock.unlock();
 
-        try self.storeBlock(block);
-
-        // TX lookup index
-        for (block.transactions, 0..) |*tx, i| {
-            const txHash = tx.hash();
-            var hexBuf: [128]u8 = undefined;
-            const hexStr = try @import("utils").hex.encodeBuffer(&hexBuf, &txHash.bytes);
-            const key = try std.fmt.allocPrint(self.allocator, "tx_lookup_{s}", .{hexStr});
-            defer self.allocator.free(key);
-            var value: [40]u8 = undefined;
-            @memcpy(value[0..32], &blkHash.bytes);
-            std.mem.writeInt(u64, value[32..40], i, .big);
-            try self.db.write(key, &value);
+        // Security check: reject blocks too far ahead of our head (sync gap protection)
+        if (self.currentBlock) |head| {
+            const headNumber = head.header.number;
+            const newNumber = block.header.number;
+            if (newNumber > headNumber + MAX_FUTURE_BLOCKS and newNumber > 1) {
+                log.warn("Block #{d} is {d} blocks ahead of head #{d} — possible sync attack, dropping", .{
+                    newNumber, newNumber - headNumber, headNumber,
+                });
+                return error.BlockTooFarAhead;
+            }
         }
 
-        // Fork choice: longest chain with reorg guard
+        // Store block under its canonical id
+        try self.storeBlock(block, blkId);
+
+        // TX lookup index: tx_id → (blockId, txIndex)
+        for (block.transactions, 0..) |*tx, i| {
+            const txId = tx.id();
+            var keyBuf: [10 + 32]u8 = undefined;
+            @memcpy(keyBuf[0..10], "tx_lookup_");
+            @memcpy(keyBuf[10..42], &txId.bytes);
+            var value: [40]u8 = undefined;
+            @memcpy(value[0..32], &blkId.bytes);
+            std.mem.writeInt(u64, value[32..40], i, .big);
+            try self.db.write(&keyBuf, &value);
+        }
+
+        // Fork choice: longest chain wins; tie-break by lexicographic id comparison
         var updateHead = false;
-        const MAX_REORG_DEPTH = 128;
 
         if (self.currentBlock == null) {
             updateHead = true;
@@ -151,128 +165,177 @@ pub const Blockchain = struct {
             if (newNumber > currentNumber) {
                 updateHead = true;
             } else if (newNumber == currentNumber) {
-                if (std.mem.order(u8, &blkHash.bytes, &self.cachedHeadHash.bytes) == .gt) {
+                // Tie-break: lower block id wins (deterministic across all nodes)
+                if (std.mem.order(u8, &blkId.bytes, &self.cachedHeadId.bytes) == .lt) {
                     updateHead = true;
                 }
             }
 
-            if (updateHead and self.currentBlock != null) {
-                const diff = if (newNumber > currentNumber) newNumber - currentNumber else currentNumber - newNumber;
+            if (updateHead) {
+                const diff = if (newNumber > currentNumber)
+                    newNumber - currentNumber
+                else
+                    currentNumber - newNumber;
                 if (diff > MAX_REORG_DEPTH) {
-                    log.warn("Deep reorg or sync jump detected (diff={d})", .{diff});
+                    log.warn("Deep reorg detected (diff={d}, new=#{d}, old=#{d})", .{
+                        diff, newNumber, currentNumber,
+                    });
                 }
             }
         }
 
         if (updateHead) {
-            self.setHeadLocked(block, blkHash);
-            var key: [10]u8 = undefined;
-            @memcpy(key[0..2], "H-");
-            std.mem.writeInt(u64, key[2..10], block.header.number, .big);
-            try self.db.write(&key, &blkHash.bytes);
+            self.setHeadLocked(block, blkId);
+            // Map number → blockId for getBlockByNumber
+            var numKey: [10]u8 = undefined;
+            @memcpy(numKey[0..2], "H-");
+            std.mem.writeInt(u64, numKey[2..10], block.header.number, .big);
+            try self.db.write(&numKey, &blkId.bytes);
         }
 
         try self.db.sync();
+        return updateHead;
     }
 
-    fn storeBlock(self: *Blockchain, block: *types.Block) !void {
-        const h = block.hash();
+    // ── Internal: Update Head ─────────────────────────────────────────
+
+    /// Update the head pointer. Must be called under exclusive lock.
+    fn setHeadLocked(self: *Blockchain, block: *types.Block, blkId: types.Hash) void {
+        if (self.currentBlock) |old| {
+            if (old != block) self.freeBlock(old);
+        }
+        self.currentBlock = block;
+        self.cachedHeadId = blkId;
+        self.db.write("head", &blkId.bytes) catch {};
+    }
+
+    // ── Block Storage ─────────────────────────────────────────────────
+
+    fn storeBlock(self: *Blockchain, block: *types.Block, blkId: types.Hash) !void {
         var key: [34]u8 = undefined;
         @memcpy(key[0..2], "b-");
-        @memcpy(key[2..34], &h.bytes);
+        @memcpy(key[2..34], &blkId.bytes);
         const encoded = try encodeBlockBinary(self.allocator, block.*);
         defer self.allocator.free(encoded);
         try self.db.write(&key, encoded);
     }
 
-    /// Retrieves a block from the database by its cryptographic hash.
-    pub fn getBlockByHash(self: *Blockchain, hash: types.Hash) !?*types.Block {
+    // ── Block Retrieval ───────────────────────────────────────────────
+
+    /// Retrieve a block by its canonical id (Block.id()).
+    pub fn getBlockById(self: *Blockchain, blkId: types.Hash) !?*types.Block {
         self.lock.lockShared();
         defer self.lock.unlockShared();
+        return self.getBlockByIdUnlocked(blkId);
+    }
 
+    /// Retrieve a block by its canonical id without taking the lock.
+    /// Caller must hold at least a shared lock.
+    fn getBlockByIdUnlocked(self: *Blockchain, blkId: types.Hash) !?*types.Block {
         var key: [34]u8 = undefined;
         @memcpy(key[0..2], "b-");
-        @memcpy(key[2..34], &hash.bytes);
+        @memcpy(key[2..34], &blkId.bytes);
 
         const data = self.db.read(&key) orelse return null;
         const block = try self.allocator.create(types.Block);
         block.* = try decodeBlockBinary(self.allocator, data);
 
-        // Recover sender addresses
-        const tx_decode = @import("tx_decode.zig");
+        // Re-derive sender addresses (not stored on wire to save space)
         for (block.transactions) |*tx| {
-            tx.from = tx_decode.recoverFromTx(self.allocator, tx.*) catch |e| return e;
+            tx.from = types.Address.fromPubKey(&tx.pub_key);
         }
 
         return block;
     }
 
-    /// Retrieves a block from the database by its block number.
+    /// Retrieve a block by block number (looks up number→id mapping first).
     pub fn getBlockByNumber(self: *Blockchain, number: u64) ?*types.Block {
-        var hash: types.Hash = undefined;
+        var blkId: types.Hash = undefined;
         {
             self.lock.lockShared();
             defer self.lock.unlockShared();
-            var key: [10]u8 = undefined;
-            @memcpy(key[0..2], "H-");
-            std.mem.writeInt(u64, key[2..10], number, .big);
-            const hash_bytes = self.db.read(&key) orelse return null;
-            @memcpy(&hash.bytes, hash_bytes[0..32]);
+            var numKey: [10]u8 = undefined;
+            @memcpy(numKey[0..2], "H-");
+            std.mem.writeInt(u64, numKey[2..10], number, .big);
+            const id_bytes = self.db.read(&numKey) orelse return null;
+            if (id_bytes.len < 32) return null;
+            @memcpy(&blkId.bytes, id_bytes[0..32]);
         }
-        return self.getBlockByHash(hash) catch null;
+        return self.getBlockById(blkId) catch null;
     }
 
+    // ── TX Lookup ─────────────────────────────────────────────────────
+
     pub const TxLocation = struct {
-        blockHash: types.Hash,
+        blockId: types.Hash,
         txIndex: u64,
     };
 
-    /// Finds the location of a transaction (block hash and index) given its hash.
-    pub fn getTransactionLocation(self: *Blockchain, txHash: types.Hash) !?TxLocation {
+    /// Find the location of a transaction (block id + index within block).
+    pub fn getTransactionLocation(self: *Blockchain, txId: types.Hash) !?TxLocation {
         self.lock.lockShared();
         defer self.lock.unlockShared();
 
-        var hexBuf: [128]u8 = undefined;
-        const hexStr = try @import("utils").hex.encodeBuffer(&hexBuf, &txHash.bytes);
-        const key = try std.fmt.allocPrint(self.allocator, "tx_lookup_{s}", .{hexStr});
-        defer self.allocator.free(key);
+        var keyBuf: [10 + 32]u8 = undefined;
+        @memcpy(keyBuf[0..10], "tx_lookup_");
+        @memcpy(keyBuf[10..42], &txId.bytes);
 
-        if (self.db.read(key)) |value| {
-            if (value.len != 40) return null;
-            var loc: TxLocation = undefined;
-            @memcpy(&loc.blockHash.bytes, value[0..32]);
-            loc.txIndex = std.mem.readInt(u64, value[32..40], .big);
-            return loc;
-        }
-        return null;
+        const value = self.db.read(&keyBuf) orelse return null;
+        if (value.len != 40) return null;
+
+        var loc: TxLocation = undefined;
+        @memcpy(&loc.blockId.bytes, value[0..32]);
+        loc.txIndex = std.mem.readInt(u64, value[32..40], .big);
+        return loc;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────
+
+    pub fn freeBlock(self: *Blockchain, block: *types.Block) void {
+        block.deinit(self.allocator);
+        self.allocator.destroy(block);
     }
 };
 
-fn encodeBlockBinary(allocator: std.mem.Allocator, block: types.Block) ![]u8 {
+// ── Block Serialization ───────────────────────────────────────────────────
+
+pub fn encodeBlockBinary(allocator: std.mem.Allocator, block: types.Block) ![]u8 {
     var buf = std.ArrayListUnmanaged(u8){};
     errdefer buf.deinit(allocator);
 
     const h = block.header;
-    try buf.appendSlice(allocator, &h.parentHash.bytes);
+    // parentId (32)
+    try buf.appendSlice(allocator, &h.parentId.bytes);
+    // number (8, BE)
     var numBuf: [8]u8 = undefined;
     std.mem.writeInt(u64, &numBuf, h.number, .big);
     try buf.appendSlice(allocator, &numBuf);
+    // time (8, BE)
     std.mem.writeInt(u64, &numBuf, h.time, .big);
     try buf.appendSlice(allocator, &numBuf);
+    // stateRoot (32)
     try buf.appendSlice(allocator, &h.stateRoot.bytes);
-    try buf.appendSlice(allocator, &h.txHash.bytes);
+    // txMerkleRoot (32)
+    try buf.appendSlice(allocator, &h.txMerkleRoot.bytes);
+    // producer (32)
     try buf.appendSlice(allocator, &h.producer.bytes);
+    // extraData (4-byte len prefix + data)
     var lenBuf: [4]u8 = undefined;
     std.mem.writeInt(u32, &lenBuf, @intCast(h.extraData.len), .big);
     try buf.appendSlice(allocator, &lenBuf);
     if (h.extraData.len > 0) try buf.appendSlice(allocator, h.extraData);
+    // executionBudget (8, BE)
     std.mem.writeInt(u64, &numBuf, h.executionBudget, .big);
     try buf.appendSlice(allocator, &numBuf);
-    std.mem.writeInt(u64, &numBuf, h.gasUsed, .big);
+    // budgetUsed (8, BE)
+    std.mem.writeInt(u64, &numBuf, h.budgetUsed, .big);
     try buf.appendSlice(allocator, &numBuf);
 
+    // Transaction count (4, BE)
     std.mem.writeInt(u32, &lenBuf, @intCast(block.transactions.len), .big);
     try buf.appendSlice(allocator, &lenBuf);
+
+    // Transactions
     for (block.transactions) |tx| {
         var txBuf = std.ArrayListUnmanaged(u8){};
         defer txBuf.deinit(allocator);
@@ -283,39 +346,51 @@ fn encodeBlockBinary(allocator: std.mem.Allocator, block: types.Block) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
-fn decodeBlockBinary(allocator: std.mem.Allocator, data: []const u8) !types.Block {
+pub fn decodeBlockBinary(allocator: std.mem.Allocator, data: []const u8) !types.Block {
     var pos: usize = 0;
 
     var header: types.Header = undefined;
-    @memcpy(&header.parentHash.bytes, data[pos..][0..32]);
+
+    // parentId (32)
+    @memcpy(&header.parentId.bytes, data[pos..][0..32]);
     pos += 32;
+    // number (8, BE)
     header.number = std.mem.readInt(u64, data[pos..][0..8], .big);
     pos += 8;
+    // time (8, BE)
     header.time = std.mem.readInt(u64, data[pos..][0..8], .big);
     pos += 8;
+    // stateRoot (32)
     @memcpy(&header.stateRoot.bytes, data[pos..][0..32]);
     pos += 32;
-    @memcpy(&header.txHash.bytes, data[pos..][0..32]);
+    // txMerkleRoot (32)
+    @memcpy(&header.txMerkleRoot.bytes, data[pos..][0..32]);
     pos += 32;
+    // producer (32)
     @memcpy(&header.producer.bytes, data[pos..][0..32]);
     pos += 32;
+    // extraData
     const extraLen = std.mem.readInt(u32, data[pos..][0..4], .big);
     pos += 4;
     header.extraData = try allocator.dupe(u8, data[pos..][0..extraLen]);
     pos += extraLen;
+    // executionBudget (8, BE)
     header.executionBudget = std.mem.readInt(u64, data[pos..][0..8], .big);
     pos += 8;
-    header.gasUsed = std.mem.readInt(u64, data[pos..][0..8], .big);
+    // budgetUsed (8, BE)
+    header.budgetUsed = std.mem.readInt(u64, data[pos..][0..8], .big);
     pos += 8;
+    // quorumCertificate not serialized (added post-decode if needed)
+    header.quorumCertificate = null;
 
+    // Transactions
     const txCount = std.mem.readInt(u32, data[pos..][0..4], .big);
     pos += 4;
     const transactions = try allocator.alloc(types.Transaction, txCount);
     for (0..txCount) |i| {
         try transactions[i].decodeBinary(allocator, data[pos..]);
-        pos += @sizeOf(types.Transaction.BinaryFormat) + transactions[i].data.len;
+        pos += types.Transaction.BF_SIZE + transactions[i].data.len;
     }
 
     return .{ .header = header, .transactions = transactions };
 }
-

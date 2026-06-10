@@ -18,6 +18,7 @@ const vrf_mod = @import("vrf.zig");
 const committees_mod = @import("committees.zig");
 
 const blst_mod = core.crypto.blst;
+const secureZero = @import("utils").secureZero;
 const c = blst_mod.c;
 
 const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
@@ -433,7 +434,7 @@ pub const AdaptiveConsensus = struct {
     /// Build a new AdaptiveBlockHeader for the current slot.
     pub fn buildBlockHeader(
         self: *Self,
-        parent_hash: core.types.Hash,
+        parent_woven_root: core.types.Hash,
         proposer_index: u32,
         proposer_vrf_proof: [96]u8,
         thread_roots: []const core.types.Hash,
@@ -444,7 +445,7 @@ pub const AdaptiveConsensus = struct {
         var header = types.AdaptiveBlockHeader{
             .slot = self.currentSlot,
             .epoch = self.currentEpoch,
-            .parentHash = parent_hash,
+            .parentWovenRoot = parent_woven_root,
             .proposerIndex = proposer_index,
             .proposerVrfProof = proposer_vrf_proof,
             .threadCount = self.currentThreadCount,
@@ -478,7 +479,7 @@ pub const AdaptiveConsensus = struct {
     pub fn verifyBlockHeader(
         self: *const Self,
         header: *const types.AdaptiveBlockHeader,
-        parent_hash: core.types.Hash,
+        parent_woven_root: core.types.Hash,
     ) bool {
         // 1. Slot must be greater than last finalized
         if (header.slot <= self.lastFinalizedSlot) return false;
@@ -486,8 +487,8 @@ pub const AdaptiveConsensus = struct {
         // 2. Epoch must match current
         if (header.epoch != self.currentEpoch) return false;
 
-        // 3. Parent hash must match
-        if (!std.mem.eql(u8, &header.parent_hash.bytes, &parent_hash.bytes)) return false;
+        // 3. Parent woven root must match
+        if (!std.mem.eql(u8, &header.parentWovenRoot.bytes, &parent_woven_root.bytes)) return false;
 
         // 4. Thread count must match current configuration
         if (header.thread_count != self.currentThreadCount) return false;
@@ -556,7 +557,5 @@ pub const AdaptiveConsensus = struct {
     }
 };
 
-fn secureZero(buf: []u8) void {
-    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
-    for (0..buf.len) |i| ptr[i] = 0;
-}
+
+

@@ -5,7 +5,7 @@
 // Production-grade security primitives:
 //   • Token-bucket rate limiting (per-IP and per-account)
 //   • Deep TX sanitization (field bounds, signature malleability, replay)
-//   • Anti-DoS policies (size limits, gas floor, mempool eviction)
+//   • Anti-DoS policies (size limits, budget floor, mempool eviction)
 //   • Reentrancy guard for state mutations
 //   • Bloom filter for fast duplicate detection
 
@@ -25,15 +25,15 @@ pub const RateLimiter = struct {
 
     pub const RateLimitConfig = struct {
         /// Max tokens per account bucket
-        perAccountCapacity: u32 = 64,
+        perAccountCapacity: u32 = 1_000_000,
         /// Tokens refilled per second per account
-        perAccountRefill: u32 = 8,
+        perAccountRefill: u32 = 1_000_000,
         /// Max tokens in global bucket
-        globalCapacity: u32 = 50_000,
+        globalCapacity: u32 = 10_000_000,
         /// Global refill rate per second
-        globalRefill: u32 = 10_000,
+        globalRefill: u32 = 10_000_000,
         /// Minimum interval between TXs from same sender (nanoseconds)
-        minTxIntervalNs: u64 = 10_000_000, // 10ms
+        minTxIntervalNs: u64 = 0, // 0ms (no interval restriction for high TPS)
     };
 
     const Bucket = struct {
@@ -128,8 +128,8 @@ pub const TxSanitizer = struct {
         minExecutionBudget: u64 = 21_000,
         /// Maximum execution budget for any TX
         maxExecutionBudget: u64 = 30_000_000,
-        /// Maximum gas price (anti-grief: 10,000 ZEE per gas)
-        maxGasPrice: u256 = 10_000_000_000_000_000_000_000, // 10k ZEE
+        /// Maximum budget price (anti-grief: 10,000 ZEE per budget)
+        maxcomputePrice: u256 = 10_000_000_000_000_000_000_000, // 10k ZEE
         /// Maximum value transfer
         maxValue: u256 = 1_000_000_000_000_000_000_000_000_000, // 1B ZEE
         /// Chain ID for replay protection
@@ -148,15 +148,15 @@ pub const TxSanitizer = struct {
         if (tx.data.len > self.config.maxCalldata)
             return error.CalldataTooLarge;
 
-        // 2. Gas limit bounds
+        // 2. budget limit bounds
         if (tx.executionBudget < self.config.minExecutionBudget)
-            return error.IntrinsicGasTooLow;
+            return error.IntrinsicbudgetTooLow;
         if (tx.executionBudget > self.config.maxExecutionBudget)
             return error.ExecutionBudgetExceeded;
 
-        // 3. Gas price sanity
-        if (tx.gasPrice > self.config.maxGasPrice)
-            return error.GasPriceTooHigh;
+        // 3. budget price sanity
+        if (tx.computePrice > self.config.maxcomputePrice)
+            return error.computePriceTooHigh;
 
         // 4. Value sanity
         if (tx.value > self.config.maxValue)
@@ -168,9 +168,9 @@ pub const TxSanitizer = struct {
         if (tx.sequence > state_sequence + self.config.maxSequenceGap)
             return error.SequenceTooHigh;
 
-        // 6. Balance sufficiency (value + gas * gasPrice)
-        const gas_cost = @as(u256, tx.executionBudget) * tx.gasPrice;
-        const total_cost = tx.value + gas_cost;
+        // 6. Balance sufficiency (value + budget * computePrice)
+        const budget_cost = @as(u256, tx.executionBudget) * tx.computePrice;
+        const total_cost = tx.value + budget_cost;
         if (total_cost > state_balance)
             return error.InsufficientFunds;
 
@@ -181,9 +181,8 @@ pub const TxSanitizer = struct {
         const sig_ok = try @import("accounts/eoa.zig").verifySignature(msg, tx.signature, tx.pub_key);
         if (!sig_ok) return error.InvalidSignature;
 
-        // 8. From address must match blake3(pub_key)
-        var expected_from: types.Address = undefined;
-        std.crypto.hash.Blake3.hash(&tx.pub_key, &expected_from.bytes, .{});
+        // 8. From address must match Address.fromPubKey(&tx.pub_key)
+        const expected_from = types.Address.fromPubKey(&tx.pub_key);
         if (!tx.from.eql(expected_from))
             return error.InvalidSenderAddress;
 
@@ -321,32 +320,26 @@ pub const ExecutionTimer = struct {
     }
 };
 
-// ── Gas Metering ────────────────────────────────────────────────────────
+// ── Budget Metering ──────────────────────────────────────────────────────
 
-/// Per-TX gas metering with overflow protection.
-pub const GasMeter = struct {
-    limit: u64,
-    used: u64,
+/// Per-TX budget metering with overflow protection.
+pub const BudgetMeter = struct {
+    budget: u64,
+    consumed: u64,
 
-    pub fn init(limit: u64) GasMeter {
-        return .{ .limit = limit, .used = 0 };
+    pub fn init(budget: u64) BudgetMeter {
+        return .{ .budget = budget, .consumed = 0 };
     }
 
-    /// Consume gas. Returns error if limit exceeded.
-    pub fn consume(self: *GasMeter, amount: u64) !void {
-        const new_used = @addWithOverflow(self.used, amount);
-        if (new_used[1] != 0) return error.GasOverflow;
-        if (new_used[0] > self.limit) return error.OutOfGas;
-        self.used = new_used[0];
+    pub fn consume(self: *BudgetMeter, amount: u64) !void {
+        const new_consumed = @addWithOverflow(self.consumed, amount);
+        if (new_consumed[1] != 0) return error.BudgetOverflow;
+        if (new_consumed[0] > self.budget) return error.OutOfBudget;
+        self.consumed = new_consumed[0];
     }
 
-    /// Refund gas (simple flat cap, no EIP-3529).
-    pub fn refund(self: *GasMeter, amount: u64) void {
-        self.used -|= amount;
-    }
-
-    pub fn remaining(self: *const GasMeter) u64 {
-        return self.limit -| self.used;
+    pub fn remaining(self: *const BudgetMeter) u64 {
+        return self.budget -| self.consumed;
     }
 };
 
@@ -384,12 +377,12 @@ pub const DAGSecurityConfig = struct {
     maxTxsPerLane: u32 = 256,
 
     /// Maximum total DAG vertices across all 256 shards.
-    /// At 500K vertices with 21K gas each = 10.5B gas capacity.
+    /// At 500K vertices with 21K budget each = 10.5B budget capacity.
     maxTotalVertices: u32 = 500_000,
 
-    /// Maximum gas budget per sender lane.
-    /// Prevents a single sender from consuming entire block gas limit.
-    maxLaneGas: u64 = 100_000_000, // 100M gas (10% of 1B block limit)
+    /// Maximum budget budget per sender lane.
+    /// Prevents a single sender from consuming entire block budget limit.
+    maxLanebudget: u64 = 100_000_000, // 100M budget (10% of 1B block limit)
 
     /// Orphan lane timeout in seconds.
     /// Lanes with no new TXs after this period are garbage collected.
@@ -402,11 +395,11 @@ pub const DAGSecurityConfig = struct {
     maxSequenceGap: u64 = 64,
 
     /// Hot-shard detection multiplier.
-    /// If any shard has > (mean × multiplier) vertices, gas price premium applies.
+    /// If any shard has > (mean × multiplier) vertices, budget price premium applies.
     /// This naturally distributes load across shards via economic pressure.
     hotShardMultiplier: u32 = 2,
 
-    /// Hot-shard gas price premium percentage (150 = 1.5× minimum gas price).
+    /// Hot-shard budget price premium percentage (150 = 1.5× minimum budget price).
     /// Applied only when hot-shard threshold is exceeded.
     hotShardPremiumPct: u32 = 150,
 

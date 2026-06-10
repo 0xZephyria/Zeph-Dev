@@ -1,3 +1,15 @@
+// ============================================================================
+// Zephyria — Block Producer
+// ============================================================================
+//
+// Unified block production interface (DAG primary path).
+//
+// Hash contract:
+//   - parentId stored in header.parentId = parent.id()  (Block.id())
+//   - txMerkleRoot = Block.computeTxMerkleRoot(txs)
+//   - Block.id() is computed ONCE after all header fields are set
+//   - Nothing modifies the header after production (no wovenRoot overwrite)
+
 const std = @import("std");
 const types = @import("types.zig");
 const state_mod = @import("state.zig");
@@ -9,7 +21,7 @@ const log = @import("logger.zig");
 
 pub const BuildResult = struct {
     block: *types.Block,
-    gasUsed: u64,
+    budgetUsed: u64,
     txCount: u32,
     elapsedNs: u64,
     tps: u64,
@@ -27,6 +39,11 @@ pub const BlockProducer = struct {
     dagPool: ?*dag_mempool_mod.DAGMempool,
     dagExecutor: ?*dag_executor_mod.DAGExecutor,
 
+    // Pre-allocated buffer for block production hot path (16 MB).
+    // Reset at the start of each produce() call to avoid heap reallocations.
+    block_buf: [16 * 1024 * 1024]u8,
+    block_fba: std.heap.FixedBufferAllocator,
+
     pub fn init(
         allocator: std.mem.Allocator,
         chain: *blockchain_mod.Blockchain,
@@ -34,7 +51,7 @@ pub const BlockProducer = struct {
         producer: types.Address,
         executionBudget: u64,
     ) BlockProducer {
-        return BlockProducer{
+        var bp = BlockProducer{
             .allocator = allocator,
             .chain = chain,
             .worldState = worldState,
@@ -42,7 +59,11 @@ pub const BlockProducer = struct {
             .executionBudget = executionBudget,
             .dagPool = null,
             .dagExecutor = null,
+            .block_buf = undefined,
+            .block_fba = undefined,
         };
+        bp.block_fba = std.heap.FixedBufferAllocator.init(&bp.block_buf);
+        return bp;
     }
 
     pub fn setDAGPipeline(
@@ -55,6 +76,11 @@ pub const BlockProducer = struct {
     }
 
     pub fn produce(self: *BlockProducer) !BuildResult {
+        // Reset the fixed-buffer arena for this block's transient allocations.
+        // This avoids heap reallocations on every ArrayList append in the hot path.
+        self.block_fba = std.heap.FixedBufferAllocator.init(&self.block_buf);
+        const hot_alloc = self.block_fba.allocator();
+
         const start = std.time.nanoTimestamp();
 
         var pool = self.dagPool orelse return error.NoPipelineConfigured;
@@ -63,8 +89,9 @@ pub const BlockProducer = struct {
         var extraction = try pool.extract(self.allocator, self.executionBudget);
         defer extraction.deinit();
 
+        // Get parent block and compute parent id using the canonical Block.id()
         const parent = self.chain.getHead();
-        const parentHash = if (parent) |p| p.hash() else types.Hash.zero();
+        const parentId: types.Hash = if (parent) |p| p.id() else types.Hash.zero();
 
         executor.config.producer = self.producer;
         executor.config.blockExecutionBudget = self.executionBudget;
@@ -88,12 +115,18 @@ pub const BlockProducer = struct {
         var blockResult = try executor.executeBlock(&plan);
         defer blockResult.deinit(self.allocator);
 
-        var all_txs = std.ArrayListUnmanaged(types.Transaction){};
-        defer all_txs.deinit(self.allocator);
+        // Pre-compute total tx count to allocate ArrayList with exact capacity.
+        var total_tx_count: usize = 0;
+        for (plan.lanes) |*lane| {
+            total_tx_count += lane.txs.len;
+        }
+
+        var all_txs = try std.ArrayListUnmanaged(types.Transaction).initCapacity(hot_alloc, total_tx_count);
+        // No defer deinit — allocations are from block_fba which is reset at each produce() call.
 
         for (plan.lanes) |*lane| {
             for (lane.txs) |tx| {
-                try all_txs.append(self.allocator, tx);
+                all_txs.appendAssumeCapacity(tx);
             }
         }
 
@@ -102,6 +135,11 @@ pub const BlockProducer = struct {
         const txs = try self.allocator.alloc(types.Transaction, all_txs.items.len);
         @memcpy(txs, all_txs.items);
 
+        // Compute TX merkle root from all transactions in this block.
+        // This is the canonical txMerkleRoot that goes into the header
+        // and is included in Block.id(). It must NOT be overwritten later.
+        const txMerkleRoot = types.Block.computeTxMerkleRoot(txs);
+
         const parentTime = if (parent) |p| p.header.time else 0;
         const now = @as(u64, @intCast(std.time.timestamp()));
         const blockTime = @max(now, parentTime + 1);
@@ -109,15 +147,17 @@ pub const BlockProducer = struct {
         const block = try self.allocator.create(types.Block);
         block.* = types.Block{
             .header = types.Header{
-                .parentHash = parentHash,
+                // parentId uses Block.id() — the single canonical identifier
+                .parentId = parentId,
                 .number = parentNumber + 1,
                 .time = blockTime,
                 .stateRoot = blockResult.stateRoot,
-                .txHash = computeTxRoot(txs),
+                // txMerkleRoot is set once here and never modified again
+                .txMerkleRoot = txMerkleRoot,
                 .producer = self.producer,
                 .extraData = &[_]u8{},
                 .executionBudget = self.executionBudget,
-                .gasUsed = blockResult.gasUsed,
+                .budgetUsed = blockResult.budgetUsed,
             },
             .transactions = txs,
         };
@@ -126,19 +166,22 @@ pub const BlockProducer = struct {
 
         const end = std.time.nanoTimestamp();
         const elapsedNs: u64 = @intCast(end - start);
-        const tps = if (elapsedNs > 0) @as(u64, all_txs.items.len) * 1_000_000_000 / elapsedNs else 0;
+        const tps = if (elapsedNs > 0)
+            @as(u64, all_txs.items.len) * 1_000_000_000 / elapsedNs
+        else
+            0;
 
-        log.info("Block #{d} produced: {d} TXs, {d} lanes, {d} gas, {d} TPS", .{
+        log.info("Block #{d} produced: {d} TXs, {d} lanes, {d} budget, {d} TPS", .{
             block.header.number,
             txs.len,
             plan.lanes.len,
-            blockResult.gasUsed,
+            blockResult.budgetUsed,
             tps,
         });
 
         return BuildResult{
             .block = block,
-            .gasUsed = blockResult.gasUsed,
+            .budgetUsed = blockResult.budgetUsed,
             .txCount = @intCast(txs.len),
             .elapsedNs = elapsedNs,
             .tps = tps,
@@ -147,14 +190,3 @@ pub const BlockProducer = struct {
         };
     }
 };
-
-fn computeTxRoot(txs: []const types.Transaction) types.Hash {
-    var hasher = std.crypto.hash.Blake3.init(.{});
-    for (txs) |*tx| {
-        const tx_hash = tx.hash();
-        hasher.update(&tx_hash.bytes);
-    }
-    var root: types.Hash = undefined;
-    hasher.final(&root.bytes);
-    return root;
-}

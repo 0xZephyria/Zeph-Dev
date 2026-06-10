@@ -352,34 +352,28 @@ pub fn deserialize(comptime T: type, allocator: std.mem.Allocator, data: []const
 // ── Internal Helpers ────────────────────────────────────────────────────
 
 fn encodeUint(allocator: std.mem.Allocator, value: anytype, list: *std.ArrayListUnmanaged(u8)) !void {
-    // Widen to u64 to avoid shift-amount issues with small integer types
-    const wide: u64 = @intCast(value);
-
-    if (wide == 0) {
+    const T = @TypeOf(value);
+    if (value == 0) {
         try list.append(allocator, 0x80);
         return;
     }
 
-    if (wide < 0x80) {
-        try list.append(allocator, @intCast(wide));
+    if (value < 0x80) {
+        try list.append(allocator, @intCast(value));
         return;
     }
 
     // Count bytes needed
-    var buf: [8]u8 = undefined;
-    var v = wide;
-    var len: usize = 0;
-    while (v > 0) : (len += 1) {
-        buf[7 - len] = @intCast(v & 0xFF);
-        v >>= 8;
-    }
+    var buf: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeInt(T, &buf, value, .big);
 
-    if (len == 1 and buf[7] < 0x80) {
-        try list.append(allocator, buf[7]);
-    } else {
-        try list.append(allocator, @intCast(0x80 + len));
-        try list.appendSlice(allocator, buf[8 - len ..]);
-    }
+    // Find first non-zero byte
+    var start: usize = 0;
+    while (start < buf.len and buf[start] == 0) : (start += 1) {}
+
+    const bytes = buf[start..];
+    try list.append(allocator, @intCast(0x80 + bytes.len));
+    try list.appendSlice(allocator, bytes);
 }
 
 fn encodeString(allocator: std.mem.Allocator, bytes: []const u8, list: *std.ArrayListUnmanaged(u8)) !void {

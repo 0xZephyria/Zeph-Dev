@@ -18,8 +18,8 @@
 // vs. old wavefront: O(n × w × k) where w = waves, k = keys per TX
 //
 // The scheduler also handles:
-//   • Gas budget allocation across lanes
-//   • Priority ordering (highest gas price lanes execute first)
+//   • budget budget allocation across lanes
+//   • Priority ordering (highest budget price lanes execute first)
 //   • Thread assignment (round-robin across available cores)
 //   • Accumulator delta collection for global state merge
 
@@ -36,7 +36,7 @@ const dag_mempool = @import("dag_mempool.zig");
 pub const ExecutionPlan = struct {
     lanes: []ExecutionLane,
     totalTxs: u32,
-    totalGas: u64,
+    totalbudget: u64,
     threadAssignments: []ThreadAssignment,
     allocator: std.mem.Allocator,
     all_txs: ?[]types.Transaction = null,
@@ -67,15 +67,15 @@ pub const ExecutionLane = struct {
     sender: types.Address,
     txs: []types.Transaction,
     baseSequence: u64,
-    totalGas: u64,
-    priority: u256, // Max gas price in this lane (for ordering)
+    totalbudget: u64,
+    priority: u256, // Max budget price in this lane (for ordering)
 };
 
 /// Maps lanes to threads for parallel execution.
 pub const ThreadAssignment = struct {
     threadId: u32,
     laneIndices: []u32,
-    totalGas: u64,
+    totalbudget: u64,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *ThreadAssignment) void {
@@ -93,7 +93,7 @@ pub const SchedulerConfig = struct {
     /// Maximum lanes per thread (load balancing)
     maxLanesPerThread: u32 = 10_000,
     /// Block execution budget
-    blockExecutionBudget: u64 = 1_000_000_000, // 1B gas
+    blockExecutionBudget: u64 = 1_000_000_000, // 1B budget
     /// Producer address for fee collection
     producer: types.Address = types.Address.zero(),
 };
@@ -116,7 +116,7 @@ pub fn schedule(
         return ExecutionPlan{
             .lanes = try allocator.alloc(ExecutionLane, 0),
             .totalTxs = 0,
-            .totalGas = 0,
+            .totalbudget = 0,
             .threadAssignments = try allocator.alloc(ThreadAssignment, 0),
             .allocator = allocator,
         };
@@ -127,22 +127,22 @@ pub fn schedule(
     defer exec_lanes.deinit(allocator);
 
     var total_txs: u32 = 0;
-    var total_gas: u64 = 0;
-    var remaining_gas = config.blockExecutionBudget;
+    var total_budget: u64 = 0;
+    var remaining_budget = config.blockExecutionBudget;
 
     for (extraction.lanes) |*extracted| {
         if (extracted.txs.len == 0) continue;
 
-        // Compute lane priority and gas
+        // Compute lane priority and budget
         var max_price: u256 = 0;
-        var lane_gas: u64 = 0;
+        var lane_budget: u64 = 0;
         var valid_count: usize = 0;
 
         for (extracted.txs) |*tx| {
-            if (tx.executionBudget > remaining_gas) break;
-            if (tx.gasPrice > max_price) max_price = tx.gasPrice;
-            lane_gas += tx.executionBudget;
-            remaining_gas -= tx.executionBudget;
+            if (tx.executionBudget > remaining_budget) break;
+            if (tx.computePrice > max_price) max_price = tx.computePrice;
+            lane_budget += tx.executionBudget;
+            remaining_budget -= tx.executionBudget;
             valid_count += 1;
         }
 
@@ -155,22 +155,22 @@ pub fn schedule(
             .sender = extracted.sender,
             .txs = txs,
             .baseSequence = extracted.baseSequence,
-            .totalGas = lane_gas,
+            .totalbudget = lane_budget,
             .priority = max_price,
         });
 
         total_txs += @intCast(valid_count);
-        total_gas += lane_gas;
+        total_budget += lane_budget;
     }
 
-    // 2. Sort lanes by priority (highest gas price first)
+    // 2. Sort lanes by priority (highest budget price first)
     std.mem.sortUnstable(ExecutionLane, exec_lanes.items, {}, struct {
         pub fn lessThan(_: void, a: ExecutionLane, b: ExecutionLane) bool {
             return a.priority > b.priority;
         }
     }.lessThan);
 
-    // 3. Assign lanes to threads (gas-balanced round-robin)
+    // 3. Assign lanes to threads (budget-balanced round-robin)
     const num_threads = @min(config.numThreads, @as(u32, @intCast(exec_lanes.items.len)));
     const assignments = try assignToThreads(allocator, exec_lanes.items, num_threads);
 
@@ -181,7 +181,7 @@ pub fn schedule(
     return ExecutionPlan{
         .lanes = lanes,
         .totalTxs = total_txs,
-        .totalGas = total_gas,
+        .totalbudget = total_budget,
         .threadAssignments = assignments,
         .allocator = allocator,
     };
@@ -198,7 +198,7 @@ pub fn scheduleFromTxs(
         return ExecutionPlan{
             .lanes = try allocator.alloc(ExecutionLane, 0),
             .totalTxs = 0,
-            .totalGas = 0,
+            .totalbudget = 0,
             .threadAssignments = try allocator.alloc(ThreadAssignment, 0),
             .allocator = allocator,
         };
@@ -237,7 +237,7 @@ pub fn scheduleFromTxs(
     defer exec_lanes.deinit(allocator);
 
     var total_txs: u32 = 0;
-    var total_gas: u64 = 0;
+    var total_budget: u64 = 0;
 
     const all_txs_contig = try allocator.alloc(types.Transaction, transactions.len);
     errdefer allocator.free(all_txs_contig);
@@ -249,10 +249,10 @@ pub fn scheduleFromTxs(
         if (txs_list.len == 0) continue;
 
         var max_price: u256 = 0;
-        var lane_gas: u64 = 0;
+        var lane_budget: u64 = 0;
         for (txs_list) |*tx| {
-            if (tx.gasPrice > max_price) max_price = tx.gasPrice;
-            lane_gas += tx.executionBudget;
+            if (tx.computePrice > max_price) max_price = tx.computePrice;
+            lane_budget += tx.executionBudget;
         }
 
         const start_offset = current_tx_offset;
@@ -264,12 +264,12 @@ pub fn scheduleFromTxs(
             .sender = entry.key_ptr.*,
             .txs = all_txs_contig[start_offset..end_offset],
             .baseSequence = txs_list[0].sequence,
-            .totalGas = lane_gas,
+            .totalbudget = lane_budget,
             .priority = max_price,
         });
 
         total_txs += @intCast(txs_list.len);
-        total_gas += lane_gas;
+        total_budget += lane_budget;
     }
 
     // Sort by priority
@@ -288,7 +288,7 @@ pub fn scheduleFromTxs(
     return ExecutionPlan{
         .lanes = lanes,
         .totalTxs = total_txs,
-        .totalGas = total_gas,
+        .totalbudget = total_budget,
         .threadAssignments = assignments,
         .allocator = allocator,
         .all_txs = all_txs_contig,
@@ -297,8 +297,8 @@ pub fn scheduleFromTxs(
 
 // ── Thread Assignment ───────────────────────────────────────────────────
 
-/// Assign lanes to threads using gas-balanced round-robin.
-/// This ensures each thread gets roughly equal gas load.
+/// Assign lanes to threads using budget-balanced round-robin.
+/// This ensures each thread gets roughly equal budget load.
 fn assignToThreads(
     allocator: std.mem.Allocator,
     lanes: []const ExecutionLane,
@@ -308,10 +308,10 @@ fn assignToThreads(
         return try allocator.alloc(ThreadAssignment, 0);
     }
 
-    // Track per-thread gas load for balancing
-    const thread_gas = try allocator.alloc(u64, num_threads);
-    defer allocator.free(thread_gas);
-    @memset(thread_gas, 0);
+    // Track per-thread budget load for balancing
+    const thread_budget = try allocator.alloc(u64, num_threads);
+    defer allocator.free(thread_budget);
+    @memset(thread_budget, 0);
 
     // Temporary storage for per-thread lane indices
     const thread_lanes = try allocator.alloc(std.ArrayListUnmanaged(u32), num_threads);
@@ -321,20 +321,20 @@ fn assignToThreads(
     }
     for (thread_lanes) |*tl| tl.* = .{};
 
-    // Assign each lane to the thread with lowest current gas load
+    // Assign each lane to the thread with lowest current budget load
     for (lanes, 0..) |*lane, lane_idx| {
-        var min_gas: u64 = std.math.maxInt(u64);
+        var min_budget: u64 = std.math.maxInt(u64);
         var min_thread: u32 = 0;
 
         for (0..num_threads) |t| {
-            if (thread_gas[t] < min_gas) {
-                min_gas = thread_gas[t];
+            if (thread_budget[t] < min_budget) {
+                min_budget = thread_budget[t];
                 min_thread = @intCast(t);
             }
         }
 
         try thread_lanes[min_thread].append(allocator, @intCast(lane_idx));
-        thread_gas[min_thread] += lane.totalGas;
+        thread_budget[min_thread] += lane.totalbudget;
     }
 
     // Build final assignments
@@ -346,7 +346,7 @@ fn assignToThreads(
         assignments[t] = ThreadAssignment{
             .threadId = @intCast(t),
             .laneIndices = indices,
-            .totalGas = thread_gas[t],
+            .totalbudget = thread_budget[t],
             .allocator = allocator,
         };
     }
@@ -409,7 +409,7 @@ pub fn computeDAGRoot(plan: *const ExecutionPlan) types.Hash {
         hasher.update(&sequence_buf);
 
         for (lane.txs) |*tx| {
-            const tx_hash = tx.hash();
+            const tx_hash = tx.id();
             hasher.update(&tx_hash.bytes);
         }
     }

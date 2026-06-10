@@ -5,7 +5,7 @@
 // Usage:
 //   const vm_mod = @import("vm");
 //   var host = vm_mod.HostEnv.init(allocator);
-//   var vm = try vm_mod.ForgeVM.create(bytecode, calldata, gas_limit, &host);
+//   var vm = try vm_mod.ForgeVM.create(bytecode, calldata, budget_limit, &host);
 //   const result = vm.run();
 
 const std = @import("std");
@@ -14,8 +14,8 @@ pub const executor = @import("core/executor.zig");
 pub const threaded_executor = @import("core/threaded_executor.zig");
 pub const basicBlock = @import("core/basic_block.zig");
 pub const sandbox = @import("memory/sandbox.zig");
-pub const gasMeter = @import("gas/meter.zig");
-pub const gasTable = @import("gas/table.zig");
+pub const budgetMeter = @import("budget/meter.zig");
+pub const budgetTable = @import("budget/table.zig");
 pub const syscallDispatch = @import("syscall/dispatch.zig");
 pub const forgeLoader = @import("loader/forge_loader.zig");
 pub const forgeFormat = @import("loader/forge_format.zig");
@@ -29,7 +29,7 @@ pub const Instruction = decoder.Instruction;
 pub const DecodeError = decoder.DecodeError;
 pub const SandboxMemory = sandbox.SandboxMemory;
 pub const MemoryError = sandbox.MemoryError;
-pub const GasMeter = gasMeter.GasMeter;
+pub const budgetMeter = budgetMeter.budgetMeter;
 pub const ExecutionStatus = executor.ExecutionStatus;
 pub const ExecutionResult = executor.ExecutionResult;
 pub const HostEnv = syscallDispatch.HostEnv;
@@ -52,7 +52,7 @@ pub const ForgeVM = struct {
         allocator: std.mem.Allocator,
         bytecode: []const u8,
         calldata: []const u8,
-        gas_limit: u64,
+        budget_limit: u64,
         host: *HostEnv,
     ) !ForgeVM {
         // Allocate and initialize sandboxed memory
@@ -74,7 +74,7 @@ pub const ForgeVM = struct {
         const core = CoreVM.init(
             &memory,
             @intCast(bytecode.len),
-            gas_limit,
+            budget_limit,
             handler,
         );
 
@@ -99,7 +99,7 @@ pub const ForgeVM = struct {
     }
 
     /// Execute the contract using the threaded interpreter with pre-decoded
-    /// instructions and per-basic-block gas accounting.
+    /// instructions and per-basic-block budget accounting.
     /// This is the high-performance path — 2-3x faster than the switch-based run().
     pub fn runThreaded(self: *ForgeVM, allocator: std.mem.Allocator) !ExecutionResult {
         self.core.memory = &self.memory;
@@ -153,14 +153,14 @@ pub const ForgeVM = struct {
         );
     }
 
-    /// Get gas used.
-    pub fn gasUsed(self: *const ForgeVM) u64 {
-        return self.core.gas.used;
+    /// Get budget used.
+    pub fn budgetUsed(self: *const ForgeVM) u64 {
+        return self.core.budget.used;
     }
 
-    /// Get remaining gas.
-    pub fn gasRemaining(self: *const ForgeVM) u64 {
-        return self.core.gas.remaining();
+    /// Get remaining budget.
+    pub fn budgetRemaining(self: *const ForgeVM) u64 {
+        return self.core.budget.remaining();
     }
 
     /// Get accumulated logs.
@@ -204,7 +204,7 @@ test "ForgeVM: simple ADDI program" {
     try testing.expectEqual(@as(u32, 42), vm.getReg(1));
 }
 
-test "ForgeVM: gas tracking" {
+test "ForgeVM: budget tracking" {
     var host = HostEnv.init(testing.allocator);
     defer host.deinit();
 
@@ -227,7 +227,7 @@ test "ForgeVM: gas tracking" {
 
     const result = vm.run();
     try testing.expectEqual(ExecutionStatus.breakpoint, result.status);
-    try testing.expect(result.gasUsed > 0);
+    try testing.expect(result.budgetUsed > 0);
     try testing.expectEqual(@as(u32, 3), vm.getReg(1));
 }
 
@@ -662,7 +662,7 @@ test "PolkaVM Contract 2: ERC20 Token" {
     try testing.expectEqualSlices(u8, &event_data, log.data.items);
 }
 
-test "PolkaVM Contract 3: Gas Burner" {
+test "PolkaVM Contract 3: budget Burner" {
     var host = HostEnv.init(testing.allocator);
     defer host.deinit();
 
@@ -689,7 +689,7 @@ test "PolkaVM Contract 3: Gas Burner" {
 
     const res = vm.execute();
     try testing.expectEqual(ExecutionStatus.reverted, res.status);
-    try testing.expectEqual(@as(u64, 0), vm.gas.remaining());
+    try testing.expectEqual(@as(u64, 0), vm.budget.remaining());
 }
 
 test "PolkaVM Contract 4: Block Inspector" {
@@ -1050,16 +1050,16 @@ test "PolkaVM Contract 11: Cross-Call Router" {
 
     const mock_out = "PoolSwapOutput!";
     host.callFn = struct {
-        fn call(callType: syscallDispatch.CallType, to: [32]u8, value: [32]u8, data: []const u8, gas: u64) syscallDispatch.CallProviderResult {
+        fn call(callType: syscallDispatch.CallType, to: [32]u8, value: [32]u8, data: []const u8, budget: u64) syscallDispatch.CallProviderResult {
             _ = callType;
             _ = to;
             _ = value;
             _ = data;
-            _ = gas;
+            _ = budget;
             return .{
                 .success = true,
                 .returnData = "PoolSwapOutput!",
-                .gasUsed = 500,
+                .budgetUsed = 500,
             };
         }
     }.call;
@@ -1088,8 +1088,8 @@ test "PolkaVM Contract 11: Cross-Call Router" {
         encodeLui(12, 0x20), // x12 = callee_ptr (0x20000)
         encodeLui(13, 0x20),
         encodeAddi(13, 13, 32),   // x13 = value_ptr (0x20020)
-        encodeAddi(14, 0, 2000),  // x14 = gas_low
-        encodeAddi(15, 0, 0),     // x15 = gas_high
+        encodeAddi(14, 0, 2000),  // x14 = budget_low
+        encodeAddi(15, 0, 0),     // x15 = budget_high
         encodeLui(16, 0x20),
         encodeAddi(16, 16, 64),   // x16 = input_ptr (0x20040)
         encodeAddi(17, 0, 8),     // x17 = input_len

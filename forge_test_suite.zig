@@ -25,7 +25,7 @@ const forgeFormat = vm.forgeFormat;
 const forgeLoader = vm.forgeLoader;
 const contractLoader = vm.contractLoader;
 const syscallDispatch = vm.syscallDispatch;
-const gasTable = vm.gasTable;
+const budgetTable = vm.budgetTable;
 const decoder = vm.decoder;
 
 const ForgeVM = executor.ForgeVM;
@@ -58,8 +58,8 @@ const Config = struct {
     hex_bytecode: ?[]const u8 = null,
     /// ABI-encoded calldata bytes (hex)
     calldata_hex: ?[]const u8 = null,
-    /// Gas limit for each execution
-    gasLimit: u64 = 10_000_000,
+    /// budget limit for each execution
+    budgetLimit: u64 = 10_000_000,
     /// Number of benchmark iterations (0 = no bench)
     bench_iters: u64 = 0,
     /// Simulated thread count for TPS projection
@@ -70,7 +70,7 @@ const Config = struct {
     all: bool = false,
     /// Emit JSON output instead of human-readable
     json: bool = false,
-    /// Verbose: print per-iteration gas and timing
+    /// Verbose: print per-iteration budget and timing
     verbose: bool = false,
 };
 
@@ -87,8 +87,8 @@ const BenchStats = struct {
     median_ns: u64,
     p95_ns: u64,
     p99_ns: u64,
-    /// Gas consumed per execution (from the last run; consistent contracts are deterministic)
-    gas_per_exec: u64,
+    /// budget consumed per execution (from the last run; consistent contracts are deterministic)
+    budget_per_exec: u64,
     /// How many executions ended with each status
     status_counts: [7]u64,
     /// Faults encountered
@@ -177,13 +177,13 @@ pub fn main() !void {
                 return;
             }
             cfg.calldata_hex = args[i];
-        } else if (std.mem.eql(u8, arg, "--gas")) {
+        } else if (std.mem.eql(u8, arg, "--budget")) {
             i += 1;
             if (i >= args.len) {
-                try stderr.print("--gas requires a number\n", .{});
+                try stderr.print("--budget requires a number\n", .{});
                 return;
             }
-            cfg.gasLimit = try std.fmt.parseInt(u64, args[i], 10);
+            cfg.budgetLimit = try std.fmt.parseInt(u64, args[i], 10);
         } else if (std.mem.eql(u8, arg, "--bench") or std.mem.eql(u8, arg, "-b")) {
             i += 1;
             if (i >= args.len) {
@@ -274,7 +274,7 @@ pub fn main() !void {
             bytecode_buf.?[0] == 0x7F and
             bytecode_buf.?[1] == 'E') "ELF binary" else "raw bytecode";
         try stdout.print("{s}[ SINGLE EXECUTION  —  {s} ]{s}\n", .{ BOLD, detected, RESET });
-        const single = try runSingleExecution(allocator, bytecode_buf.?, calldata, cfg.gasLimit, is_forge_package);
+        const single = try runSingleExecution(allocator, bytecode_buf.?, calldata, cfg.budgetLimit, is_forge_package);
         try printSingleResult(stdout, single);
         if (single.status != .returned and single.status != .breakpoint) all_passed = false;
     }
@@ -292,7 +292,7 @@ pub fn main() !void {
             allocator,
             bytecode_buf.?,
             calldata,
-            cfg.gasLimit,
+            cfg.budgetLimit,
             cfg.bench_iters,
             cfg.threads,
             is_forge_package,
@@ -373,8 +373,8 @@ fn decodeHex(allocator: std.mem.Allocator, hex: []const u8) ![]u8 {
 
 const SingleResult = struct {
     status: ExecutionStatus,
-    gasUsed: u64,
-    gasRemaining: u64,
+    budgetUsed: u64,
+    budgetRemaining: u64,
     returnData: []const u8,
     faultPc: u32,
     faultReason: ?[]const u8,
@@ -387,12 +387,12 @@ fn runSingleExecution(
     allocator: std.mem.Allocator,
     bytecode: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     isPackage: bool,
 ) !SingleResult {
     var env = HostEnv.init(allocator);
     defer env.deinit();
-    env.executionBudget = gasLimit;
+    env.executionBudget = budgetLimit;
     env.chainId = 99999;
     env.blockNumber = 1;
     env.timestamp = @intCast(std.time.timestamp());
@@ -404,7 +404,7 @@ fn runSingleExecution(
     // suite can report what happened rather than panic.
     const cr = blk: {
         if (isPackage) {
-            if (contractLoader.executeFromZeph(allocator, bytecode, calldata, gasLimit, &env)) |r| {
+            if (contractLoader.executeFromZeph(allocator, bytecode, calldata, budgetLimit, &env)) |r| {
                 break :blk r;
             } else |zeph_err| {
                 // .fozbin parse failed — try treating the payload as raw ELF
@@ -414,7 +414,7 @@ fn runSingleExecution(
                     .{@errorName(zeph_err)},
                 );
                 env.clearTransientStorage();
-                if (contractLoader.executeFromElf(allocator, bytecode, calldata, gasLimit, &env)) |r| {
+                if (contractLoader.executeFromElf(allocator, bytecode, calldata, budgetLimit, &env)) |r| {
                     break :blk r;
                 } else |elf_err| {
                     std.debug.print(
@@ -424,7 +424,7 @@ fn runSingleExecution(
                 }
             }
         } else {
-            if (contractLoader.executeFromElf(allocator, bytecode, calldata, gasLimit, &env)) |r| {
+            if (contractLoader.executeFromElf(allocator, bytecode, calldata, budgetLimit, &env)) |r| {
                 break :blk r;
             } else |elf_err| {
                 std.debug.print(
@@ -444,8 +444,8 @@ fn runSingleExecution(
             std.debug.print("[suite] loadCode failed: {s}\n", .{@errorName(e)});
             break :blk contractLoader.ContractResult{
                 .status = .fault,
-                .gasUsed = 0,
-                .gasRemaining = gasLimit,
+                .budgetUsed = 0,
+                .budgetRemaining = budgetLimit,
                 .returnData = &[_]u8{},
                 .logs = &[_]syscallDispatch.LogEntry{},
                 .faultPc = 0,
@@ -455,7 +455,7 @@ fn runSingleExecution(
         if (calldata.len > 0) _ = mem.loadCalldata(calldata) catch {};
 
         const handler = syscallDispatch.createHandler(&env);
-        var raw_vm = ForgeVM.init(&mem, @intCast(code_len), gasLimit, handler);
+        var raw_vm = ForgeVM.init(&mem, @intCast(code_len), budgetLimit, handler);
         raw_vm.hostCtx = &env;
         const raw_result = raw_vm.execute();
 
@@ -466,8 +466,8 @@ fn runSingleExecution(
 
         break :blk contractLoader.ContractResult{
             .status = raw_result.status,
-            .gasUsed = raw_result.gasUsed,
-            .gasRemaining = raw_result.gasRemaining,
+            .budgetUsed = raw_result.budgetUsed,
+            .budgetRemaining = raw_result.budgetRemaining,
             .returnData = ret,
             .logs = env.logs.items,
             .faultPc = raw_result.faultPc,
@@ -479,8 +479,8 @@ fn runSingleExecution(
 
     return SingleResult{
         .status = cr.status,
-        .gasUsed = cr.gasUsed,
-        .gasRemaining = cr.gasRemaining,
+        .budgetUsed = cr.budgetUsed,
+        .budgetRemaining = cr.budgetRemaining,
         .returnData = cr.returnData,
         .faultPc = cr.faultPc,
         .faultReason = cr.faultReason,
@@ -498,12 +498,12 @@ fn printSingleResult(writer: anytype, r: SingleResult) !void {
         else => RED,
     };
     try writer.print("  Status         : {s}{s}{s}\n", .{ status_color, @tagName(r.status), RESET });
-    try writer.print("  Gas used       : {} / {} ({d:.1}%)\n", .{
-        r.gasUsed,
-        r.gasUsed + r.gasRemaining,
-        if (r.gasUsed + r.gasRemaining > 0)
-            100.0 * @as(f64, @floatFromInt(r.gasUsed)) /
-                @as(f64, @floatFromInt(r.gasUsed + r.gasRemaining))
+    try writer.print("  budget used       : {} / {} ({d:.1}%)\n", .{
+        r.budgetUsed,
+        r.budgetUsed + r.budgetRemaining,
+        if (r.budgetUsed + r.budgetRemaining > 0)
+            100.0 * @as(f64, @floatFromInt(r.budgetUsed)) /
+                @as(f64, @floatFromInt(r.budgetUsed + r.budgetRemaining))
         else
             0.0,
     });
@@ -523,7 +523,7 @@ const WorkerContext = struct {
     pool: *VMPool,
     bytecode: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     iterations: u64,
     isPackage: bool,
     verbose: bool,
@@ -540,7 +540,7 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
     var total_ns: u64 = 0;
     var min_ns: u64 = std.math.maxInt(u64);
     var max_ns: u64 = 0;
-    var last_gas: u64 = 0;
+    var last_budget: u64 = 0;
     var fault_count: u64 = 0;
     var last_faultReason: ?[]const u8 = null;
 
@@ -557,7 +557,7 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
     };
     defer ctx.pool.release(mem);
 
-    env.executionBudget = ctx.gasLimit;
+    env.executionBudget = ctx.budgetLimit;
     env.chainId = 99999;
     env.blockNumber = 1;
     env.timestamp = 1_700_000_000;
@@ -574,11 +574,11 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
 
         const cr = blk: {
             if (ctx.isPackage) {
-                if (contractLoader.executeFromZephWithMemory(ctx.allocator, mem, ctx.bytecode, ctx.calldata, ctx.gasLimit, &env)) |r| {
+                if (contractLoader.executeFromZephWithMemory(ctx.allocator, mem, ctx.bytecode, ctx.calldata, ctx.budgetLimit, &env)) |r| {
                     break :blk r;
                 } else |_| {}
             } else {
-                if (contractLoader.executeWithMemory(ctx.allocator, mem, ctx.bytecode, ctx.calldata, ctx.gasLimit, &env)) |r| {
+                if (contractLoader.executeWithMemory(ctx.allocator, mem, ctx.bytecode, ctx.calldata, ctx.budgetLimit, &env)) |r| {
                     break :blk r;
                 } else |_| {}
             }
@@ -586,8 +586,8 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
             last_faultReason = "loader_failed";
             break :blk contractLoader.ContractResult{
                 .status = .fault,
-                .gasUsed = 0,
-                .gasRemaining = ctx.gasLimit,
+                .budgetUsed = 0,
+                .budgetRemaining = ctx.budgetLimit,
                 .returnData = &[_]u8{},
                 .logs = &[_]syscallDispatch.LogEntry{},
                 .faultPc = 0,
@@ -600,7 +600,7 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
         total_ns += elapsed;
         if (elapsed < min_ns) min_ns = elapsed;
         if (elapsed > max_ns) max_ns = elapsed;
-        last_gas = cr.gasUsed;
+        last_budget = cr.budgetUsed;
 
         const status_idx: usize = @intFromEnum(cr.status);
         if (status_idx < status_counts.len) status_counts[status_idx] += 1;
@@ -615,7 +615,7 @@ fn benchmarkWorker(ctx: *WorkerContext) void {
         .median_ns = 0,
         .p95_ns = 0,
         .p99_ns = 0,
-        .gas_per_exec = last_gas,
+        .budget_per_exec = last_budget,
         .status_counts = status_counts,
         .fault_count = fault_count,
         .faultReason = last_faultReason,
@@ -626,7 +626,7 @@ fn runBenchmark(
     allocator: std.mem.Allocator,
     bytecode: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     iterations: u64,
     threads_count: u32,
     isPackage: bool,
@@ -638,7 +638,7 @@ fn runBenchmark(
         var total_ns: u64 = 0;
         var min_ns: u64 = std.math.maxInt(u64);
         var max_ns: u64 = 0;
-        var last_gas: u64 = 0;
+        var last_budget: u64 = 0;
         var fault_count: u64 = 0;
         var last_faultReason: ?[]const u8 = null;
 
@@ -655,7 +655,7 @@ fn runBenchmark(
 
         var i: u64 = 0;
         while (i < iterations) : (i += 1) {
-    env.executionBudget = gasLimit;
+    env.executionBudget = budgetLimit;
             env.chainId = 99999;
             env.blockNumber = 1;
             env.timestamp = 1_700_000_000;
@@ -664,16 +664,16 @@ fn runBenchmark(
             var iter_timer = try std.time.Timer.start();
             const cr = blk: {
                 if (isPackage) {
-                    if (contractLoader.executeFromZephWithMemory(allocator, mem, bytecode, calldata, gasLimit, &env)) |r| break :blk r else |_| {}
+                    if (contractLoader.executeFromZephWithMemory(allocator, mem, bytecode, calldata, budgetLimit, &env)) |r| break :blk r else |_| {}
                 } else {
-                    if (contractLoader.executeWithMemory(allocator, mem, bytecode, calldata, gasLimit, &env)) |r| break :blk r else |_| {}
+                    if (contractLoader.executeWithMemory(allocator, mem, bytecode, calldata, budgetLimit, &env)) |r| break :blk r else |_| {}
                 }
                 fault_count += 1;
                 last_faultReason = "loader_failed";
                 break :blk contractLoader.ContractResult{
                     .status = .fault,
-                    .gasUsed = 0,
-                    .gasRemaining = gasLimit,
+                    .budgetUsed = 0,
+                    .budgetRemaining = budgetLimit,
                     .returnData = &[_]u8{},
                     .logs = &[_]syscallDispatch.LogEntry{},
                     .faultPc = 0,
@@ -685,7 +685,7 @@ fn runBenchmark(
             total_ns += elapsed;
             if (elapsed < min_ns) min_ns = elapsed;
             if (elapsed > max_ns) max_ns = elapsed;
-            last_gas = cr.gasUsed;
+            last_budget = cr.budgetUsed;
 
             const status_idx: usize = @intFromEnum(cr.status);
             if (status_idx < status_counts.len) status_counts[status_idx] += 1;
@@ -705,7 +705,7 @@ fn runBenchmark(
             .median_ns = 0,
             .p95_ns = 0,
             .p99_ns = 0,
-            .gas_per_exec = last_gas,
+            .budget_per_exec = last_budget,
             .status_counts = status_counts,
             .fault_count = fault_count,
             .faultReason = last_faultReason,
@@ -746,7 +746,7 @@ fn runBenchmark(
             .pool = &pool,
             .bytecode = bytecode,
             .calldata = calldata,
-            .gasLimit = gasLimit,
+            .budgetLimit = budgetLimit,
             .iterations = thread_iters,
             .samples = thread_samples,
             .isPackage = isPackage,
@@ -760,7 +760,7 @@ fn runBenchmark(
     var total_ns: u64 = 0;
     var min_ns: u64 = std.math.maxInt(u64);
     var max_ns: u64 = 0;
-    var last_gas: u64 = 0;
+    var last_budget: u64 = 0;
     var fault_count: u64 = 0;
     var status_counts = [_]u64{0} ** 7;
     var last_faultReason: ?[]const u8 = null;
@@ -777,7 +777,7 @@ fn runBenchmark(
         total_ns += w.stats.total_ns;
         if (w.stats.min_ns < min_ns) min_ns = w.stats.min_ns;
         if (w.stats.max_ns > max_ns) max_ns = w.stats.max_ns;
-        last_gas = w.stats.gas_per_exec;
+        last_budget = w.stats.budget_per_exec;
         fault_count += w.stats.fault_count;
         if (w.stats.faultReason) |fr| last_faultReason = fr;
 
@@ -799,7 +799,7 @@ fn runBenchmark(
         .median_ns = 0,
         .p95_ns = 0,
         .p99_ns = 0,
-        .gas_per_exec = last_gas,
+        .budget_per_exec = last_budget,
         .status_counts = status_counts,
         .fault_count = fault_count,
         .faultReason = last_faultReason,
@@ -828,10 +828,10 @@ fn printBenchReport(writer: anytype, s: BenchStats, threads: u32) !void {
     }
     try writer.print("  Total iterations  : {d:>12}\n", .{s.iterations});
     try writer.print("  Total wall time   : {d:>12.3} ms\n", .{@as(f64, @floatFromInt(s.total_ns)) / 1_000_000.0});
-    try writer.print("  Gas/exec          : {d:>12}\n", .{s.gas_per_exec});
+    try writer.print("  budget/exec          : {d:>12}\n", .{s.budget_per_exec});
 
     try writer.print("\n{s}  Execution Status Breakdown{s}\n", .{ BOLD, RESET });
-    const status_names = [_][]const u8{ "running", "returned", "reverted", "out_of_gas", "fault", "breakpoint", "self_destruct" };
+    const status_names = [_][]const u8{ "running", "returned", "reverted", "out_of_budget", "fault", "breakpoint", "self_destruct" };
     for (status_names, 0..) |name, si| {
         if (s.status_counts[si] > 0) {
             const pct = 100.0 * @as(f64, @floatFromInt(s.status_counts[si])) /
@@ -914,7 +914,7 @@ fn printTpsAnalysis(writer: anytype, s: BenchStats, threads: u32, json: bool) !v
     }
     if (!viable) {
         try writer.print("  • Enable --threads {} to simulate {d:.0} projected TPS on a {d}-core machine\n", .{ @as(u32, @intFromFloat(@ceil(cores_needed))), tps_1c * @ceil(cores_needed), @as(u32, @intFromFloat(@ceil(cores_needed))) });
-        try writer.print("  • Use runThreaded() (basic block gas batching, 2-3× speedup)\n", .{});
+        try writer.print("  • Use runThreaded() (basic block budget batching, 2-3× speedup)\n", .{});
         try writer.print("  • Use VMPool to eliminate per-TX alloc (pre-allocated sandboxes)\n", .{});
     }
     try writer.print("\n", .{});
@@ -936,7 +936,7 @@ fn printBenchJson(writer: anytype, s: BenchStats, threads: u32, source: []const 
     try writer.print("  \"throughput\": {{\n", .{});
     try writer.print("    \"single_core_tps\": {d:.2},\n", .{s.throughput_per_sec()});
     try writer.print("    \"projected_{d}c_tps\": {d:.2},\n", .{ threads, s.projected_tps(threads) });
-    try writer.print("    \"gas_per_exec\": {}\n", .{s.gas_per_exec});
+    try writer.print("    \"budget_per_exec\": {}\n", .{s.budget_per_exec});
     try writer.print("  }},\n", .{});
     try printTpsAnalysis(writer, s, threads, true);
     try writer.print("\n}}\n", .{});
@@ -1082,7 +1082,7 @@ fn runSelfTests(allocator: std.mem.Allocator, writer: anytype, as_json: bool) !b
         });
     }
 
-    // ── Out of gas ───────────────────────────────────────────────────
+    // ── Out of budget ───────────────────────────────────────────────────
     {
         const code = [_]u32{
             encodeI(1, 0, 0, 1, OP_IMM),
@@ -1090,11 +1090,11 @@ fn runSelfTests(allocator: std.mem.Allocator, writer: anytype, as_json: bool) !b
             encodeI(1, 1, 0, 1, OP_IMM),
             encodeI(1, 1, 0, 1, OP_IMM),
         };
-        const r = try execWords(allocator, &code, 2); // only 2 gas
+        const r = try execWords(allocator, &code, 2); // only 2 budget
         try results.append(allocator, .{
-            .name = "Out-of-gas halts execution",
-            .passed = r.status == .outOfGas,
-            .message = "status should be out_of_gas",
+            .name = "Out-of-budget halts execution",
+            .passed = r.status == .outOfBudget,
+            .message = "status should be out_of_budget",
         });
     }
 
@@ -1196,25 +1196,25 @@ fn runSelfTests(allocator: std.mem.Allocator, writer: anytype, as_json: bool) !b
         });
     }
 
-    // ── Gas accounting ──────────────────────────────────────────────────
+    // ── budget accounting ──────────────────────────────────────────────────
     {
-        // Each ADDI uses OP_IMM opcode → ALU_IMM = 1 gas each.
+        // Each ADDI uses OP_IMM opcode → ALU_IMM = 1 budget each.
         // EBREAK uses the SYSTEM opcode (0x73), same as ECALL.
         // The fast opcode-table path charges ECALL_BASE = 3 for all SYSTEM
         // instructions — EBREAK vs ECALL is only distinguishable after a full
         // decode, which the fast path deliberately skips.
-        // Total: 3 × 1 + 3 = 6 gas.
+        // Total: 3 × 1 + 3 = 6 budget.
         const code = [_]u32{
-            encodeI(1, 0, 0, 1, OP_IMM), // 1 gas (OP_IMM → ALU_IMM)
-            encodeI(1, 1, 0, 1, OP_IMM), // 1 gas
-            encodeI(1, 1, 0, 1, OP_IMM), // 1 gas
-            EBREAK, // 3 gas (SYSTEM opcode → ECALL_BASE)
+            encodeI(1, 0, 0, 1, OP_IMM), // 1 budget (OP_IMM → ALU_IMM)
+            encodeI(1, 1, 0, 1, OP_IMM), // 1 budget
+            encodeI(1, 1, 0, 1, OP_IMM), // 1 budget
+            EBREAK, // 3 budget (SYSTEM opcode → ECALL_BASE)
         };
         const r = try execWords(allocator, &code, 100_000);
         try results.append(allocator, .{
-            .name = "Gas accounting (3 ADDI + EBREAK = 6 gas)",
-            .passed = r.gasUsed == 6 and r.status == .breakpoint,
-            .message = "gasUsed should be exactly 6 (EBREAK shares SYSTEM opcode cost)",
+            .name = "budget accounting (3 ADDI + EBREAK = 6 budget)",
+            .passed = r.budgetUsed == 6 and r.status == .breakpoint,
+            .message = "budgetUsed should be exactly 6 (EBREAK shares SYSTEM opcode cost)",
         });
     }
 
@@ -1226,8 +1226,8 @@ fn runSelfTests(allocator: std.mem.Allocator, writer: anytype, as_json: bool) !b
         const r = try execWords(allocator, &code, 100_000_000);
         try results.append(allocator, .{
             .name = "Step limit kills infinite loop",
-            .passed = r.status == .fault or r.status == .outOfGas,
-            .message = "infinite loop must be halted by step limit or gas",
+            .passed = r.status == .fault or r.status == .outOfBudget,
+            .message = "infinite loop must be halted by step limit or budget",
         });
     }
 
@@ -1288,13 +1288,13 @@ fn runSelfTests(allocator: std.mem.Allocator, writer: anytype, as_json: bool) !b
 const RawExecResult = struct {
     status: ExecutionStatus,
     regs: [32]u64,
-    gasUsed: u64,
+    budgetUsed: u64,
 };
 
 fn execWords(
     allocator: std.mem.Allocator,
     words: []const u32,
-    gas: u64,
+    budget: u64,
 ) !RawExecResult {
     const code_bytes = std.mem.sliceAsBytes(words);
 
@@ -1306,14 +1306,14 @@ fn execWords(
     defer env.deinit();
 
     const handler = syscallDispatch.createHandler(&env);
-    var forge_vm = ForgeVM.init(&mem, @intCast(code_bytes.len), gas, handler);
+    var forge_vm = ForgeVM.init(&mem, @intCast(code_bytes.len), budget, handler);
     forge_vm.hostCtx = &env;
 
     const result = forge_vm.execute();
     return .{
         .status = result.status,
         .regs = forge_vm.regs,
-        .gasUsed = result.gasUsed,
+        .budgetUsed = result.budgetUsed,
     };
 }
 
@@ -1335,7 +1335,7 @@ fn printHelp(writer: anytype) !void {
         \\    --calldata <hex>   ABI-encoded calldata to pass to the contract
         \\
         \\  EXECUTION OPTIONS
-        \\    --gas    <n>       Gas limit per execution           (default: 10,000,000)
+        \\    --budget    <n>       budget limit per execution           (default: 10,000,000)
         \\    --bench  <n>       Run N benchmark iterations         (default: off)
         \\    --threads <n>      Core count for TPS projection      (default: 1)
         \\

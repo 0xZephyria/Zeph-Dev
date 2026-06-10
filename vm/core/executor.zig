@@ -2,7 +2,7 @@
 // ForgeVM Core Executor — The RISC-V RV64IM execution engine.
 // This is the most performance-critical file in the entire system.
 //
-// Implements the fetch-decode-execute-gas loop for all RV64IM instructions:
+// Implements the fetch-decode-execute-budget loop for all RV64IM instructions:
 //   - RV64I base: ALU, loads (including 64-bit LD/SD), stores, branches, jumps, upper-imm
 //   - RV64M extension: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU
 //     plus RV64M word ops: MULW, DIVW, DIVUW, REMW, REMUW
@@ -13,13 +13,13 @@
 const std = @import("std");
 const decoder = @import("decoder.zig");
 const sandbox = @import("../memory/sandbox.zig");
-const gasMeter = @import("../gas/meter.zig");
-const gasTable = @import("../gas/table.zig");
+const budgetMeter = @import("../budget/meter.zig");
+const budgetTable = @import("../budget/table.zig");
 
 // Re-export for convenience
 pub const Instruction = decoder.Instruction;
 pub const SandboxMemory = sandbox.SandboxMemory;
-pub const GasMeter = gasMeter.GasMeter;
+pub const BudgetMeter = budgetMeter.BudgetMeter;
 
 // ---------------------------------------------------------------------------
 // Execution result
@@ -29,7 +29,7 @@ pub const ExecutionStatus = enum {
     running,
     returned, // Normal exit via ECALL returnData (syscall 0x09)
     reverted, // Revert via ECALL revert (syscall 0x0A)
-    outOfGas, // Gas exhausted
+    outOfBudget, // budget exhausted
     fault, // Illegal instruction, segfault, etc.
     breakpoint, // EBREAK hit (debug)
     selfDestruct, // SELFDESTRUCT syscall
@@ -37,8 +37,8 @@ pub const ExecutionStatus = enum {
 
 pub const ExecutionResult = struct {
     status: ExecutionStatus,
-    gasUsed: u64,
-    gasRemaining: u64,
+    budgetUsed: u64,
+    budgetRemaining: u64,
     returnDataOffset: u32, // Offset within return region
     returnDataLen: u32, // Length of return data
     faultPc: u32, // PC where fault occurred (if status == .fault)
@@ -55,7 +55,7 @@ pub const SyscallError = error{
     ReturnData,
     Revert,
     SelfDestruct,
-    OutOfGas,
+    OutOfBudget,
     UnknownSyscall,
     SegFault,
     InternalError,
@@ -74,8 +74,8 @@ pub const ForgeVM = struct {
     // ---- Memory ----
     memory: *SandboxMemory,
 
-    // ---- Gas ----
-    gas: GasMeter,
+    // ---- budget ----
+    budget: BudgetMeter,
 
     // ---- Code ----
     codeLen: u32, // Length of loaded code in bytes
@@ -112,7 +112,7 @@ pub const ForgeVM = struct {
     pub fn init(
         memory: *SandboxMemory,
         codeLen: u32,
-        gasLimit: u64,
+        budget: u64,
         syscallHandler: ?SyscallFn,
     ) ForgeVM {
         var vm = ForgeVM{
@@ -120,7 +120,7 @@ pub const ForgeVM = struct {
             .pc = 0,
             .pcUpdated = false,
             .memory = memory,
-            .gas = GasMeter.init(gasLimit),
+            .budget = BudgetMeter.init(budget),
             .codeLen = codeLen,
             .calldataLen = 0,
             .status = .running,
@@ -139,7 +139,7 @@ pub const ForgeVM = struct {
         return vm;
     }
 
-    /// Execute until completion (return, revert, out-of-gas, or fault).
+    /// Execute until completion (return, revert, out-of-budget, or fault).
     pub fn execute(self: *ForgeVM) ExecutionResult {
         while (self.status == .running) {
             self.step();
@@ -173,10 +173,10 @@ pub const ForgeVM = struct {
             return;
         };
 
-        // 3. Fast gas pre-check using opcode table
+        // 3. Fast budget pre-check using opcode table
         const opcode: u7 = @truncate(word & 0x7F);
-        self.gas.consumeOpcode(opcode) catch {
-            self.status = .outOfGas;
+        self.budget.consumeOpcode(opcode) catch {
+            self.status = .outOfBudget;
             return;
         };
 
@@ -187,14 +187,14 @@ pub const ForgeVM = struct {
             return;
         };
 
-        // 5. For M-extension multiply/divide, charge additional gas
+        // 5. For M-extension multiply/divide, charge additional budget
         if (insn == .rType) {
             const r = insn.rType;
             if (r.funct7 == decoder.Funct7.MULDIV) {
-                const extra = gasTable.instructionCost(insn) -| gasTable.InstructionGas.ALU;
+                const extra = budgetTable.instructionCost(insn) -| budgetTable.InstructionBudget.ALU;
                 if (extra > 0) {
-                    self.gas.consume(extra) catch {
-                        self.status = .outOfGas;
+                    self.budget.consume(extra) catch {
+                        self.status = .outOfBudget;
                         return;
                     };
                 }
@@ -672,8 +672,8 @@ pub const ForgeVM = struct {
                             error.SelfDestruct => {
                                 self.status = .selfDestruct;
                             },
-                            error.OutOfGas => {
-                                self.status = .outOfGas;
+                            error.OutOfBudget => {
+                                self.status = .outOfBudget;
                             },
                             error.UnknownSyscall => {
                                 self.status = .fault;
@@ -843,7 +843,7 @@ pub const ForgeVM = struct {
                     error.ReturnData => self.status = .returned,
                     error.Revert => self.status = .reverted,
                     error.SelfDestruct => self.status = .selfDestruct,
-                    error.OutOfGas => self.status = .outOfGas,
+                    error.OutOfBudget => self.status = .outOfBudget,
                     error.UnknownSyscall => {
                         self.status = .fault;
                         self.faultReason = "Unknown syscall via ZEPH custom";
@@ -877,8 +877,8 @@ pub const ForgeVM = struct {
     pub fn buildResult(self: *const ForgeVM) ExecutionResult {
         return .{
             .status = self.status,
-            .gasUsed = self.gas.used,
-            .gasRemaining = self.gas.remaining(),
+            .budgetUsed = self.budget.consumed,
+            .budgetRemaining = self.budget.remaining(),
             .returnDataOffset = self.returnDataOffset,
             .returnDataLen = self.returnDataLen,
             .faultPc = if (self.status == .fault) self.pc else 0,
@@ -949,7 +949,7 @@ fn encodeEcall() u32 {
 
 /// Helper: create a VM with code loaded into memory.
 /// IMPORTANT: call ctx.fixMemPtr() after assignment.
-fn createTestVM(code: []const u32, gas: u64) !struct {
+fn createTestVM(code: []const u32, budget: u64) !struct {
     vm: ForgeVM,
     mem: SandboxMemory,
 
@@ -964,7 +964,7 @@ fn createTestVM(code: []const u32, gas: u64) !struct {
     const code_bytes = std.mem.sliceAsBytes(code);
     try mem.loadCode(code_bytes);
     const code_len: u32 = @intCast(code_bytes.len);
-    const vm = ForgeVM.init(&mem, code_len, gas, null);
+    const vm = ForgeVM.init(&mem, code_len, budget, null);
     return .{ .vm = vm, .mem = mem };
 }
 
@@ -1098,18 +1098,18 @@ test "DIV by zero returns -1" {
     try testing.expectEqual(@as(u64, std.math.maxInt(u64)), ctx.vm.regs[1]);
 }
 
-test "out of gas stops execution" {
+test "out of budget stops execution" {
     const code = [_]u32{
         encodeI(1, 0, 0, 1, decoder.Opcode.OP_IMM), // ADDI x1, x0, 1
         encodeI(1, 1, 0, 1, decoder.Opcode.OP_IMM), // ADDI x1, x1, 1
         encodeI(1, 1, 0, 1, decoder.Opcode.OP_IMM), // ADDI x1, x1, 1
     };
-    // Each ADDI costs 1 gas, give only 2
+    // Each ADDI costs 1 budget, give only 2
     var ctx = try createTestVM(&code, 2);
     ctx.fixMemPtr();
     defer ctx.mem.deinit();
     const result = ctx.vm.execute();
-    try testing.expectEqual(ExecutionStatus.outOfGas, result.status);
+    try testing.expectEqual(ExecutionStatus.outOfBudget, result.status);
     try testing.expectEqual(@as(u32, 2), ctx.vm.regs[1]); // Only 2 executed
 }
 
@@ -1170,19 +1170,19 @@ test "SW + LW round-trip in heap" {
     try testing.expectEqual(@as(u32, 0x42), ctx.vm.regs[3]);
 }
 
-test "gas accounting is correct" {
+test "budget accounting is correct" {
     const code = [_]u32{
-        encodeI(1, 0, 0, 1, decoder.Opcode.OP_IMM), // ADDI: 1 gas
-        encodeR(2, 1, 1, 0, 0), // ADD: 1 gas
-        encodeR(3, 1, 2, 0b000, 0b0000001), // MUL: 1 gas (base) + 1 (M-ext extra) = 2 gas total
+        encodeI(1, 0, 0, 1, decoder.Opcode.OP_IMM), // ADDI: 1 budget
+        encodeR(2, 1, 1, 0, 0), // ADD: 1 budget
+        encodeR(3, 1, 2, 0b000, 0b0000001), // MUL: 1 budget (base) + 1 (M-ext extra) = 2 budget total
     };
     var ctx = try createTestVM(&code, 100);
     ctx.fixMemPtr();
     defer ctx.mem.deinit();
     ctx.vm.step(); // ADDI
-    try testing.expectEqual(@as(u64, 1), ctx.vm.gas.used);
+    try testing.expectEqual(@as(u64, 1), ctx.vm.budget.consumed);
     ctx.vm.step(); // ADD
-    try testing.expectEqual(@as(u64, 2), ctx.vm.gas.used);
+    try testing.expectEqual(@as(u64, 2), ctx.vm.budget.consumed);
     ctx.vm.step(); // MUL
-    try testing.expectEqual(@as(u64, 4), ctx.vm.gas.used); // 1+1+2
+    try testing.expectEqual(@as(u64, 4), ctx.vm.budget.consumed); // 1+1+2
 }

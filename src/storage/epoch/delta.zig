@@ -20,7 +20,7 @@ pub const StateDelta = struct {
     // Global statistics (atomic)
     total_accounts: std.atomic.Value(u64),
     total_storage: std.atomic.Value(u64),
-    total_gas: std.atomic.Value(u128),
+    total_budget: std.atomic.Value(u128),
 
     const Shard = struct {
         allocator: Allocator,
@@ -48,7 +48,7 @@ pub const StateDelta = struct {
         self.allocator = allocator;
         self.total_accounts = std.atomic.Value(u64).init(0);
         self.total_storage = std.atomic.Value(u64).init(0);
-        self.total_gas = std.atomic.Value(u128).init(0);
+        self.total_budget = std.atomic.Value(u128).init(0);
 
         for (&self.shards) |*shard| {
             shard.* = Shard.init(allocator);
@@ -127,9 +127,9 @@ pub const StateDelta = struct {
         _ = self.total_storage.fetchAdd(1, .monotonic);
     }
 
-    /// Record gas usage
-    pub fn recordGas(self: *Self, gas: u64) void {
-        _ = self.total_gas.fetchAdd(gas, .monotonic);
+    /// Record budget usage
+    pub fn recordbudget(self: *Self, budget: u64) void {
+        _ = self.total_budget.fetchAdd(budget, .monotonic);
     }
 
     /// Merge another delta into this one
@@ -321,11 +321,11 @@ pub const StateDelta = struct {
     }
 
     /// Statistics
-    pub fn getStats(self: *const Self) struct { accounts: u64, storage: u64, gas: u128 } {
+    pub fn getStats(self: *const Self) struct { accounts: u64, storage: u64, budget: u128 } {
         return .{
             .accounts = self.total_accounts.load(.monotonic),
             .storage = self.total_storage.load(.monotonic),
-            .gas = self.total_gas.load(.monotonic),
+            .budget = self.total_budget.load(.monotonic),
         };
     }
 };

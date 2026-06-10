@@ -22,10 +22,14 @@ const Crc32 = std.hash.crc.Crc32IsoHdlc;
 // ── Constants ───────────────────────────────────────────────────────────
 
 pub const MAX_SHRED_PAYLOAD: usize = 1100; // Leave room for shred header in MTU
-pub const DEFAULT_PARITY_RATIO: f64 = 0.25; // 25% parity shreds
+pub const DEFAULT_PARITY_RATIO: f64 = 0.25; // 25% parity shreds (base)
+pub const MIN_PARITY_RATIO: f64 = 0.10; // 10% minimum parity for fast networks
+pub const MAX_PARITY_RATIO: f64 = 0.50; // 50% maximum parity for lossy networks
 pub const MAX_BLOCK_SIZE: usize = 256 * 1024 * 1024; // 256 MB
 pub const MAX_SHREDS: u32 = 262144; // 256K shreds max
 const STRIPE_COUNT: usize = 16; // Striped lock shards for TurbineEngine
+const FAILURE_WINDOW_SIZE: u8 = 64; // Sliding window for failure rate tracking
+const FAILURE_WINDOW_SECS: u64 = 300; // 5 minute window
 
 // ── GF(2^8) Galois Field Arithmetic ─────────────────────────────────────
 
@@ -168,6 +172,7 @@ pub const ReedSolomon = struct {
     const Self = @This();
 
     pub fn init(dataShreds: u32, parityShreds: u32) Self {
+        std.debug.assert(dataShreds + parityShreds <= 256);
         return .{
             .dataShreds = dataShreds,
             .parityShreds = parityShreds,
@@ -282,15 +287,13 @@ pub const ReedSolomon = struct {
 
     fn vandermondeCoeff(row: u8, col: u8) u8 {
         GF256.ensureInit();
-        // Simple Vandermonde: element (row, col) = (col+1)^row in GF(2^8)
-        if (row == 0) return 1;
-        var result: u8 = 1;
-        const base = col +% 1;
-        if (base == 0) return 0;
-        for (0..row) |_| {
-            result = GF256.multiply(result, base);
-        }
-        return result;
+        // Switch from Vandermonde to Cauchy matrix coefficients to ensure systematic MDS code properties.
+        // Element: 1 / (x_i ^ y_j) where x_i = row + 128 (range 128..255) and y_j = col (range 0..127).
+        // Since the sets X and Y are completely disjoint, the denominator is never zero.
+        const x = row +% 128;
+        const y = col;
+        const diff = x ^ y;
+        return GF256.inverse(diff);
     }
 
     /// Gaussian elimination to invert matrix in GF(2^8)
@@ -351,13 +354,16 @@ pub const ReedSolomon = struct {
 // ── Shred ───────────────────────────────────────────────────────────────
 
 pub const Shred = struct {
+    /// Canonical block id — identifies the block this shred belongs to
+    blockId: core.types.Hash,
     blockNumber: u64,
     shredIndex: u32,
     totalDataShreds: u32,
     totalParityShreds: u32,
     shredType: types.ShredType,
     payload: []const u8,
-    producerSignature: [64]u8,
+    /// Block-level BLS signature authenticates all shreds via reconstruction
+    producerSignature: [96]u8,
     /// Thread ID for targeted propagation (Loom Genesis)
     threadId: u8,
     /// CRC32 over (block_number ++ shredIndex ++ payload) for fast integrity check
@@ -476,6 +482,7 @@ pub const ShredBufferPool = struct {
 pub const ShredCollector = struct {
     allocator: std.mem.Allocator,
     blockNumber: u64,
+    blockId: core.types.Hash,
     dataShreds: u32,
     parityShreds: u32,
     totalShreds: u32,
@@ -485,8 +492,10 @@ pub const ShredCollector = struct {
     receivedCount: u32,
     complete: bool,
     lastRepairTime: i64,
+    nextRepairTime: i64, // Next time to trigger repair request (monotonic)
+    repairBackoffMs: u64, // Exponential backoff for repair requests
     createdTime: i64,
-    producerSignature: [64]u8,
+    producerSignature: [96]u8,
 
     const Self = @This();
 
@@ -504,6 +513,7 @@ pub const ShredCollector = struct {
         return Self{
             .allocator = allocator,
             .blockNumber = blockNumber,
+            .blockId = core.types.Hash.zero(),
             .dataShreds = dataShreds,
             .parityShreds = parityShreds,
             .totalShreds = total,
@@ -513,8 +523,10 @@ pub const ShredCollector = struct {
             .receivedCount = 0,
             .complete = false,
             .lastRepairTime = 0,
+            .nextRepairTime = std.time.milliTimestamp() + 200, // First repair after 200ms
+            .repairBackoffMs = 200,
             .createdTime = std.time.milliTimestamp(),
-            .producerSignature = [_]u8{0} ** 64,
+            .producerSignature = [_]u8{0} ** 96,
         };
     }
 
@@ -540,8 +552,40 @@ pub const ShredCollector = struct {
         self.present[idx] = true;
         self.receivedCount += 1;
 
-        // Check if we have enough for reconstruction
-        if (self.receivedCount >= self.dataShreds) {
+        // Check if we have enough for reconstruction across all FEC sets
+        const FEC_SIZE = 128;
+        const num_fec_sets = (self.dataShreds + FEC_SIZE - 1) / FEC_SIZE;
+        var is_reconstructible = true;
+        var f: u32 = 0;
+        while (f < num_fec_sets) : (f += 1) {
+            const data_start = f * FEC_SIZE;
+            const data_end = @min((f + 1) * FEC_SIZE, self.dataShreds);
+            const fec_data_count = data_end - data_start;
+
+            const parity_start = f * self.parityShreds / num_fec_sets;
+            const parity_end = (f + 1) * self.parityShreds / num_fec_sets;
+            const fec_parity_count = parity_end - parity_start;
+
+            // Count how many shreds are present in this FEC set
+            var present_in_fec: u32 = 0;
+            // Check data shreds
+            var idx_check: usize = 0;
+            while (idx_check < fec_data_count) : (idx_check += 1) {
+                if (self.present[data_start + idx_check]) present_in_fec += 1;
+            }
+            // Check parity shreds
+            idx_check = 0;
+            while (idx_check < fec_parity_count) : (idx_check += 1) {
+                if (self.present[self.dataShreds + parity_start + idx_check]) present_in_fec += 1;
+            }
+
+            if (present_in_fec < fec_data_count) {
+                is_reconstructible = false;
+                break;
+            }
+        }
+
+        if (is_reconstructible) {
             self.complete = true;
             return true;
         }
@@ -563,9 +607,60 @@ pub const ShredCollector = struct {
         }
 
         if (!all_data_present) {
-            const rs = ReedSolomon.init(self.dataShreds, self.parityShreds);
-            const success = try rs.decode(self.allocator, self.shards, self.present);
-            if (!success) return error.ReconstructionFailed;
+            const FEC_SIZE = 128;
+            const num_fec_sets = (self.dataShreds + FEC_SIZE - 1) / FEC_SIZE;
+            var f: u32 = 0;
+            while (f < num_fec_sets) : (f += 1) {
+                const data_start = f * FEC_SIZE;
+                const data_end = @min((f + 1) * FEC_SIZE, self.dataShreds);
+                const fec_data_count = data_end - data_start;
+
+                const parity_start = f * self.parityShreds / num_fec_sets;
+                const parity_end = (f + 1) * self.parityShreds / num_fec_sets;
+                const fec_parity_count = parity_end - parity_start;
+
+                // Check if this FEC set needs decoding
+                var all_fec_data_present = true;
+                var idx_check: usize = 0;
+                while (idx_check < fec_data_count) : (idx_check += 1) {
+                    if (!self.present[data_start + idx_check]) {
+                        all_fec_data_present = false;
+                        break;
+                    }
+                }
+
+                if (all_fec_data_present) continue;
+
+                // Build local slices for ReedSolomon.decode
+                const fec_total = fec_data_count + fec_parity_count;
+                const fec_shards = try self.allocator.alloc([]u8, fec_total);
+                defer self.allocator.free(fec_shards);
+                const fec_present = try self.allocator.alloc(bool, fec_total);
+                defer self.allocator.free(fec_present);
+
+                // Populate data shards and present flags
+                var idx: usize = 0;
+                while (idx < fec_data_count) : (idx += 1) {
+                    fec_shards[idx] = self.shards[data_start + idx];
+                    fec_present[idx] = self.present[data_start + idx];
+                }
+                // Populate parity shards and present flags
+                idx = 0;
+                while (idx < fec_parity_count) : (idx += 1) {
+                    fec_shards[fec_data_count + idx] = self.shards[self.dataShreds + parity_start + idx];
+                    fec_present[fec_data_count + idx] = self.present[self.dataShreds + parity_start + idx];
+                }
+
+                const rs = ReedSolomon.init(fec_data_count, fec_parity_count);
+                const success = try rs.decode(self.allocator, fec_shards, fec_present);
+                if (!success) return error.ReconstructionFailed;
+
+                // Copy decoded data back to present flags
+                idx = 0;
+                while (idx < fec_data_count) : (idx += 1) {
+                    self.present[data_start + idx] = fec_present[idx];
+                }
+            }
         }
 
         // Concatenate data shreds to form the block
@@ -584,9 +679,47 @@ pub const ShredCollector = struct {
         if (self.dataShreds == 0) return 1.0;
         return @as(f64, @floatFromInt(self.receivedCount)) / @as(f64, @floatFromInt(self.dataShreds));
     }
+
+    /// Returns indices of missing data shreds for repair requests.
+    /// Only includes data shreds (not parity) — requesters reconstruct from
+    /// any data shreds + sufficient parity, so repairing data is priority.
+    /// Caller must free the returned slice.
+    pub fn missingDataShredIndices(self: *const Self, allocator: std.mem.Allocator) ![]u32 {
+        var missing = std.ArrayListUnmanaged(u32){};
+        defer missing.deinit(allocator);
+
+        for (0..self.dataShreds) |i| {
+            if (!self.present[i]) {
+                try missing.append(allocator, @intCast(i));
+            }
+        }
+
+        const result = try allocator.alloc(u32, missing.items.len);
+        @memcpy(result, missing.items);
+        return result;
+    }
+
+    /// Check if it's time to trigger a repair request.
+    pub fn shouldRequestRepair(self: *const Self) bool {
+        if (self.complete) return false;
+        if (self.receivedCount == 0) return false;
+        return std.time.milliTimestamp() >= self.nextRepairTime;
+    }
+
+    /// Advance the repair timer with exponential backoff (capped at 2 seconds).
+    pub fn advanceRepairTimer(self: *Self) void {
+        self.nextRepairTime = std.time.milliTimestamp() + @as(i64, @intCast(self.repairBackoffMs));
+        self.lastRepairTime = std.time.milliTimestamp();
+        self.repairBackoffMs = @min(self.repairBackoffMs * 2, 2000); // Double, cap at 2s
+    }
 };
 
 // ── Propagation Tree ────────────────────────────────────────────────────
+
+pub const StakeWeightedPeer = struct {
+    address: core.types.Address,
+    stake: u256,
+};
 
 pub const TreeNode = struct {
     peerIndex: u32,
@@ -618,11 +751,13 @@ pub const PropagationTree = struct {
         self.nodes.deinit(self.allocator);
     }
 
-    /// Build the propagation tree for a given number of peers and shreds.
-    /// The root (index 0) is the block producer.
-    pub fn build(self: *Self, num_peers: u32, total_shreds: u32) !void {
+    /// Build the propagation tree from stake-weighted peers.
+    /// Caller must sort peers by stake descending so that peerIndex 0 = highest stake.
+    /// Higher-stake nodes get higher fanout (more children), lower-stake nodes are leaves.
+    pub fn build(self: *Self, peers: []const StakeWeightedPeer, total_shreds: u32) !void {
         self.nodes.clearRetainingCapacity();
 
+        const num_peers: u32 = @intCast(peers.len);
         if (num_peers == 0) return;
 
         // Calculate layers needed
@@ -631,7 +766,7 @@ pub const PropagationTree = struct {
         while (nodes_covered < num_peers) {
             nodes_covered *= self.fanout;
             layers += 1;
-            if (layers >= 10) break; // Safety cap
+            if (layers >= 10) break;
         }
         self.totalLayers = layers;
 
@@ -639,7 +774,7 @@ pub const PropagationTree = struct {
         var peer_idx: u32 = 0;
         var current_layer_start: u32 = 0;
 
-        // Root node (block producer)
+        // Root node (peer 0 = highest stake)
         try self.nodes.append(self.allocator, .{
             .peerIndex = 0,
             .layer = 0,
@@ -657,13 +792,41 @@ pub const PropagationTree = struct {
             const parent_end = self.nodes.items.len;
             current_layer_start = @intCast(self.nodes.items.len);
 
+            // Compute total stake of parents in this layer
+            var total_parent_stake: u256 = 0;
+            for (parent_start..parent_end) |pi| {
+                const pidx = self.nodes.items[pi].peerIndex;
+                if (pidx < num_peers) {
+                    total_parent_stake += peers[pidx].stake;
+                }
+            }
+
             for (parent_start..parent_end) |pi| {
                 if (peer_idx >= num_peers) break;
 
-                // Read parent data BEFORE modifying the array (appending invalidates pointers)
                 const parent_shred_start = self.nodes.items[pi].shredStart;
                 const parent_shred_count = self.nodes.items[pi].shredCount;
-                const children = @min(self.fanout, num_peers - peer_idx);
+                const pidx = self.nodes.items[pi].peerIndex;
+                const remaining = num_peers - peer_idx;
+
+                // Stake-weighted children count: higher stake = more children
+                var children: u32 = 0;
+                if (remaining > 0) {
+                    const parent_stake = if (pidx < num_peers) peers[pidx].stake else 0;
+                    if (total_parent_stake > 0 and parent_stake > 0) {
+                        // Integer proportion: (parent_stake / total_parent_stake) * remaining
+                        // Low-stake parents get 0 (leaf), high-stake get proportionally more
+                        const raw = @as(u256, parent_stake) * @as(u256, remaining) / total_parent_stake;
+                        if (raw >= 1) {
+                            children = @min(@as(u32, @intCast(@min(raw, std.math.maxInt(u32)))), self.fanout);
+                        }
+                        // raw == 0 → leaf (0 children)
+                    } else {
+                        // All stakes zero: uniform fanout
+                        children = @min(self.fanout, remaining);
+                    }
+                    children = @min(children, remaining);
+                }
 
                 // Set children metadata on parent
                 self.nodes.items[pi].childrenStart = @intCast(self.nodes.items.len);
@@ -775,6 +938,13 @@ pub const TurbineEngine = struct {
     shredCacheIdx: usize,
     shredCacheMutex: std.Thread.Mutex,
 
+    // Dynamic FEC tracking
+    failureTimestamps: [FAILURE_WINDOW_SIZE]u64,
+    failureTimestampIdx: u8,
+    avgPeerRttMs: std.atomic.Value(u64),
+    repairRequestsSent: std.atomic.Value(u64),
+    repairResponsesReceived: std.atomic.Value(u64),
+
     const CollectorStripe = struct {
         collectors: std.AutoHashMap(u64, *ShredCollector),
         mutex: std.Thread.Mutex,
@@ -804,6 +974,11 @@ pub const TurbineEngine = struct {
             .shredCache = [_]?CachedBlockShreds{null} ** 8,
             .shredCacheIdx = 0,
             .shredCacheMutex = .{},
+            .failureTimestamps = [_]u64{0} ** FAILURE_WINDOW_SIZE,
+            .failureTimestampIdx = 0,
+            .avgPeerRttMs = std.atomic.Value(u64).init(50), // Default 50ms
+            .repairRequestsSent = std.atomic.Value(u64).init(0),
+            .repairResponsesReceived = std.atomic.Value(u64).init(0),
         };
     }
 
@@ -849,6 +1024,7 @@ pub const TurbineEngine = struct {
 
         for (shreds, 0..) |s, i| {
             cached_shreds[i] = .{
+                .blockId = s.blockId,
                 .blockNumber = s.blockNumber,
                 .shredIndex = s.shredIndex,
                 .totalDataShreds = s.totalDataShreds,
@@ -867,6 +1043,55 @@ pub const TurbineEngine = struct {
             .timestamp = std.time.milliTimestamp(),
         };
         self.shredCacheIdx = (self.shredCacheIdx + 1) % 8;
+    }
+
+    /// Record a reconstruction failure for dynamic FEC tuning.
+    /// Stores the timestamp in a sliding window for failure rate calculation.
+    pub fn recordReconstructionFailure(self: *Self) void {
+        const now = @as(u64, @intCast(std.time.timestamp()));
+        self.failureTimestamps[self.failureTimestampIdx] = now;
+        self.failureTimestampIdx = (self.failureTimestampIdx + 1) % FAILURE_WINDOW_SIZE;
+        _ = self.reconstructionFailures.fetchAdd(1, .monotonic);
+    }
+
+    /// Compute an adaptive parity ratio based on recent network conditions.
+    /// Factors:
+    ///   1. Reconstruction failure rate (last 5 min window) — more failures = more parity
+    ///   2. Average peer RTT — higher RTT = more parity for reliability
+    /// Returns a ratio clamped to [MIN_PARITY_RATIO, MAX_PARITY_RATIO].
+    pub fn computeDynamicParityRatio(self: *const Self) f64 {
+        const now: u64 = @intCast(std.time.timestamp());
+
+        // Factor 1: Recent failure rate within the sliding window
+        var recent_failures: u32 = 0;
+        var recent_total: u32 = 0;
+        for (self.failureTimestamps) |ts| {
+            if (ts > 0 and now -| ts < FAILURE_WINDOW_SECS) {
+                recent_failures += 1;
+                recent_total += 1;
+            }
+        }
+        const failure_rate: f64 = if (recent_total > 0)
+            @as(f64, @floatFromInt(recent_failures)) / @as(f64, @floatFromInt(recent_total))
+        else
+            0.0;
+
+        // Factor 2: Average peer RTT (capped at 500ms, normalized to 0-1)
+        const avg_rtt = self.avgPeerRttMs.load(.acquire);
+        const rtt_factor = @min(@as(f64, @floatFromInt(avg_rtt)) / 500.0, 1.0);
+
+        // Compute: base(0.25) + failure_penalty(up to 0.15) + rtt_penalty(up to 0.10)
+        const ratio = DEFAULT_PARITY_RATIO + failure_rate * 0.15 + rtt_factor * 0.10;
+
+        return @max(MIN_PARITY_RATIO, @min(MAX_PARITY_RATIO, ratio));
+    }
+
+    /// Update the average peer RTT estimate (exponential moving average).
+    pub fn updateAvgRtt(self: *Self, rtt_ms: u64) void {
+        const current = self.avgPeerRttMs.load(.acquire);
+        // EMA: new = 0.75 * current + 0.25 * sample (smoothing)
+        const smoothed = (current * 3 + rtt_ms) / 4;
+        self.avgPeerRttMs.store(smoothed, .release);
     }
 
     pub fn getCachedShred(self: *Self, blockNumber: u64, shredIndex: u32) ?Shred {
@@ -893,11 +1118,11 @@ pub const TurbineEngine = struct {
 
     /// Shred a block into data + parity shreds with Reed-Solomon encoding.
     /// Each shred includes a CRC32 integrity tag for corruption detection.
-    pub fn shredBlock(self: *Self, block_data: []const u8, blockNumber: u64, signature: [64]u8, parity_ratio: ?f64) ![]Shred {
+    pub fn shredBlock(self: *Self, block_data: []const u8, blockNumber: u64, blockId: core.types.Hash, signature: [96]u8, parity_ratio: ?f64) ![]Shred {
         if (block_data.len > MAX_BLOCK_SIZE) return error.BlockTooLarge;
         if (block_data.len == 0) return error.EmptyBlock;
 
-        const ratio = parity_ratio orelse DEFAULT_PARITY_RATIO;
+        const ratio = parity_ratio orelse self.computeDynamicParityRatio();
         const dataShreds = @as(u32, @intCast(@divTrunc(block_data.len + MAX_SHRED_PAYLOAD - 1, MAX_SHRED_PAYLOAD)));
         const parityShreds = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(dataShreds)) * ratio)));
         const totalShreds = dataShreds + parityShreds;
@@ -920,13 +1145,42 @@ pub const TurbineEngine = struct {
             @memcpy(shard_bufs[i][0..copy_len], block_data[offset..end]);
         }
 
-        const rs = ReedSolomon.init(dataShreds, parityShreds);
-        rs.encode(shard_bufs);
+        const FEC_SIZE = 128;
+        const num_fec_sets = (dataShreds + FEC_SIZE - 1) / FEC_SIZE;
+        var f: u32 = 0;
+        while (f < num_fec_sets) : (f += 1) {
+            const data_start = f * FEC_SIZE;
+            const data_end = @min((f + 1) * FEC_SIZE, dataShreds);
+            const fec_data_count = data_end - data_start;
+
+            const parity_start = f * parityShreds / num_fec_sets;
+            const parity_end = (f + 1) * parityShreds / num_fec_sets;
+            const fec_parity_count = parity_end - parity_start;
+
+            if (fec_parity_count == 0) continue;
+
+            const fec_total = fec_data_count + fec_parity_count;
+            const fec_shards = try self.allocator.alloc([]u8, fec_total);
+            defer self.allocator.free(fec_shards);
+
+            var idx: usize = 0;
+            while (idx < fec_data_count) : (idx += 1) {
+                fec_shards[idx] = shard_bufs[data_start + idx];
+            }
+            idx = 0;
+            while (idx < fec_parity_count) : (idx += 1) {
+                fec_shards[fec_data_count + idx] = shard_bufs[dataShreds + parity_start + idx];
+            }
+
+            const rs = ReedSolomon.init(fec_data_count, fec_parity_count);
+            rs.encode(fec_shards);
+        }
 
         const shreds = try self.allocator.alloc(Shred, totalShreds);
         for (0..totalShreds) |i| {
             const payload_copy = try self.allocator.dupe(u8, shard_bufs[i]);
             shreds[i] = .{
+                .blockId = blockId,
                 .blockNumber = blockNumber,
                 .shredIndex = @intCast(i),
                 .totalDataShreds = dataShreds,
@@ -960,10 +1214,30 @@ pub const TurbineEngine = struct {
     /// Receive a shred for a block. Verifies CRC integrity before insertion.
     /// Returns reconstructed block data if complete, null otherwise.
     pub fn receiveShred(self: *Self, shred: *const Shred) !?[]u8 {
-        // CRC integrity check BEFORE acquiring any lock
+        // ── Firewall 1: CRC integrity check BEFORE acquiring any lock ──────
         if (!shred.verifyCrc()) {
+            std.debug.print("[SHRED-CRC-ERR] Block {d}: shred {d} CRC mismatch (expected {d}, got {d})\n", .{
+                shred.blockNumber, shred.shredIndex, shred.crc32, shred.computeCrc()
+            });
             _ = self.corruptedShreds.fetchAdd(1, .monotonic);
             return null;
+        }
+
+        // ── Firewall 2: Validate shredIndex within total bound ─────────────
+        const total_shreds = shred.totalDataShreds + shred.totalParityShreds;
+        if (shred.shredIndex >= total_shreds) {
+            _ = self.corruptedShreds.fetchAdd(1, .monotonic);
+            return error.InvalidShredIndex;
+        }
+        if (total_shreds == 0 or total_shreds > MAX_BLOCK_SIZE / MAX_SHRED_PAYLOAD + 256) {
+            _ = self.corruptedShreds.fetchAdd(1, .monotonic);
+            return error.InvalidShredCount;
+        }
+
+        // ── Firewall 3: Validate threadId range (MAX_THREADS = 128) ───────
+        if (shred.threadId >= 128) {
+            _ = self.corruptedShreds.fetchAdd(1, .monotonic);
+            return error.InvalidThreadId;
         }
 
         const stripe = self.getStripe(shred.blockNumber);
@@ -991,14 +1265,22 @@ pub const TurbineEngine = struct {
             return error.DuplicateShred;
         }
 
-        // Store producer signature on first shred
+        // Store producer signature and blockId on first shred
         if (collector.receivedCount == 0) {
             collector.producerSignature = shred.producerSignature;
+            collector.blockId = shred.blockId;
+        }
+
+        // ── Firewall 4: Verify blockId consistency across all shreds ───────
+        if (collector.receivedCount > 0 and
+            !std.mem.eql(u8, &collector.blockId.bytes, &shred.blockId.bytes))
+        {
+            return error.ShredBlockIdMismatch;
         }
 
         if (collector.insertShred(shred)) {
             const block_data = collector.reconstruct() catch |err| {
-                _ = self.reconstructionFailures.fetchAdd(1, .monotonic);
+                self.recordReconstructionFailure();
                 log.debug("Turbine reconstruction failed for block {}: {}\n", .{ shred.blockNumber, err });
                 return null;
             };
@@ -1006,13 +1288,42 @@ pub const TurbineEngine = struct {
             _ = self.blocksReconstructed.fetchAdd(1, .monotonic);
 
             // Re-encode all shards (including parity) to cache the complete block
-            const rs = ReedSolomon.init(collector.dataShreds, collector.parityShreds);
-            rs.encode(collector.shards);
+            const FEC_SIZE = 128;
+            const num_fec_sets = (collector.dataShreds + FEC_SIZE - 1) / FEC_SIZE;
+            var f: u32 = 0;
+            while (f < num_fec_sets) : (f += 1) {
+                const data_start = f * FEC_SIZE;
+                const data_end = @min((f + 1) * FEC_SIZE, collector.dataShreds);
+                const fec_data_count = data_end - data_start;
+
+                const parity_start = f * collector.parityShreds / num_fec_sets;
+                const parity_end = (f + 1) * collector.parityShreds / num_fec_sets;
+                const fec_parity_count = parity_end - parity_start;
+
+                if (fec_parity_count == 0) continue;
+
+                const fec_total = fec_data_count + fec_parity_count;
+                const fec_shards = try self.allocator.alloc([]u8, fec_total);
+                defer self.allocator.free(fec_shards);
+
+                var idx: usize = 0;
+                while (idx < fec_data_count) : (idx += 1) {
+                    fec_shards[idx] = collector.shards[data_start + idx];
+                }
+                idx = 0;
+                while (idx < fec_parity_count) : (idx += 1) {
+                    fec_shards[fec_data_count + idx] = collector.shards[collector.dataShreds + parity_start + idx];
+                }
+
+                const rs = ReedSolomon.init(fec_data_count, fec_parity_count);
+                rs.encode(fec_shards);
+            }
 
             // Create shreds list for caching
             var shreds_list = try self.allocator.alloc(Shred, collector.totalShreds);
             for (0..collector.totalShreds) |i| {
                 shreds_list[i] = .{
+                    .blockId = collector.blockId,
                     .blockNumber = collector.blockNumber,
                     .shredIndex = @intCast(i),
                     .totalDataShreds = collector.dataShreds,
@@ -1038,9 +1349,9 @@ pub const TurbineEngine = struct {
         return null;
     }
 
-    /// Build the propagation tree for a set of peers.
-    pub fn buildPropTree(self: *Self, num_peers: u32, total_shreds: u32) !void {
-        try self.tree.build(num_peers, total_shreds);
+    /// Build the propagation tree for a set of stake-weighted peers.
+    pub fn buildPropTree(self: *Self, peers: []const StakeWeightedPeer, total_shreds: u32) !void {
+        try self.tree.build(peers, total_shreds);
     }
 
     /// Clean up collectors for blocks older than `before_block`.
@@ -1077,6 +1388,10 @@ pub const TurbineEngine = struct {
         reconstructionFailures: u64,
         corruptedShreds: u64,
         activeCollectors: u32,
+        avgPeerRttMs: u64,
+        repairRequestsSent: u64,
+        repairResponsesReceived: u64,
+        dynamicParityRatio: f64,
     };
 
     pub fn getStats(self: *const Self) TurbineStats {
@@ -1092,6 +1407,10 @@ pub const TurbineEngine = struct {
             .reconstructionFailures = self.reconstructionFailures.load(.acquire),
             .corruptedShreds = self.corruptedShreds.load(.acquire),
             .activeCollectors = active,
+            .avgPeerRttMs = self.avgPeerRttMs.load(.acquire),
+            .repairRequestsSent = self.repairRequestsSent.load(.acquire),
+            .repairResponsesReceived = self.repairResponsesReceived.load(.acquire),
+            .dynamicParityRatio = self.computeDynamicParityRatio(),
         };
     }
 };
@@ -1227,13 +1546,14 @@ test "Reed-Solomon decode with data shard loss" {
 test "Shred CRC integrity" {
     const payload = [_]u8{ 1, 2, 3, 4, 5 };
     var shred = Shred{
+        .blockId = core.types.Hash.zero(),
         .blockNumber = 42,
         .shredIndex = 7,
         .totalDataShreds = 10,
         .totalParityShreds = 3,
         .shredType = .Data,
         .payload = &payload,
-        .producerSignature = [_]u8{0} ** 64,
+        .producerSignature = [_]u8{0} ** 96,
         .threadId = 0,
         .crc32 = 0,
     };
@@ -1278,8 +1598,8 @@ test "TurbineEngine shred-reconstruct round-trip" {
     defer allocator.free(block);
     for (0..5500) |i| block[i] = @intCast(i % 256);
 
-    const sig = [_]u8{0xAA} ** 64;
-    const shreds = try engine.shredBlock(block, 1, sig, null);
+    const sig = [_]u8{0xAA} ** 96;
+    const shreds = try engine.shredBlock(block, 1, core.types.Hash.zero(), sig, null);
     defer engine.freeShreds(shreds);
 
     // Feed all shreds to a second engine (simulating receiver)
@@ -1305,7 +1625,15 @@ test "PropagationTree fanout" {
     var tree = PropagationTree.init(allocator);
     defer tree.deinit();
 
-    try tree.build(20, 100);
+    const peers = try allocator.alloc(StakeWeightedPeer, 20);
+    defer allocator.free(peers);
+    for (peers, 0..) |*p, i| {
+        var addr: core.types.Address = .{ .bytes = [_]u8{0} ** 32 };
+        addr.bytes[0] = @intCast(i + 1);
+        p.* = .{ .address = addr, .stake = 1 };
+    }
+
+    try tree.build(peers, 100);
 
     // Root should exist at layer 0
     try std.testing.expect(tree.nodes.items.len > 0);

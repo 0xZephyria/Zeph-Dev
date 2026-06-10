@@ -34,6 +34,8 @@ pub const ValidatorStatus = enum {
 /// Extended validator record
 pub const Validator = struct {
     address: types.Address,
+    /// BLS public key (48 bytes G1 compressed)
+    bls_pubkey: [48]u8,
     /// Self-staked amount
     stake: u256,
     /// Total delegated stake
@@ -162,11 +164,18 @@ pub const Staking = struct {
     }
 
     /// Register as a validator with initial stake.
+    /// Requires BLS public key and Proof-of-Possession (PoP) signature to
+    /// prove ownership of the corresponding BLS private key.
+    /// The PoP signature is over the BLS public key bytes (standard BLS PoP
+    /// convention). A zero-filled pop_signature skips verification (genesis
+    /// bootstrap / test-only path).
     pub fn registerValidator(
         self: *Self,
         address: types.Address,
         stake: u256,
         commission_rate: u32,
+        bls_pubkey: [48]u8,
+        pop_signature: [96]u8,
         current_block_num: u64,
     ) !void {
         // Enforce minimum stake
@@ -181,8 +190,21 @@ pub const Staking = struct {
             return error.AlreadyRegistered;
         }
 
+        // Verify Proof-of-Possession (proves validator controls the BLS secret key)
+        const zero_pop = [_]u8{0} ** 96;
+        if (!std.mem.eql(u8, &pop_signature, &zero_pop)) {
+            const sig_mod = @import("core").signature;
+            const valid = try sig_mod.verifyProofOfPossession(
+                &bls_pubkey,
+                &bls_pubkey, // msg = pubkey (standard BLS PoP convention)
+                &pop_signature,
+            );
+            if (!valid) return error.InvalidProofOfPossession;
+        }
+
         try self.validators.put(address, Validator{
             .address = address,
+            .bls_pubkey = bls_pubkey,
             .stake = stake,
             .delegated_stake = 0,
             .commission_rate = commission_rate,
@@ -469,8 +491,9 @@ pub const Staking = struct {
     // record type, written directly with std.mem.writeInt / @memcpy.
     // This avoids any runtime allocation during snapshot.
 
-    // Packed Validator record: 32+16+16+16+16+4+1+4+4+8+8+8+16+16+8 = 177 bytes
+    // Packed Validator record: 48+32+16+16+16+16+4+1+4+4+8+8+8+16+16+8 = 225 bytes
     const SerializedValidator = extern struct {
+        bls_pubkey: [48]u8,
         address: [32]u8,
         stake_hi: u128,
         stake_lo: u128,
@@ -579,6 +602,7 @@ pub const Staking = struct {
             const hl_del = u256ToHiLo(v.delegated_stake);
             const hl_slashed = u256ToHiLo(v.total_slashed);
             var sv = SerializedValidator{
+                .bls_pubkey = v.bls_pubkey,
                 .address = v.address.bytes,
                 .stake_hi = hl_stake.hi,
                 .stake_lo = hl_stake.lo,
@@ -727,6 +751,7 @@ pub const Staking = struct {
         };
         const v = Validator{
             .address = addr,
+            .bls_pubkey = sv.bls_pubkey,
             .stake = hiLoToU256(sv.stake_hi, sv.stake_lo),
             .delegated_stake = hiLoToU256(sv.delegated_stake_hi, sv.delegated_stake_lo),
             .commission_rate = sv.commission_rate,

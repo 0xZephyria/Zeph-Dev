@@ -96,18 +96,16 @@ pub fn balanceKey(addr: types.Address) [32]u8 {
 /// Derive address from private key bytes (Ed25519 seed)
 pub fn addressFromPrivKey(priv_key: [32]u8) !types.Address {
     const key_pair = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(priv_key);
-    var addr: types.Address = undefined;
-    std.crypto.hash.Blake3.hash(&key_pair.public_key.toBytes(), &addr.bytes, .{});
-    return addr;
+    return types.Address.fromPubKey(&key_pair.public_key.toBytes());
 }
 
 /// Derive address from public key (32 bytes)
 pub fn addressFromPubKey(pub_key: []const u8) !types.Address {
     if (pub_key.len != 32) return error.InvalidKey;
-    var addr: types.Address = undefined;
-    std.crypto.hash.Blake3.hash(pub_key, &addr.bytes, .{});
-    return addr;
+    const pk_bytes: *const [32]u8 = pub_key[0..32];
+    return types.Address.fromPubKey(pk_bytes);
 }
+
 
 /// Verify an Ed25519 signature
 pub fn verifySignature(msg: []const u8, sig: [64]u8, pub_key_bytes: [32]u8) !bool {

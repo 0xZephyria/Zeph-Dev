@@ -59,7 +59,7 @@ pub const Peer = struct {
     stakeAmount: u64,
 
     // Subnet Membership
-    subscribedSubnets: [8]u8, // 64-bit bitmap for gossip subnets
+    subscribedSubnets: [16]u8, // 128-bit bitmap for thread-topology subnets
     isCommitteeMember: bool,
     committeeAssignment: ?types.CommitteeAssignment,
 
@@ -74,6 +74,10 @@ pub const Peer = struct {
     // Rate limiting per peer
     rateTokens: f64,
     rateLastUpdate: i64,
+
+    // Repair request rate tracking
+    repairRequestCount: u32,
+    repairRequestWindowStart: i64,
 
     // Latency tracking
     rtt_ms: u32,
@@ -112,7 +116,7 @@ pub const Peer = struct {
             .score = 0,
             .scoreLastDecay = now,
             .stakeAmount = 0,
-            .subscribedSubnets = [_]u8{0} ** 8,
+            .subscribedSubnets = [_]u8{0} ** 16,
             .isCommitteeMember = false,
             .committeeAssignment = null,
             .bytesSent = 0,
@@ -123,6 +127,8 @@ pub const Peer = struct {
             .connectTime = now,
             .rateTokens = 20.0, // types.RateLimitConfig default baseCapacity
             .rateLastUpdate = now,
+            .repairRequestCount = 0,
+            .repairRequestWindowStart = now,
             .rtt_ms = 100, // default 100ms
         };
         return self;
@@ -282,10 +288,10 @@ pub const Peer = struct {
         return types.isSubnetSubscribed(self.subscribedSubnets, subnet);
     }
 
-    /// Get list of subscribed subnet IDs (max 64).
-    pub fn getSubscribedSubnets(self: *const Self, out_buf: *[64]types.SubnetID) u32 {
+    /// Get list of subscribed subnet IDs (max 128).
+    pub fn getSubscribedSubnets(self: *const Self, out_buf: *[128]types.SubnetID) u32 {
         var count: u32 = 0;
-        for (0..64) |i| {
+        for (0..128) |i| {
             if (types.isSubnetSubscribed(self.subscribedSubnets, @intCast(i))) {
                 out_buf[count] = @intCast(i);
                 count += 1;

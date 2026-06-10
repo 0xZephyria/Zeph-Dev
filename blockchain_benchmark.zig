@@ -188,7 +188,7 @@ pub fn main() !void {
 
         txs[j] = core.types.Transaction{
             .sequence = nonce,
-            .gasPrice = 1000000000,
+            .computePrice = 1000000000,
             .executionBudget = 2000000,
             .from = sender,
             .to = contract_addr,

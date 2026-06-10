@@ -24,7 +24,7 @@ pub const DB = struct {
         // Initialize WAL
         const wal_path = try std.fmt.allocPrint(allocator, "{s}/log.wal", .{data_dir});
         defer allocator.free(wal_path);
-        const wal = try Wal.init(allocator, io_engine, wal_path);
+        const wal = try Wal.init(allocator, io_engine, wal_path, true);
 
         // Initialize MemTable (will replay WAL)
         const memtable = try MemTable.init(allocator, wal);

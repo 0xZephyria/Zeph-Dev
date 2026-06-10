@@ -75,7 +75,7 @@ pub const EpochMetadata = struct {
     account_count: u32, // Number of accounts modified
     storage_count: u32, // Number of storage slots modified
     tx_count: u64, // Total transactions in epoch
-    gas_used: u128, // Total gas used
+    budget_used: u128, // Total budget used
 
     // Aggregated signature
     aggregated_sig: [96]u8, // BLS aggregated signature
@@ -116,7 +116,7 @@ pub const EpochMetadata = struct {
         offset += 4;
         std.mem.writeInt(u64, buffer[offset..][0..8], self.tx_count, .big);
         offset += 8;
-        std.mem.writeInt(u128, buffer[offset..][0..16], self.gas_used, .big);
+        std.mem.writeInt(u128, buffer[offset..][0..16], self.budget_used, .big);
         offset += 16;
 
         @memcpy(buffer[offset..][0..96], &self.aggregated_sig);
@@ -163,7 +163,7 @@ pub const EpochMetadata = struct {
         offset += 4;
         meta.tx_count = std.mem.readInt(u64, data[offset..][0..8], .big);
         offset += 8;
-        meta.gas_used = std.mem.readInt(u128, data[offset..][0..16], .big);
+        meta.budget_used = std.mem.readInt(u128, data[offset..][0..16], .big);
         offset += 16;
 
         @memcpy(&meta.aggregated_sig, data[offset..][0..96]);
@@ -242,7 +242,7 @@ pub const BlockSummary = struct {
     tx_root: Hash,
     receipts_root: Hash,
     timestamp: u64,
-    gas_used: u64,
+    budget_used: u64,
     execution_budget: u64,
     base_fee: u64,
 
@@ -264,12 +264,12 @@ pub const BlockSummary = struct {
         return BlockSummary{
             .number = header.number,
             .hash = header_hash,
-            .parent_hash = header.parentHash.bytes,
+            .parent_hash = header.parentId.bytes,
             .state_root = header.stateRoot.bytes, // Use stateRoot as state root
-            .tx_root = header.txHash.bytes,
+            .tx_root = header.txMerkleRoot.bytes,
             .receipts_root = [_]u8{0} ** 32, // Not available in header
             .timestamp = header.time, // time field maps to timestamp
-            .gas_used = header.gasUsed,
+            .budget_used = header.budgetUsed,
             .execution_budget = header.executionBudget,
             .base_fee = 0, // No base fee in Zephyria
             .proposer = header.producer.bytes, // producer maps to proposer
@@ -315,7 +315,7 @@ test "EpochMetadata serialization" {
         .account_count = 50000,
         .storage_count = 100000,
         .tx_count = 1000000,
-        .gas_used = 30000000000000,
+        .budget_used = 30000000000000,
         .aggregated_sig = [_]u8{0xCC} ** 96,
         .signers_bitmap = try allocator.dupe(u8, &[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF }),
         .compressed_size = 1024,

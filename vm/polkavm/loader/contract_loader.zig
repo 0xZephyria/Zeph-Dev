@@ -11,7 +11,7 @@ const threaded_executor = @import("../core/threaded_executor.zig");
 const basic_block = @import("../core/basic_block.zig");
 const syscallDispatch = @import("../syscall/dispatch.zig");
 const zephbinLoader = @import("zephbin_loader.zig");
-const gasMeter = @import("../gas/meter.zig");
+const budgetMeter = @import("../budget/meter.zig");
 const aot = @import("../compiler/aot.zig");
 
 const enable_debug_logging = false;
@@ -35,8 +35,8 @@ pub const LoadError = error{
 /// Result of loading and executing a contract
 pub const ContractResult = struct {
     status: executor.ExecutionStatus,
-    gasUsed: u64,
-    gasRemaining: u64,
+    budgetUsed: u64,
+    budgetRemaining: u64,
     returnData: []const u8,
     logs: []const syscallDispatch.LogEntry,
     faultPc: u32,
@@ -49,12 +49,12 @@ pub fn executeFromElf(
     allocator: std.mem.Allocator,
     elfData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
     var memory = try sandbox.SandboxMemory.init(allocator);
     defer memory.deinit();
-    return executeWithMemory(allocator, &memory, elfData, calldata, gasLimit, env);
+    return executeWithMemory(allocator, &memory, elfData, calldata, budgetLimit, env);
 }
 
 fn loadRelocatableElf(
@@ -420,7 +420,7 @@ pub fn executeWithMemory(
     memory: *sandbox.SandboxMemory,
     elfData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
     const isPvm = elfData.len >= 4 and elfData[0] == 'P' and elfData[1] == 'V' and elfData[2] == 'M' and elfData[3] == 0;
@@ -466,7 +466,7 @@ pub fn executeWithMemory(
             
         const handler = syscallDispatch.createHandler(env);
         
-        var pvm_vm = pvm_executor.PvmExecutor.init(memory, &prog, gasLimit, handler, env, @intCast(actual_calldata.len));
+        var pvm_vm = pvm_executor.PvmExecutor.init(memory, &prog, budgetLimit, handler, env, @intCast(actual_calldata.len));
         pvm_vm.pc = entry_pc;
         
         const result = pvm_vm.execute();
@@ -484,8 +484,8 @@ pub fn executeWithMemory(
         
         return .{
             .status = result.status,
-            .gasUsed = result.gasUsed,
-            .gasRemaining = result.gasRemaining,
+            .budgetUsed = result.budgetUsed,
+            .budgetRemaining = result.budgetRemaining,
             .returnData = returnData,
             .logs = env.logs.items,
             .faultPc = result.faultPc,
@@ -563,7 +563,7 @@ pub fn executeWithMemory(
     var vm = executor.ForgeVM.init(
         memory,
         @intCast(codeLen),
-        gasLimit,
+        budgetLimit,
         handler,
     );
     if (isElf and is_rel) {
@@ -597,8 +597,8 @@ pub fn executeWithMemory(
 
     return .{
         .status = result.status,
-        .gasUsed = result.gasUsed,
-        .gasRemaining = result.gasRemaining,
+        .budgetUsed = result.budgetUsed,
+        .budgetRemaining = result.budgetRemaining,
         .returnData = returnData,
         .logs = env.logs.items,
         .faultPc = result.faultPc,
@@ -616,7 +616,7 @@ pub fn executeFromZeph(
     allocator: std.mem.Allocator,
     forgeData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
     if (env.vm_pool) |pool_ptr| {
@@ -624,14 +624,14 @@ pub fn executeFromZeph(
         const mem = pool.acquire() orelse {
             var legacy_mem = try sandbox.SandboxMemory.init(allocator);
             defer legacy_mem.deinit();
-            return executeFromZephWithMemory(allocator, &legacy_mem, forgeData, calldata, gasLimit, env);
+            return executeFromZephWithMemory(allocator, &legacy_mem, forgeData, calldata, budgetLimit, env);
         };
         defer pool.release(mem);
-        return executeFromZephWithMemory(allocator, mem, forgeData, calldata, gasLimit, env);
+        return executeFromZephWithMemory(allocator, mem, forgeData, calldata, budgetLimit, env);
     }
     var memory = try sandbox.SandboxMemory.init(allocator);
     defer memory.deinit();
-    return executeFromZephWithMemory(allocator, &memory, forgeData, calldata, gasLimit, env);
+    return executeFromZephWithMemory(allocator, &memory, forgeData, calldata, budgetLimit, env);
 }
 
 /// Load and execute a contract from a .fozbin package using pre-allocated memory.
@@ -640,11 +640,11 @@ pub fn executeFromZephWithMemory(
     memory: *sandbox.SandboxMemory,
     forgeData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
     if (zephbinLoader.isZephBin(forgeData)) {
-        return executeFromZephBinWithMemory(allocator, memory, forgeData, calldata, gasLimit, env);
+        return executeFromZephBinWithMemory(allocator, memory, forgeData, calldata, budgetLimit, env);
     }
 
     const pkg = forgeFormat.parse(forgeData) catch return LoadError.InvalidPackage;
@@ -660,7 +660,7 @@ pub fn executeFromZephWithMemory(
     const isElf = pkg.bytecode.len >= 4 and pkg.bytecode[0] == 0x7F and pkg.bytecode[1] == 'E' and pkg.bytecode[2] == 'L' and pkg.bytecode[3] == 'F';
     if (!isElf) return LoadError.InvalidElf;
 
-    return executeWithMemory(allocator, memory, pkg.bytecode, calldata, gasLimit, env);
+    return executeWithMemory(allocator, memory, pkg.bytecode, calldata, budgetLimit, env);
 }
 
 /// Execute a contract from a ZephBin v1 package (compiler output).
@@ -670,12 +670,12 @@ pub fn executeFromZephBin(
     allocator: std.mem.Allocator,
     binData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
     var memory = try sandbox.SandboxMemory.init(allocator);
     defer memory.deinit();
-    return executeFromZephBinWithMemory(allocator, &memory, binData, calldata, gasLimit, env);
+    return executeFromZephBinWithMemory(allocator, &memory, binData, calldata, budgetLimit, env);
 }
 
 fn aotSyscallHandler(vm_opaque: ?*anyopaque, syscall_id: u32) callconv(.c) i32 {
@@ -687,7 +687,7 @@ fn aotSyscallHandler(vm_opaque: ?*anyopaque, syscall_id: u32) callconv(.c) i32 {
                 error.ReturnData => @as(i32, 1),
                 error.Revert => @as(i32, 2),
                 error.SelfDestruct => @as(i32, 3),
-                error.OutOfGas => @as(i32, 4),
+                error.OutOfbudget => @as(i32, 4),
                 else => @as(i32, 5),
             };
         };
@@ -882,7 +882,7 @@ fn compileAndRunAot(
     memory: *sandbox.SandboxMemory,
     binData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
     pkg: *const zephbinLoader.ZephBinPackage,
     action: *const zephbinLoader.ZephAction,
@@ -960,7 +960,7 @@ fn compileAndRunAot(
     var vm = executor.ForgeVM.init(
         memory,
         stubEnd,
-        gasLimit,
+        budgetLimit,
         handler,
     );
     vm.hostCtx = env;
@@ -976,8 +976,8 @@ fn compileAndRunAot(
         .pc = &pc,
         .memory_backing = memory.backing.ptr,
         .memory_size = @intCast(memory.backing.len),
-        .gas_limit = &vm.gas.limit,
-        .gas_used = &vm.gas.used,
+        .budget_limit = &vm.budget.limit,
+        .budget_used = &vm.budget.used,
         .status = &status_val,
         .syscall_handler = aotSyscallHandler,
         .vm_ctx = &vm,
@@ -987,7 +987,7 @@ fn compileAndRunAot(
     // Execute the action natively
     action_fn(&ctx);
 
-    // Sync PC and status back to VM structure (gas.used is already synced via pointer)
+    // Sync PC and status back to VM structure (budget.used is already synced via pointer)
     vm.pc = pc;
     vm.status = std.meta.intToEnum(executor.ExecutionStatus, status_val) catch .fault;
 
@@ -1005,8 +1005,8 @@ fn compileAndRunAot(
 
     return ContractResult{
         .status = vm.status,
-        .gasUsed = vm.gas.used,
-        .gasRemaining = vm.gas.remaining(),
+        .budgetUsed = vm.budget.used,
+        .budgetRemaining = vm.budget.remaining(),
         .returnData = returnData,
         .logs = env.logs.items,
         .faultPc = vm.pc,
@@ -1020,7 +1020,7 @@ pub fn executeFromZephBinWithMemory(
     memory: *sandbox.SandboxMemory,
     binData: []const u8,
     calldata: []const u8,
-    gasLimit: u64,
+    budgetLimit: u64,
     env: *syscallDispatch.HostEnv,
 ) !ContractResult {
     // No allocation here!
@@ -1051,7 +1051,7 @@ pub fn executeFromZephBinWithMemory(
     const use_aot = !isNoAotEnabled(allocator);
 
     if (use_aot) {
-        if (compileAndRunAot(allocator, memory, binData, calldata, gasLimit, env, &pkg, action)) |aot_res| {
+        if (compileAndRunAot(allocator, memory, binData, calldata, budgetLimit, env, &pkg, action)) |aot_res| {
             return aot_res;
         } else |err| {
             debugPrint("AOT compilation/execution failed: {}, falling back to interpreter\n", .{err});
@@ -1064,7 +1064,7 @@ pub fn executeFromZephBinWithMemory(
     // ── Exit stub ─────────────────────────────────────────────────────────
     // The Forge compiler epilogue ends with JALR zero, ra, 0  (return through ra).
     // The VM initialises ra (x1) = 0, so without a stub the function returns to
-    // PC=0 and loops forever until gas is exhausted.
+    // PC=0 and loops forever until budget is exhausted.
     //
     // Fix: write two instructions immediately after the action code and set ra
     // to that address before execution.  When the epilogue returns, it hits:
@@ -1104,7 +1104,7 @@ pub fn executeFromZephBinWithMemory(
     var vm = executor.ForgeVM.init(
         memory,
         stubEnd, // codeLen includes the exit stub
-        gasLimit,
+        budgetLimit,
         handler,
     );
     vm.hostCtx = env;
@@ -1154,8 +1154,8 @@ pub fn executeFromZephBinWithMemory(
 
     return ContractResult{
         .status = result.status,
-        .gasUsed = result.gasUsed,
-        .gasRemaining = result.gasRemaining,
+        .budgetUsed = result.budgetUsed,
+        .budgetRemaining = result.budgetRemaining,
         .returnData = returnData,
         .logs = env.logs.items,
         .faultPc = result.faultPc,
@@ -1566,7 +1566,7 @@ fn mapNameToSyscallId(name: []const u8) ?u32 {
     if (std.mem.eql(u8, name, "seal_caller")) return 0x108;
     if (std.mem.eql(u8, name, "seal_address")) return 0x109;
     if (std.mem.eql(u8, name, "seal_value_transferred")) return 0x10A;
-    if (std.mem.eql(u8, name, "seal_gas_left")) return 0x10B;
+    if (std.mem.eql(u8, name, "seal_budget_left")) return 0x10B;
     if (std.mem.eql(u8, name, "seal_balance")) return 0x10C;
     if (std.mem.eql(u8, name, "seal_hash_keccak_256")) return 0x10D;
     if (std.mem.eql(u8, name, "seal_hash_blake2_256")) return 0x10E;
@@ -1581,7 +1581,7 @@ fn mapNameToSyscallId(name: []const u8) ?u32 {
     if (std.mem.eql(u8, name, "seal_now")) return 0x117;
     if (std.mem.eql(u8, name, "seal_minimum_balance")) return 0x118;
     if (std.mem.eql(u8, name, "seal_weight_to_fee")) return 0x119;
-    if (std.mem.eql(u8, name, "seal_gas_price")) return 0x11A;
+    if (std.mem.eql(u8, name, "seal_budget_price")) return 0x11A;
     if (std.mem.eql(u8, name, "seal_terminate")) return 0x11B;
 
     // revive / modern PolkaVM host functions
@@ -1600,11 +1600,11 @@ fn mapNameToSyscallId(name: []const u8) ?u32 {
     if (std.mem.eql(u8, name, "chain_id")) return 0x20D;
     if (std.mem.eql(u8, name, "code_hash")) return 0x20E;
     if (std.mem.eql(u8, name, "code_size")) return 0x20F;
-    if (std.mem.eql(u8, name, "consume_all_gas")) return 0x210;
+    if (std.mem.eql(u8, name, "consume_all_budget")) return 0x210;
     if (std.mem.eql(u8, name, "delegate_call_evm")) return 0x211;
     if (std.mem.eql(u8, name, "deposit_event")) return 0x212;
-    if (std.mem.eql(u8, name, "gas_limit")) return 0x213;
-    if (std.mem.eql(u8, name, "gas_price")) return 0x214;
+    if (std.mem.eql(u8, name, "budget_limit")) return 0x213;
+    if (std.mem.eql(u8, name, "budget_price")) return 0x214;
     if (std.mem.eql(u8, name, "get_immutable_data")) return 0x215;
     if (std.mem.eql(u8, name, "get_storage_or_zero")) return 0x216;
     if (std.mem.eql(u8, name, "hash_keccak_256")) return 0x217;

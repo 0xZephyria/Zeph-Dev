@@ -40,7 +40,7 @@ pub const Level = enum(u3) {
     }
 };
 
-var global_level: Level = .info;
+var global_level: Level = .debug;
 
 pub fn setLevel(level: Level) void {
     global_level = level;

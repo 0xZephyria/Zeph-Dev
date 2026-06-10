@@ -233,7 +233,9 @@ pub fn SwissMapUnmanaged(
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             if (self._capacity > 0) {
-                allocator.free(self.memory);
+                const required_align = @max(@alignOf([GROUP_SIZE]KeyValue), @alignOf(@Vector(GROUP_SIZE, u8)));
+                const aligned_memory: []align(required_align) u8 = @alignCast(self.memory);
+                allocator.free(aligned_memory);
             }
         }
 

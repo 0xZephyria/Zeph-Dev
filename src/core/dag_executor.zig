@@ -23,9 +23,9 @@
 //
 // Thread model:
 //   • Pre-allocated thread arenas (avoid per-TX allocation)
-//   • Gas-balanced lane-to-thread assignment from scheduler
+//   • budget-balanced lane-to-thread assignment from scheduler
 //   • Small lanes (1-2 TXs) batched on one thread
-//   • Work-stealing not needed — gas balancing is sufficient
+//   • Work-stealing not needed — budget balancing is sufficient
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -59,7 +59,7 @@ pub const ExecutorConfig = struct {
 /// Per-block reward configuration embedded in the executor.
 pub const BlockRewardConfig = struct {
     base_reward: u256 = 2_000_000_000_000_000_000,
-    per_gas_reward: u256 = 0,
+    per_budget_reward: u256 = 0,
     per_tx_reward: u256 = 0,
     enabled: bool = true,
 };
@@ -69,7 +69,7 @@ pub const BlockRewardConfig = struct {
 /// Result of a single VM execution call.
 pub const VMResult = struct {
     success: bool,
-    gasUsed: u64,
+    budgetUsed: u64,
     returnData: []const u8,
 };
 
@@ -80,7 +80,7 @@ pub const VMCallback = struct {
         ctx: *anyopaque,
         code: []const u8,
         input: []const u8,
-        gas: u64,
+        budget: u64,
         overlay: *state_mod.Overlay,
         caller: types.Address,
         self_address: types.Address,
@@ -99,7 +99,7 @@ pub const VMCallback = struct {
         self: *const VMCallback,
         code: []const u8,
         input: []const u8,
-        gas: u64,
+        budget: u64,
         overlay: *state_mod.Overlay,
         caller: types.Address,
         self_address: types.Address,
@@ -112,7 +112,7 @@ pub const VMCallback = struct {
             self.ctx,
             code,
             input,
-            gas,
+            budget,
             overlay,
             caller,
             self_address,
@@ -136,7 +136,7 @@ pub const VMCallback = struct {
 /// Aggregate result of executing a block using the DAG pipeline.
 pub const BlockResult = struct {
     stateRoot: types.Hash,
-    gasUsed: u64,
+    budgetUsed: u64,
     txCount: u32,
     txResults: []TxResult,
     laneCount: u32,
@@ -154,7 +154,7 @@ pub const BlockResult = struct {
 /// Result of a single transaction execution within the DAG pipeline.
 pub const TxResult = struct {
     success: bool,
-    gasUsed: u64,
+    budgetUsed: u64,
     fee: u256,
     txHash: types.Hash,
     errorMessage: ?[]const u8 = null,
@@ -173,7 +173,7 @@ const LaneContext = struct {
     receiptQueue: *accounts.ReceiptQueue,
     laneId: u32,
     globalTxOffset: u32,
-    totalGasUsed: u64,
+    totalBudgetUsed: u64,
 };
 
 /// A batch of lanes assigned to one thread — eliminates per-lane thread pool overhead.
@@ -362,7 +362,7 @@ pub const DAGExecutor = struct {
                 .receiptQueue = &receipt_queues[i],
                 .laneId = @intCast(i),
                 .globalTxOffset = lane_offsets[i],
-                .totalGasUsed = 0,
+                .totalBudgetUsed = 0,
             };
         }
 
@@ -588,10 +588,20 @@ pub const DAGExecutor = struct {
 
         const commit_end = std.time.nanoTimestamp();
 
-        // Compute total gas used
-        var total_gas: u64 = 0;
+        // ── Firewall 3: Verify stateRoot transitions when TXs execute ──
+        if (plan.totalTxs > 0 and std.mem.eql(u8, &state_root.bytes, &self.lastStateRoot)) {
+            return error.StateRootNotAdvanced;
+        }
+
+        // Compute total budget used
+        var total_budget: u64 = 0;
         for (tx_results) |*r| {
-            total_gas += r.gasUsed;
+            total_budget += r.budgetUsed;
+        }
+
+        // ── Firewall 4: Verify budget used does not exceed block budget limit ──
+        if (total_budget > self.config.blockExecutionBudget) {
+            return error.BudgetExceedsBlockBudget;
         }
 
         // Update stats
@@ -601,7 +611,7 @@ pub const DAGExecutor = struct {
 
         return BlockResult{
             .stateRoot = state_root,
-            .gasUsed = total_gas,
+            .budgetUsed = total_budget,
             .txCount = plan.totalTxs,
             .txResults = tx_results,
             .laneCount = @intCast(plan.lanes.len),
@@ -643,9 +653,9 @@ pub const DAGExecutor = struct {
             const result = self.executeSingleTx(overlay, tx.*, delta_queue, receipt_queue, tx_idx);
             results[i] = TxResult{
                 .success = result.success,
-                .gasUsed = result.gasUsed,
+                .budgetUsed = result.budgetUsed,
                 .fee = result.fee,
-                .txHash = tx.hash(),
+                .txHash = tx.id(),
                 .errorMessage = result.errorMessage,
                 .laneId = lane_id,
                 .txIndex = global_offset + @as(u32, @intCast(i)),
@@ -668,9 +678,9 @@ pub const DAGExecutor = struct {
         if (tx.sequence != current_sequence) {
             return TxResult{
                 .success = false,
-                .gasUsed = 0,
+                .budgetUsed = 0,
                 .fee = 0,
-                .txHash = tx.hash(),
+                .txHash = tx.id(),
                 .errorMessage = "sequence mismatch",
                 .laneId = 0,
                 .txIndex = 0,
@@ -680,44 +690,44 @@ pub const DAGExecutor = struct {
         // 1.5 Ensure sender EOA type discriminator exists (for new accounts)
         overlay.ensureSenderEOA(tx.from) catch {};
 
-        // 2. Compute intrinsic gas
-        const intrinsic: u64 = computeIntrinsicGas(&tx);
+        // 2. Compute intrinsic budget
+        const intrinsic: u64 = computeIntrinsicBudget(&tx);
         if (intrinsic > tx.executionBudget) {
             return TxResult{
                 .success = false,
-                .gasUsed = intrinsic,
+                .budgetUsed = intrinsic,
                 .fee = 0,
-                .txHash = tx.hash(),
-                .errorMessage = "intrinsic gas exceeds limit",
+                .txHash = tx.id(),
+                .errorMessage = "intrinsic budget exceeds limit",
                 .laneId = 0,
                 .txIndex = 0,
             };
         }
 
-        // 3. Check balance for gas + value
+        // 3. Check balance for budget + value
         const sender_balance = overlay.getBalance(tx.from);
-        const max_fee = @as(u256, tx.executionBudget) * tx.gasPrice;
+        const max_fee = @as(u256, tx.executionBudget) * tx.computePrice;
         const total_cost = tx.value + max_fee;
         if (total_cost > sender_balance) {
             return TxResult{
                 .success = false,
-                .gasUsed = 0,
+                .budgetUsed = 0,
                 .fee = 0,
-                .txHash = tx.hash(),
+                .txHash = tx.id(),
                 .errorMessage = "insufficient balance",
                 .laneId = 0,
                 .txIndex = 0,
             };
         }
 
-        // 4. Deduct max gas and increment sequence
+        // 4. Deduct max budget and increment sequence
         overlay.setBalance(tx.from, sender_balance - max_fee) catch
-            return TxResult{ .success = false, .gasUsed = 0, .fee = 0, .txHash = tx.hash(), .errorMessage = "state error", .laneId = 0, .txIndex = 0 };
+            return TxResult{ .success = false, .budgetUsed = 0, .fee = 0, .txHash = tx.id(), .errorMessage = "state error", .laneId = 0, .txIndex = 0 };
         overlay.setSequence(tx.from, current_sequence + 1) catch
-            return TxResult{ .success = false, .gasUsed = 0, .fee = 0, .txHash = tx.hash(), .errorMessage = "state error", .laneId = 0, .txIndex = 0 };
+            return TxResult{ .success = false, .budgetUsed = 0, .fee = 0, .txHash = tx.id(), .errorMessage = "state error", .laneId = 0, .txIndex = 0 };
 
         // 5. Execute
-        var gas_used: u64 = intrinsic;
+        var budget_used: u64 = intrinsic;
         var success = true;
 
         // 5a. Resolve target account type and validate
@@ -737,9 +747,9 @@ pub const DAGExecutor = struct {
                 if (resolution.exists and resolution.account_type != .ContractRoot and resolution.account_type != .System) {
                     return TxResult{
                         .success = false,
-                        .gasUsed = 0,
+                        .budgetUsed = 0,
                         .fee = 0,
-                        .txHash = tx.hash(),
+                        .txHash = tx.id(),
                         .errorMessage = "target not callable",
                         .laneId = 0,
                         .txIndex = 0,
@@ -748,11 +758,11 @@ pub const DAGExecutor = struct {
 
                 const code_data = self.fetchCode(to_addr) catch &[_]u8{};
                 if (code_data.len > 0) {
-                    const remaining_gas = tx.executionBudget - intrinsic;
+                    const remaining_budget = tx.executionBudget - intrinsic;
                     const vm_result = self.vmCallback.?.execute(
                         code_data,
                         tx.data,
-                        remaining_gas,
+                        remaining_budget,
                         overlay,
                         tx.from,
                         to_addr,
@@ -761,7 +771,7 @@ pub const DAGExecutor = struct {
                         receipt_queue,
                         tx_idx,
                     );
-                    gas_used += vm_result.gasUsed;
+                    budget_used += vm_result.budgetUsed;
                     success = vm_result.success;
                 }
             } else if (tx.data.len == 0 and self.config.transferFastPath) {
@@ -780,11 +790,11 @@ pub const DAGExecutor = struct {
             }
 
             if (self.vmCallback != null and tx.data.len > 0) {
-                const remaining_gas = tx.executionBudget - intrinsic;
+                const remaining_budget = tx.executionBudget - intrinsic;
                 const vm_result = self.vmCallback.?.execute(
                     tx.data,
                     &[_]u8{},
-                    remaining_gas,
+                    remaining_budget,
                     overlay,
                     tx.from,
                     new_addr,
@@ -793,7 +803,7 @@ pub const DAGExecutor = struct {
                     receipt_queue,
                     tx_idx,
                 );
-                gas_used += vm_result.gasUsed;
+                budget_used += vm_result.budgetUsed;
                 success = vm_result.success;
 
                 if (success) {
@@ -807,8 +817,8 @@ pub const DAGExecutor = struct {
             }
         }
 
-        // 6. Refund unused gas (EIP-3529 refunds are removed, only refund unused limit)
-        const actual_fee = tx.gasPrice * @as(u256, gas_used);
+        // 6. Refund unused budget (EIP-3529 refunds are removed, only refund unused limit)
+        const actual_fee = tx.computePrice * @as(u256, budget_used);
         const refund_amount = max_fee - actual_fee;
         if (refund_amount > 0) {
             overlay.addBalance(tx.from, @intCast(refund_amount)) catch {};
@@ -822,9 +832,9 @@ pub const DAGExecutor = struct {
 
         return TxResult{
             .success = success,
-            .gasUsed = gas_used,
+            .budgetUsed = budget_used,
             .fee = actual_fee,
-            .txHash = tx.hash(),
+            .txHash = tx.id(),
             .errorMessage = if (success) null else "execution failed",
             .laneId = 0,
             .txIndex = 0,
@@ -872,20 +882,16 @@ pub const DAGExecutor = struct {
     }
 };
 
-// ── Intrinsic Gas Computation ───────────────────────────────────────────
+fn computeIntrinsicBudget(tx: *const types.Transaction) u64 {
+    var budget: u64 = 1_000;
 
-fn computeIntrinsicGas(tx: *const types.Transaction) u64 {
-    var gas: u64 = 21_000; // Base TX cost
+    if (tx.to == null) budget += 5_000;
 
-    // Contract creation additional cost
-    if (tx.to == null) gas += 32_000;
-
-    // Calldata cost
     for (tx.data) |byte| {
-        gas += if (byte == 0) 4 else 16;
+        budget += if (byte == 0) 1 else 2;
     }
 
-    return gas;
+    return budget;
 }
 
 // ── Stats ───────────────────────────────────────────────────────────────

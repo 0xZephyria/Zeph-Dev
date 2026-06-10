@@ -27,500 +27,494 @@
 const std = @import("std");
 const core = @import("core");
 const vm = @import("vm");
-const polkavm = @import("polkavm");
 const StateBridge = @import("state_bridge").StateBridge;
+// const polkavm = @import("polkavm");
+// PolkaVM support temporarily disabled — needs full rework.
 
 // Re-export forgec VM components
 pub const vmCore = vm.executor;
 pub const vmSyscall = vm.syscallDispatch;
-pub const vmGas = vm.gasMeter;
-pub const vmMemory = vm.sandbox;
+//
+// pub fn detectPolkaVM(code: []const u8) bool {
+//     if (code.len < 4 or code[0] != 0x7F or code[1] != 'E' or code[2] != 'L' or code[3] != 'F') {
+//         return false;
+//     }
+//     return std.mem.indexOf(u8, code, "seal_") != null;
+// }
+//
+// fn executePolkaContract(
+//     allocator: std.mem.Allocator,
+//     bytecode: []const u8,
+//     calldata: []const u8,
+//     executionBudget: u64,
+//     stateBridge: *anyopaque,
+// ) !ExecutionResult {
+//     const sb: *StateBridge = @ptrCast(@alignCast(stateBridge));
+//
+//     // Create host environment
+//     var host = polkavm.HostEnv.init(allocator);
+//     defer host.deinit();
+//
+//     // ── Wire storage backend ────────────────────────────────────────
+//     var storageBackend = polkavm.syscallDispatch.StorageBackend{
+//         .ctx = sb,
+//         .loadFn = struct {
+//             fn load(ctx: *anyopaque, key: [32]u8) [32]u8 {
+//                 const s: *StateBridge = @ptrCast(@alignCast(ctx));
+//                 return s.storageLoad(key);
+//             }
+//         }.load,
+//         .storeFn = struct {
+//             fn store(ctx: *anyopaque, key: [32]u8, value: [32]u8) void {
+//                 const s: *StateBridge = @ptrCast(@alignCast(ctx));
+//                 _ = s.storageStore(key, value);
+//             }
+//         }.store,
+//     };
+//     host.storage = &storageBackend;
+//
+//     // ── Wire derived storage provider ────────────────────────────────
+//     const DerivedStorageProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         fn load(host_env: *polkavm.HostEnv, user: [32]u8, slot: [32]u8) [32]u8 {
+//             _ = host_env;
+//             return bridge.derivedStorageLoad(user, slot);
+//         }
+//         fn store(host_env: *polkavm.HostEnv, user: [32]u8, slot: [32]u8, value: [32]u8) anyerror!void {
+//             _ = host_env;
+//             try bridge.derivedStorageStore(user, slot, value);
+//         }
+//     };
+//     DerivedStorageProvider.bridge = sb;
+//     host.derivedLoadFn = &DerivedStorageProvider.load;
+//     host.derivedStoreFn = &DerivedStorageProvider.store;
+//
+//     // ── Wire global storage provider ─────────────────────────────────
+//     const GlobalStorageProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         fn load(host_env: *polkavm.HostEnv, slot: [32]u8) [32]u8 {
+//             _ = host_env;
+//             return bridge.globalStorageLoad(slot);
+//         }
+//         fn store(host_env: *polkavm.HostEnv, slot: [32]u8, delta: [32]u8, isAddition: bool) anyerror!void {
+//             _ = host_env;
+//             try bridge.globalStorageStore(slot, delta, isAddition);
+//         }
+//     };
+//     GlobalStorageProvider.bridge = sb;
+//     host.globalLoadFn = &GlobalStorageProvider.load;
+//     host.globalStoreFn = &GlobalStorageProvider.store;
+//
+//     // ── Wire execution context (from block/tx) ──────────────────────
+//     host.caller = sb.caller;
+//     host.selfAddress = sb.selfAddress;
+//     host.callValue = sb.value;
+//     host.executionBudget = executionBudget;
+//     host.blockNumber = sb.blockNumber;
+//     host.chainId = sb.chainId;
+//     host.timestamp = sb.timestamp;
+//     host.txOrigin = sb.txOrigin;
+//     host.computePrice = sb.computePrice;
+//     host.producer = sb.producer;
+//     host.prevrandao = sb.prevRandao;
+//
+//     // ── Wire VM execution pool (threaded executor + code cache) ─────
+//     host.vm_pool = if (sb.vm_pool) |pool| @as(*anyopaque, @ptrCast(pool)) else null;
+//
+//     // ── Wire code hash & size provider ──────────────────────────────
+//     const CodeInfoProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         fn getCodeHash(addr: [32]u8) [32]u8 {
+//             return bridge.getCodeHash(addr);
+//         }
+//         fn getCodeSize(addr: [32]u8) u64 {
+//             return bridge.getCodeSize(addr);
+//         }
+//     };
+//     CodeInfoProvider.bridge = sb;
+//     host.codeHashFn = &CodeInfoProvider.getCodeHash;
+//     host.codeSizeFn = &CodeInfoProvider.getCodeSize;
+//
+//     // ── Wire balance provider ───────────────────────────────────────
+//     const BalanceProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         fn getBalance(addr: [32]u8) [32]u8 {
+//             return bridge.getBalance(addr);
+//         }
+//     };
+//     BalanceProvider.bridge = sb;
+//     host.balanceFn = &BalanceProvider.getBalance;
+//
+//     // ── Wire call provider ──────────────────────────────────────────
+//     const CallProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         var alloc: std.mem.Allocator = undefined;
+//
+//         fn callContract(
+//             callType: polkavm.syscallDispatch.CallType,
+//             to: [32]u8,
+//             value: [32]u8,
+//             data: []const u8,
+//             budget: u64,
+//         ) polkavm.syscallDispatch.CallProviderResult {
+//             const code = bridge.getCode(to) catch {
+//                 return .{ .success = true, .returnData = &[_]u8{}, .budgetUsed = 0 };
+//             };
+//             if (code.len == 0) {
+//                 return .{ .success = true, .returnData = &[_]u8{}, .budgetUsed = 0 };
+//             }
+//             defer {
+//                 const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
+//                 state.general_allocator.free(code);
+//             }
+//
+//             var subSelfAddress: [32]u8 = undefined;
+//             var subCaller: [32]u8 = undefined;
+//             var subValue: [32]u8 = undefined;
+//             const execCode = code;
+//
+//             const compatCallType = switch (callType) {
+//                 .call => polkavm.syscallDispatch.CallType.call,
+//                 .delegatecall => polkavm.syscallDispatch.CallType.delegatecall,
+//                 .staticcall => polkavm.syscallDispatch.CallType.staticcall,
+//             };
+//
+//             switch (compatCallType) {
+//                 .call => {
+//                     subSelfAddress = to;
+//                     subCaller = bridge.selfAddress;
+//                     subValue = value;
+//
+//                     if (!isZero(value)) {
+//                         bridge.transfer(to, value) catch {
+//                             return .{ .success = false, .returnData = &[_]u8{}, .budgetUsed = 0 };
+//                         };
+//                     }
+//                 },
+//                 .delegatecall => {
+//                     subSelfAddress = bridge.selfAddress;
+//                     subCaller = bridge.caller;
+//                     subValue = bridge.value;
+//                 },
+//                 .staticcall => {
+//                     subSelfAddress = to;
+//                     subCaller = bridge.selfAddress;
+//                     subValue = [_]u8{0} ** 32;
+//                 },
+//             }
+//             var subBridge = StateBridge.init(
+//                 alloc,
+//                 bridge.overlay,
+//                 subSelfAddress,
+//                 subCaller,
+//                 subValue,
+//                 budget,
+//             );
+//             subBridge.depth = bridge.depth + 1;
+//             subBridge.inheritContext(bridge);
+//             defer subBridge.deinit();
+//
+//             if (subBridge.depth > subBridge.maxDepth) {
+//                 return .{ .success = false, .returnData = &[_]u8{}, .budgetUsed = 0 };
+//             }
+//
+//             const result = executePolkaContract(
+//                 alloc,
+//                 execCode,
+//                 data,
+//                 budget,
+//                 @ptrCast(&subBridge),
+//             ) catch {
+//                 return .{ .success = false, .returnData = &[_]u8{}, .budgetUsed = budget };
+//             };
+//
+//             return .{
+//                 .success = result.success,
+//                 .returnData = result.returnData,
+//                 .budgetUsed = result.budgetUsed,
+//             };
+//         }
+//     };
+//     CallProvider.bridge = sb;
+//     CallProvider.alloc = allocator;
+//     host.callFn = &CallProvider.callContract;
+//
+//     // ── Wire create provider ────────────────────────────────────────
+//     const CreateProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         var alloc: std.mem.Allocator = undefined;
+//
+//         fn createContract(
+//             code: []const u8,
+//             value: [32]u8,
+//             budget: u64,
+//         ) polkavm.syscallDispatch.CreateProviderResult {
+//             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
+//             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
+//             const sequence = state.getSequence(senderAddr);
+//
+//             var sequenceBytes: [8]u8 = undefined;
+//             std.mem.writeInt(u64, &sequenceBytes, sequence, .big);
+//             var createInput: [40]u8 = undefined;
+//             @memcpy(createInput[0..32], &bridge.selfAddress);
+//             @memcpy(createInput[32..40], &sequenceBytes);
+//             var newAddr: [32]u8 = undefined;
+//             std.crypto.hash.Blake3.hash(&createInput, &newAddr, .{});
+//
+//             state.setSequence(senderAddr, sequence + 1) catch {};
+//
+//             const newAddrTyped = core.types.Address{ .bytes = newAddr };
+//             state.markCreated(newAddrTyped, .ContractRoot) catch {};
+//
+//             if (!isZero(value)) {
+//                 bridge.transfer(newAddr, value) catch {
+//                     return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
+//                 };
+//             }
+//
+//             var subBridge = StateBridge.init(
+//                 alloc,
+//                 bridge.overlay,
+//                 newAddr,
+//                 bridge.selfAddress,
+//                 value,
+//                 budget,
+//             );
+//             subBridge.depth = bridge.depth + 1;
+//             subBridge.inheritContext(bridge);
+//             defer subBridge.deinit();
+//
+//             const result = executePolkaContract(
+//                 alloc,
+//                 code,
+//                 &[_]u8{},
+//                 budget,
+//                 @ptrCast(&subBridge),
+//             ) catch {
+//                 return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = budget };
+//             };
+//
+//             if (result.success and result.returnData.len > 0) {
+//                 state.setCode(newAddrTyped, result.returnData) catch {
+//                     return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = result.budgetUsed };
+//                 };
+//             }
+//
+//             return .{
+//                 .success = result.success,
+//                 .newAddress = newAddr,
+//                 .budgetUsed = result.budgetUsed,
+//             };
+//         }
+//     };
+//     CreateProvider.bridge = sb;
+//     CreateProvider.alloc = allocator;
+//     host.createFn = &CreateProvider.createContract;
+//
+//     // ── Wire create2 provider ───────────────────────────────────────
+//     const Create2Provider = struct {
+//         var bridge: *StateBridge = undefined;
+//         var alloc: std.mem.Allocator = undefined;
+//
+//         fn create2Contract(
+//             code: []const u8,
+//             salt: [32]u8,
+//             value: [32]u8,
+//             budget: u64,
+//         ) polkavm.syscallDispatch.CreateProviderResult {
+//             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
+//
+//             var initcodeHash: [32]u8 = undefined;
+//             std.crypto.hash.Blake3.hash(code, &initcodeHash, .{});
+//
+//             var create2Input: [97]u8 = undefined;
+//             create2Input[0] = 0x02;
+//             @memcpy(create2Input[1..33], &bridge.selfAddress);
+//             @memcpy(create2Input[33..65], &salt);
+//             @memcpy(create2Input[65..97], &initcodeHash);
+//             var newAddr: [32]u8 = undefined;
+//             std.crypto.hash.Blake3.hash(&create2Input, &newAddr, .{});
+//
+//             const newAddrTyped = core.types.Address{ .bytes = newAddr };
+//             const existingCode = state.getCode(newAddrTyped) catch &[_]u8{};
+//             defer if (existingCode.len > 0) {
+//                 state.general_allocator.free(existingCode);
+//             };
+//             if (existingCode.len > 0) {
+//                 return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
+//             }
+//
+//             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
+//             const sequence = state.getSequence(senderAddr);
+//             state.setSequence(senderAddr, sequence + 1) catch {};
+//
+//             state.markCreated(newAddrTyped, .ContractRoot) catch {};
+//
+//             if (!isZero(value)) {
+//                 bridge.transfer(newAddr, value) catch {
+//                     return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
+//                 };
+//             }
+//
+//             var subBridge = StateBridge.init(
+//                 alloc,
+//                 bridge.overlay,
+//                 newAddr,
+//                 bridge.selfAddress,
+//                 value,
+//                 budget,
+//             );
+//             subBridge.depth = bridge.depth + 1;
+//             subBridge.inheritContext(bridge);
+//             defer subBridge.deinit();
+//
+//             const result = executePolkaContract(
+//                 alloc,
+//                 code,
+//                 &[_]u8{},
+//                 budget,
+//                 @ptrCast(&subBridge),
+//             ) catch {
+//                 return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = budget };
+//             };
+//
+//             if (result.success and result.returnData.len > 0) {
+//                 state.setCode(newAddrTyped, result.returnData) catch {
+//                     return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = result.budgetUsed };
+//                 };
+//             }
+//
+//             return .{
+//                 .success = result.success,
+//                 .newAddress = newAddr,
+//                 .budgetUsed = result.budgetUsed,
+//             };
+//         }
+//     };
+//     Create2Provider.bridge = sb;
+//     Create2Provider.alloc = allocator;
+//     host.create2Fn = &Create2Provider.create2Contract;
+//
+//     // ── Wire instantiate provider ───────────────────────────────────
+//     const InstantiateProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         var alloc: std.mem.Allocator = undefined;
+//
+//         fn instantiateContract(
+//             code_hash: [32]u8,
+//             value: [32]u8,
+//             input: []const u8,
+//             salt: ?[32]u8,
+//             budget: u64,
+//         ) polkavm.syscallDispatch.CreateProviderResult {
+//             _ = bridge;
+//             _ = alloc;
+//             _ = code_hash;
+//             _ = value;
+//             _ = input;
+//             _ = salt;
+//             _ = budget;
+//             return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
+//         }
+//     };
+//     InstantiateProvider.bridge = sb;
+//     InstantiateProvider.alloc = allocator;
+//     host.instantiateFn = &InstantiateProvider.instantiateContract;
+//
+//     // ── Wire sig-verify provider ────────────────────────────────────
+//     const EcrecoverProvider = struct {
+//         fn ecrecoverFn(hash: [32]u8, scheme: u8, pubkey: [32]u8, signature: [64]u8) [32]u8 {
+//             switch (scheme) {
+//                 0 => {
+//                     const Ed25519 = std.crypto.sign.Ed25519;
+//                     const pk = Ed25519.PublicKey.fromBytes(pubkey) catch return [_]u8{0} ** 32;
+//                     const sig = Ed25519.Signature.fromBytes(signature);
+//                     Ed25519.Signature.verify(sig, &hash, pk) catch return [_]u8{0} ** 32;
+//                     var addr: [32]u8 = undefined;
+//                     std.crypto.hash.Blake3.hash(&pubkey, &addr, .{});
+//                     return addr;
+//                 },
+//                 else => return [_]u8{0} ** 32,
+//             }
+//         }
+//     };
+//     host.ecrecoverFn = &EcrecoverProvider.ecrecoverFn;
+//
+//     // ── Wire selfdestruct provider ──────────────────────────────────
+//     const SelfDestructProvider = struct {
+//         var bridge: *StateBridge = undefined;
+//         fn selfDestructFn(beneficiary: [32]u8) bool {
+//             bridge.selfDestruct(beneficiary) catch return false;
+//             return true;
+//         }
+//     };
+//     SelfDestructProvider.bridge = sb;
+//     host.selfDestructFn = &SelfDestructProvider.selfDestructFn;
+//
+//     // ── Execute via the contract loader ─────────────────────────────
+//     std.debug.print("DEBUG executePolkaContract: calling executeFromElf, calldata size={d}\n", .{calldata.len});
+//     const sysResult = polkavm.contractLoader.executeFromElf(
+//         allocator,
+//         bytecode,
+//         calldata,
+//         executionBudget,
+//         &host,
+//     ) catch |err| {
+//         std.debug.print("DEBUG executePolkaContract: executeFromElf failed with error={}\n", .{err});
+//         std.log.err("executePolkaContract failed: {}", .{err});
+//             return ExecutionResult{
+//                 .success = false,
+//                 .budgetUsed = 0,
+//                 .budgetRemaining = executionBudget,
+//             .returnData = &[_]u8{},
+//             .logs = &[_]vm.LogEntry{},
+//             .status = .fault,
+//         };
+//     };
+//     std.debug.print("DEBUG executePolkaContract: executeFromElf returned status={}\n", .{sysResult.status});
+//
+//     if (sysResult.status != .returned) {
+//         if (sysResult.status == .fault) {
+//             std.log.err("PolkaVM Fault at PC=0x{x}: {s}", .{ sysResult.faultPc, sysResult.faultReason orelse "Unknown" });
+//         }
+//     }
+//
+//     const compatStatus: vm.executor.ExecutionStatus = switch (sysResult.status) {
+//         .running => .running,
+//         .returned => .returned,
+//         .reverted => .reverted,
+//         .outOfbudget => .outOfBudget,
+//         .fault => .fault,
+//         .breakpoint => .breakpoint,
+//         .selfDestruct => .selfDestruct,
+//     };
+//
+//     // Convert logs
+//     const mappedLogs = try allocator.alloc(vm.LogEntry, sysResult.logs.len);
+//     for (sysResult.logs, 0..) |log, i| {
+//         mappedLogs[i] = .{
+//             .topics = .{
+//                 .items = log.topics.items,
+//                 .capacity = log.topics.capacity,
+//             },
+//             .data = .{
+//                 .items = log.data.items,
+//                 .capacity = log.data.capacity,
+//             },
+//             .alloc = log.alloc,
+//         };
+//     }
+//
+//     return ExecutionResult{
+//         .success = sysResult.status == .returned,
+//         .budgetUsed = sysResult.budgetUsed,
+//         .budgetRemaining = sysResult.budgetRemaining,
+//         .returnData = sysResult.returnData,
+//         .logs = mappedLogs,
+//         .status = compatStatus,
+//     };
+// }
 
-pub fn detectPolkaVM(code: []const u8) bool {
-    if (code.len < 4 or code[0] != 0x7F or code[1] != 'E' or code[2] != 'L' or code[3] != 'F') {
-        return false;
-    }
-    return std.mem.indexOf(u8, code, "seal_") != null;
-}
-
-fn executePolkaContract(
-    allocator: std.mem.Allocator,
-    bytecode: []const u8,
-    calldata: []const u8,
-    executionBudget: u64,
-    stateBridge: *anyopaque,
-) !ExecutionResult {
-    const sb: *StateBridge = @ptrCast(@alignCast(stateBridge));
-
-    // Create host environment
-    var host = polkavm.HostEnv.init(allocator);
-    defer host.deinit();
-
-    // ── Wire storage backend ────────────────────────────────────────
-    var storageBackend = polkavm.syscallDispatch.StorageBackend{
-        .ctx = sb,
-        .loadFn = struct {
-            fn load(ctx: *anyopaque, key: [32]u8) [32]u8 {
-                const s: *StateBridge = @ptrCast(@alignCast(ctx));
-                return s.storageLoad(key);
-            }
-        }.load,
-        .storeFn = struct {
-            fn store(ctx: *anyopaque, key: [32]u8, value: [32]u8) void {
-                const s: *StateBridge = @ptrCast(@alignCast(ctx));
-                _ = s.storageStore(key, value);
-            }
-        }.store,
-    };
-    host.storage = &storageBackend;
-
-    // ── Wire derived storage provider ────────────────────────────────
-    const DerivedStorageProvider = struct {
-        var bridge: *StateBridge = undefined;
-        fn load(host_env: *polkavm.HostEnv, user: [32]u8, slot: [32]u8) [32]u8 {
-            _ = host_env;
-            return bridge.derivedStorageLoad(user, slot);
-        }
-        fn store(host_env: *polkavm.HostEnv, user: [32]u8, slot: [32]u8, value: [32]u8) anyerror!void {
-            _ = host_env;
-            try bridge.derivedStorageStore(user, slot, value);
-        }
-    };
-    DerivedStorageProvider.bridge = sb;
-    host.derivedLoadFn = &DerivedStorageProvider.load;
-    host.derivedStoreFn = &DerivedStorageProvider.store;
-
-    // ── Wire global storage provider ─────────────────────────────────
-    const GlobalStorageProvider = struct {
-        var bridge: *StateBridge = undefined;
-        fn load(host_env: *polkavm.HostEnv, slot: [32]u8) [32]u8 {
-            _ = host_env;
-            return bridge.globalStorageLoad(slot);
-        }
-        fn store(host_env: *polkavm.HostEnv, slot: [32]u8, delta: [32]u8, isAddition: bool) anyerror!void {
-            _ = host_env;
-            try bridge.globalStorageStore(slot, delta, isAddition);
-        }
-    };
-    GlobalStorageProvider.bridge = sb;
-    host.globalLoadFn = &GlobalStorageProvider.load;
-    host.globalStoreFn = &GlobalStorageProvider.store;
-
-    // ── Wire execution context (from block/tx) ──────────────────────
-    host.caller = sb.caller;
-    host.selfAddress = sb.selfAddress;
-    host.callValue = sb.value;
-    host.executionBudget = executionBudget;
-    host.blockNumber = sb.blockNumber;
-    host.chainId = sb.chainId;
-    host.timestamp = sb.timestamp;
-    host.txOrigin = sb.txOrigin;
-    host.gasPrice = sb.gasPrice;
-    host.producer = sb.producer;
-    host.prevrandao = sb.prevRandao;
-
-    // ── Wire VM execution pool (threaded executor + code cache) ─────
-    host.vm_pool = if (sb.vm_pool) |pool| @as(*anyopaque, @ptrCast(pool)) else null;
-
-    // ── Wire code hash & size provider ──────────────────────────────
-    const CodeInfoProvider = struct {
-        var bridge: *StateBridge = undefined;
-        fn getCodeHash(addr: [32]u8) [32]u8 {
-            return bridge.getCodeHash(addr);
-        }
-        fn getCodeSize(addr: [32]u8) u64 {
-            return bridge.getCodeSize(addr);
-        }
-    };
-    CodeInfoProvider.bridge = sb;
-    host.codeHashFn = &CodeInfoProvider.getCodeHash;
-    host.codeSizeFn = &CodeInfoProvider.getCodeSize;
-
-    // ── Wire balance provider ───────────────────────────────────────
-    const BalanceProvider = struct {
-        var bridge: *StateBridge = undefined;
-        fn getBalance(addr: [32]u8) [32]u8 {
-            return bridge.getBalance(addr);
-        }
-    };
-    BalanceProvider.bridge = sb;
-    host.balanceFn = &BalanceProvider.getBalance;
-
-    // ── Wire call provider ──────────────────────────────────────────
-    const CallProvider = struct {
-        var bridge: *StateBridge = undefined;
-        var alloc: std.mem.Allocator = undefined;
-
-        fn callContract(
-            callType: polkavm.syscallDispatch.CallType,
-            to: [32]u8,
-            value: [32]u8,
-            data: []const u8,
-            gas: u64,
-        ) polkavm.syscallDispatch.CallProviderResult {
-            const code = bridge.getCode(to) catch {
-                return .{ .success = true, .returnData = &[_]u8{}, .gasUsed = 0 };
-            };
-            if (code.len == 0) {
-                return .{ .success = true, .returnData = &[_]u8{}, .gasUsed = 0 };
-            }
-            defer {
-                const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
-                state.general_allocator.free(code);
-            }
-
-            var subSelfAddress: [32]u8 = undefined;
-            var subCaller: [32]u8 = undefined;
-            var subValue: [32]u8 = undefined;
-            const execCode = code;
-
-            const compatCallType = switch (callType) {
-                .call => polkavm.syscallDispatch.CallType.call,
-                .delegatecall => polkavm.syscallDispatch.CallType.delegatecall,
-                .staticcall => polkavm.syscallDispatch.CallType.staticcall,
-            };
-
-            switch (compatCallType) {
-                .call => {
-                    subSelfAddress = to;
-                    subCaller = bridge.selfAddress;
-                    subValue = value;
-
-                    if (!isZero(value)) {
-                        bridge.transfer(to, value) catch {
-                            return .{ .success = false, .returnData = &[_]u8{}, .gasUsed = 0 };
-                        };
-                    }
-                },
-                .delegatecall => {
-                    subSelfAddress = bridge.selfAddress;
-                    subCaller = bridge.caller;
-                    subValue = bridge.value;
-                },
-                .staticcall => {
-                    subSelfAddress = to;
-                    subCaller = bridge.selfAddress;
-                    subValue = [_]u8{0} ** 32;
-                },
-            }
-            var subBridge = StateBridge.init(
-                alloc,
-                bridge.overlay,
-                subSelfAddress,
-                subCaller,
-                subValue,
-                gas,
-            );
-            subBridge.depth = bridge.depth + 1;
-            subBridge.inheritContext(bridge);
-            defer subBridge.deinit();
-
-            if (subBridge.depth > subBridge.maxDepth) {
-                return .{ .success = false, .returnData = &[_]u8{}, .gasUsed = 0 };
-            }
-
-            const result = executePolkaContract(
-                alloc,
-                execCode,
-                data,
-                gas,
-                @ptrCast(&subBridge),
-            ) catch {
-                return .{ .success = false, .returnData = &[_]u8{}, .gasUsed = gas };
-            };
-
-            return .{
-                .success = result.success,
-                .returnData = result.returnData,
-                .gasUsed = result.gasUsed,
-            };
-        }
-    };
-    CallProvider.bridge = sb;
-    CallProvider.alloc = allocator;
-    host.callFn = &CallProvider.callContract;
-
-    // ── Wire create provider ────────────────────────────────────────
-    const CreateProvider = struct {
-        var bridge: *StateBridge = undefined;
-        var alloc: std.mem.Allocator = undefined;
-
-        fn createContract(
-            code: []const u8,
-            value: [32]u8,
-            gas: u64,
-        ) polkavm.syscallDispatch.CreateProviderResult {
-            const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
-            const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
-            const sequence = state.getSequence(senderAddr);
-
-            var sequenceBytes: [8]u8 = undefined;
-            std.mem.writeInt(u64, &sequenceBytes, sequence, .big);
-            var createInput: [40]u8 = undefined;
-            @memcpy(createInput[0..32], &bridge.selfAddress);
-            @memcpy(createInput[32..40], &sequenceBytes);
-            var newAddr: [32]u8 = undefined;
-            std.crypto.hash.Blake3.hash(&createInput, &newAddr, .{});
-
-            state.setSequence(senderAddr, sequence + 1) catch {};
-
-            const newAddrTyped = core.types.Address{ .bytes = newAddr };
-            state.markCreated(newAddrTyped, .ContractRoot) catch {};
-
-            if (!isZero(value)) {
-                bridge.transfer(newAddr, value) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
-                };
-            }
-
-            var subBridge = StateBridge.init(
-                alloc,
-                bridge.overlay,
-                newAddr,
-                bridge.selfAddress,
-                value,
-                gas,
-            );
-            subBridge.depth = bridge.depth + 1;
-            subBridge.inheritContext(bridge);
-            defer subBridge.deinit();
-
-            const result = executePolkaContract(
-                alloc,
-                code,
-                &[_]u8{},
-                gas,
-                @ptrCast(&subBridge),
-            ) catch {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = gas };
-            };
-
-            if (result.success and result.returnData.len > 0) {
-                state.setCode(newAddrTyped, result.returnData) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = result.gasUsed };
-                };
-            }
-
-            return .{
-                .success = result.success,
-                .newAddress = newAddr,
-                .gasUsed = result.gasUsed,
-            };
-        }
-    };
-    CreateProvider.bridge = sb;
-    CreateProvider.alloc = allocator;
-    host.createFn = &CreateProvider.createContract;
-
-    // ── Wire create2 provider ───────────────────────────────────────
-    const Create2Provider = struct {
-        var bridge: *StateBridge = undefined;
-        var alloc: std.mem.Allocator = undefined;
-
-        fn create2Contract(
-            code: []const u8,
-            salt: [32]u8,
-            value: [32]u8,
-            gas: u64,
-        ) polkavm.syscallDispatch.CreateProviderResult {
-            const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
-
-            var initcodeHash: [32]u8 = undefined;
-            std.crypto.hash.Blake3.hash(code, &initcodeHash, .{});
-
-            var create2Input: [97]u8 = undefined;
-            create2Input[0] = 0x02;
-            @memcpy(create2Input[1..33], &bridge.selfAddress);
-            @memcpy(create2Input[33..65], &salt);
-            @memcpy(create2Input[65..97], &initcodeHash);
-            var newAddr: [32]u8 = undefined;
-            std.crypto.hash.Blake3.hash(&create2Input, &newAddr, .{});
-
-            const newAddrTyped = core.types.Address{ .bytes = newAddr };
-            const existingCode = state.getCode(newAddrTyped) catch &[_]u8{};
-            defer if (existingCode.len > 0) {
-                state.general_allocator.free(existingCode);
-            };
-            if (existingCode.len > 0) {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
-            }
-
-            const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
-            const sequence = state.getSequence(senderAddr);
-            state.setSequence(senderAddr, sequence + 1) catch {};
-
-            state.markCreated(newAddrTyped, .ContractRoot) catch {};
-
-            if (!isZero(value)) {
-                bridge.transfer(newAddr, value) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
-                };
-            }
-
-            var subBridge = StateBridge.init(
-                alloc,
-                bridge.overlay,
-                newAddr,
-                bridge.selfAddress,
-                value,
-                gas,
-            );
-            subBridge.depth = bridge.depth + 1;
-            subBridge.inheritContext(bridge);
-            defer subBridge.deinit();
-
-            const result = executePolkaContract(
-                alloc,
-                code,
-                &[_]u8{},
-                gas,
-                @ptrCast(&subBridge),
-            ) catch {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = gas };
-            };
-
-            if (result.success and result.returnData.len > 0) {
-                state.setCode(newAddrTyped, result.returnData) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = result.gasUsed };
-                };
-            }
-
-            return .{
-                .success = result.success,
-                .newAddress = newAddr,
-                .gasUsed = result.gasUsed,
-            };
-        }
-    };
-    Create2Provider.bridge = sb;
-    Create2Provider.alloc = allocator;
-    host.create2Fn = &Create2Provider.create2Contract;
-
-    // ── Wire instantiate provider ───────────────────────────────────
-    const InstantiateProvider = struct {
-        var bridge: *StateBridge = undefined;
-        var alloc: std.mem.Allocator = undefined;
-
-        fn instantiateContract(
-            code_hash: [32]u8,
-            value: [32]u8,
-            input: []const u8,
-            salt: ?[32]u8,
-            gas: u64,
-        ) polkavm.syscallDispatch.CreateProviderResult {
-            _ = bridge;
-            _ = alloc;
-            _ = code_hash;
-            _ = value;
-            _ = input;
-            _ = salt;
-            _ = gas;
-            return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
-        }
-    };
-    InstantiateProvider.bridge = sb;
-    InstantiateProvider.alloc = allocator;
-    host.instantiateFn = &InstantiateProvider.instantiateContract;
-
-    // ── Wire sig-verify provider ────────────────────────────────────
-    const EcrecoverProvider = struct {
-        fn ecrecoverFn(hash: [32]u8, scheme: u8, pubkey: [32]u8, signature: [64]u8) [32]u8 {
-            switch (scheme) {
-                0 => {
-                    const Ed25519 = std.crypto.sign.Ed25519;
-                    const pk = Ed25519.PublicKey.fromBytes(pubkey) catch return [_]u8{0} ** 32;
-                    const sig = Ed25519.Signature.fromBytes(signature);
-                    Ed25519.Signature.verify(sig, &hash, pk) catch return [_]u8{0} ** 32;
-                    var addr: [32]u8 = undefined;
-                    std.crypto.hash.Blake3.hash(&pubkey, &addr, .{});
-                    return addr;
-                },
-                else => return [_]u8{0} ** 32,
-            }
-        }
-    };
-    host.ecrecoverFn = &EcrecoverProvider.ecrecoverFn;
-
-    // ── Wire selfdestruct provider ──────────────────────────────────
-    const SelfDestructProvider = struct {
-        var bridge: *StateBridge = undefined;
-        fn selfDestructFn(beneficiary: [32]u8) bool {
-            bridge.selfDestruct(beneficiary) catch return false;
-            return true;
-        }
-    };
-    SelfDestructProvider.bridge = sb;
-    host.selfDestructFn = &SelfDestructProvider.selfDestructFn;
-
-    // ── Execute via the contract loader ─────────────────────────────
-    std.debug.print("DEBUG executePolkaContract: calling executeFromElf, calldata size={d}\n", .{calldata.len});
-    const sysResult = polkavm.contractLoader.executeFromElf(
-        allocator,
-        bytecode,
-        calldata,
-        executionBudget,
-        &host,
-    ) catch |err| {
-        std.debug.print("DEBUG executePolkaContract: executeFromElf failed with error={}\n", .{err});
-        std.log.err("executePolkaContract failed: {}", .{err});
-        return ExecutionResult{
-            .success = false,
-            .gasUsed = 0,
-            .gasRemaining = executionBudget,
-            .returnData = &[_]u8{},
-            .logs = &[_]vm.LogEntry{},
-            .status = .fault,
-        };
-    };
-    std.debug.print("DEBUG executePolkaContract: executeFromElf returned status={}\n", .{sysResult.status});
-
-    if (sysResult.status != .returned) {
-        if (sysResult.status == .fault) {
-            std.log.err("PolkaVM Fault at PC=0x{x}: {s}", .{ sysResult.faultPc, sysResult.faultReason orelse "Unknown" });
-        }
-    }
-
-    const compatStatus: vm.executor.ExecutionStatus = switch (sysResult.status) {
-        .running => .running,
-        .returned => .returned,
-        .reverted => .reverted,
-        .outOfGas => .outOfGas,
-        .fault => .fault,
-        .breakpoint => .breakpoint,
-        .selfDestruct => .selfDestruct,
-    };
-
-    // Convert logs
-    const mappedLogs = try allocator.alloc(vm.LogEntry, sysResult.logs.len);
-    for (sysResult.logs, 0..) |log, i| {
-        mappedLogs[i] = .{
-            .topics = .{
-                .items = log.topics.items,
-                .capacity = log.topics.capacity,
-            },
-            .data = .{
-                .items = log.data.items,
-                .capacity = log.data.capacity,
-            },
-            .alloc = log.alloc,
-        };
-    }
-
-    return ExecutionResult{
-        .success = sysResult.status == .returned,
-        .gasUsed = sysResult.gasUsed,
-        .gasRemaining = sysResult.gasRemaining,
-        .returnData = sysResult.returnData,
-        .logs = mappedLogs,
-        .status = compatStatus,
-    };
-}
-
-/// Execute a contract call using the RISC-V VM.
-/// All HostEnv provider slots are wired for full smart-contract support.
-/// Executes a smart contract using the RISC-V VM (RV64IM).
-/// Sets up the host environment, wires syscall providers (storage, calls, etc.),
-/// and loads/executes the bytecode.
 pub fn executeContract(
     allocator: std.mem.Allocator,
     bytecode: []const u8,
@@ -528,10 +522,6 @@ pub fn executeContract(
     executionBudget: u64,
     stateBridge: *anyopaque,
 ) !ExecutionResult {
-    if (detectPolkaVM(bytecode)) {
-        return executePolkaContract(allocator, bytecode, calldata, executionBudget, stateBridge);
-    }
-
     var sb: *StateBridge = @ptrCast(@alignCast(stateBridge));
 
     // Create host environment
@@ -583,7 +573,7 @@ pub fn executeContract(
     host.chainId = sb.chainId;
     host.timestamp = sb.timestamp;
     host.txOrigin = sb.txOrigin;
-    host.gasPrice = sb.gasPrice;
+    host.computePrice = sb.computePrice;
     host.producer = sb.producer;
     host.prevrandao = sb.prevRandao;
 
@@ -617,57 +607,45 @@ pub fn executeContract(
             to: [32]u8,
             value: [32]u8,
             data: []const u8,
-            gas: u64,
+            budget: u64,
         ) vm.syscallDispatch.CallProviderResult {
-            // Get target code
             const code = bridge.getCode(to) catch {
-                return .{ .success = true, .returnData = &[_]u8{}, .gasUsed = 0 };
+                return .{ .success = true, .returnData = &[_]u8{}, .budgetUsed = 0 };
             };
             if (code.len == 0) {
-                return .{ .success = true, .returnData = &[_]u8{}, .gasUsed = 0 };
+                return .{ .success = true, .returnData = &[_]u8{}, .budgetUsed = 0 };
             }
             defer {
                 const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
                 state.general_allocator.free(code);
             }
 
-            // ------ Apply call-type semantics ------
             var subSelfAddress: [32]u8 = undefined;
             var subCaller: [32]u8 = undefined;
             var subValue: [32]u8 = undefined;
-            // For delegatecall: run target's CODE but in current contract's STORAGE context.
-            // execCode is always `code` (the target's bytecode fetched above).
-            // The difference is which address and caller the sub-bridge uses.
             const execCode = code;
 
             switch (callType) {
                 .call => {
-                    // CALL: sender is current contract, target runs its own code/storage
                     subSelfAddress = to;
                     subCaller = bridge.selfAddress;
                     subValue = value;
 
-                    // Transfer value if non-zero
                     if (!isZero(value)) {
                         bridge.transfer(to, value) catch {
-                            return .{ .success = false, .returnData = &[_]u8{}, .gasUsed = 0 };
+                            return .{ .success = false, .returnData = &[_]u8{}, .budgetUsed = 0 };
                         };
                     }
                 },
                 .delegatecall => {
-                    // DELEGATECALL: caller = original msg.sender (preserved),
-                    // storage context = current contract (subSelfAddress = bridge.selfAddress),
-                    // code = target's bytecode (execCode set above).
-                    subSelfAddress = bridge.selfAddress; // storage stays in current contract
-                    subCaller = bridge.caller; // msg.sender = original caller
-                    subValue = bridge.value; // value = original call value
-                    // No value transfer in delegatecall
+                    subSelfAddress = bridge.selfAddress;
+                    subCaller = bridge.caller;
+                    subValue = bridge.value;
                 },
                 .staticcall => {
-                    // STATICCALL: same as CALL but read-only (no state mutations)
                     subSelfAddress = to;
                     subCaller = bridge.selfAddress;
-                    subValue = [_]u8{0} ** 32; // No value transfer in staticcall
+                    subValue = [_]u8{0} ** 32;
                 },
             }
             // Create sub-bridge. For DELEGATECALL subSelfAddress = bridge.selfAddress
@@ -678,7 +656,7 @@ pub fn executeContract(
                 subSelfAddress,
                 subCaller,
                 subValue,
-                gas,
+                budget,
             );
             subBridge.depth = bridge.depth + 1;
             subBridge.inheritContext(bridge);
@@ -686,23 +664,23 @@ pub fn executeContract(
 
             // Check call depth (EIP limit: 1024)
             if (subBridge.depth > subBridge.maxDepth) {
-                return .{ .success = false, .returnData = &[_]u8{}, .gasUsed = 0 };
+                return .{ .success = false, .returnData = &[_]u8{}, .budgetUsed = 0 };
             }
 
             const result = executeContract(
                 alloc,
                 execCode,
                 data,
-                gas,
+                budget,
                 @ptrCast(&subBridge),
             ) catch {
-                return .{ .success = false, .returnData = &[_]u8{}, .gasUsed = gas };
+                return .{ .success = false, .returnData = &[_]u8{}, .budgetUsed = budget };
             };
 
             return .{
                 .success = result.success,
                 .returnData = result.returnData,
-                .gasUsed = result.gasUsed,
+                .budgetUsed = result.budgetUsed,
             };
         }
     };
@@ -720,16 +698,12 @@ pub fn executeContract(
         fn createContract(
             code: []const u8,
             value: [32]u8,
-            gas: u64,
+            budget: u64,
         ) vm.syscallDispatch.CreateProviderResult {
             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
-
-            // Get sender sequence for deterministic address derivation
             const sequence = state.getSequence(senderAddr);
 
-            // Derive new contract address using BLAKE3:
-            // newAddr = blake3(sender_address || sequence_bytes)
             var sequenceBytes: [8]u8 = undefined;
             std.mem.writeInt(u64, &sequenceBytes, sequence, .big);
             var createInput: [40]u8 = undefined;
@@ -738,28 +712,24 @@ pub fn executeContract(
             var newAddr: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(&createInput, &newAddr, .{});
 
-            // Increment sender sequence
             state.setSequence(senderAddr, sequence + 1) catch {};
 
-            // Mark as created
             const newAddrTyped = core.types.Address{ .bytes = newAddr };
             state.markCreated(newAddrTyped, .ContractRoot) catch {};
 
-            // Transfer value to new contract
             if (!isZero(value)) {
                 bridge.transfer(newAddr, value) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
                 };
             }
 
-            // Execute initcode via recursive VM call
             var subBridge = StateBridge.init(
                 alloc,
                 bridge.overlay,
                 newAddr,
                 bridge.selfAddress,
                 value,
-                gas,
+                budget,
             );
             subBridge.depth = bridge.depth + 1;
             subBridge.inheritContext(bridge);
@@ -769,23 +739,22 @@ pub fn executeContract(
                 alloc,
                 code,
                 &[_]u8{},
-                gas,
+                budget,
                 @ptrCast(&subBridge),
             ) catch {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = gas };
+                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = budget };
             };
 
             if (result.success and result.returnData.len > 0) {
-                // Store runtime code at new address
                 state.setCode(newAddrTyped, result.returnData) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = result.gasUsed };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = result.budgetUsed };
                 };
             }
 
             return .{
                 .success = result.success,
                 .newAddress = newAddr,
-                .gasUsed = result.gasUsed,
+                .budgetUsed = result.budgetUsed,
             };
         }
     };
@@ -805,17 +774,13 @@ pub fn executeContract(
             code: []const u8,
             salt: [32]u8,
             value: [32]u8,
-            gas: u64,
+            budget: u64,
         ) vm.syscallDispatch.CreateProviderResult {
             const state: *core.state.Overlay = @ptrCast(@alignCast(bridge.overlay));
 
-            // Step 1: Hash the initcode with BLAKE3
             var initcodeHash: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(code, &initcodeHash, .{});
 
-            // Step 2: Derive CREATE2 address using BLAKE3:
-            // newAddr = blake3(0x02 || sender || salt || blake3(initcode))
-            // 0x02 prefix differentiates from CREATE (sequence-based)
             var create2Input: [97]u8 = undefined;
             create2Input[0] = 0x02;
             @memcpy(create2Input[1..33], &bridge.selfAddress);
@@ -824,40 +789,34 @@ pub fn executeContract(
             var newAddr: [32]u8 = undefined;
             std.crypto.hash.Blake3.hash(&create2Input, &newAddr, .{});
 
-            // Step 3: Check for address collision (code already exists at derived address)
             const newAddrTyped = core.types.Address{ .bytes = newAddr };
             const existingCode = state.getCode(newAddrTyped) catch &[_]u8{};
             defer if (existingCode.len > 0) {
                 state.general_allocator.free(existingCode);
             };
             if (existingCode.len > 0) {
-                // Address collision — CREATE2 must fail
-                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
+                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
             }
 
-            // Step 4: Increment sender sequence (same as CREATE)
             const senderAddr = core.types.Address{ .bytes = bridge.selfAddress };
             const sequence = state.getSequence(senderAddr);
             state.setSequence(senderAddr, sequence + 1) catch {};
 
-            // Step 5: Mark as created
             state.markCreated(newAddrTyped, .ContractRoot) catch {};
 
-            // Step 6: Transfer value to new contract
             if (!isZero(value)) {
                 bridge.transfer(newAddr, value) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = 0 };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = 0 };
                 };
             }
 
-            // Step 7: Execute initcode in child VM
             var subBridge = StateBridge.init(
                 alloc,
                 bridge.overlay,
                 newAddr,
                 bridge.selfAddress,
                 value,
-                gas,
+                budget,
             );
             subBridge.depth = bridge.depth + 1;
             subBridge.inheritContext(bridge);
@@ -867,23 +826,22 @@ pub fn executeContract(
                 alloc,
                 code,
                 &[_]u8{},
-                gas,
+                budget,
                 @ptrCast(&subBridge),
             ) catch {
-                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = gas };
+                return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = budget };
             };
 
-            // Step 8: Store runtime bytecode at derived address
             if (result.success and result.returnData.len > 0) {
                 state.setCode(newAddrTyped, result.returnData) catch {
-                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .gasUsed = result.gasUsed };
+                    return .{ .success = false, .newAddress = [_]u8{0} ** 32, .budgetUsed = result.budgetUsed };
                 };
             }
 
             return .{
                 .success = result.success,
                 .newAddress = newAddr,
-                .gasUsed = result.gasUsed,
+                .budgetUsed = result.budgetUsed,
             };
         }
     };
@@ -944,8 +902,8 @@ pub fn executeContract(
             std.log.err("executeFromZeph failed: {}", .{err});
             return ExecutionResult{
                 .success = false,
-                .gasUsed = 0,
-                .gasRemaining = executionBudget,
+                .budgetUsed = 0,
+                .budgetRemaining = executionBudget,
                 .returnData = &[_]u8{},
                 .logs = &[_]vm.syscallDispatch.LogEntry{},
                 .status = .fault,
@@ -962,8 +920,8 @@ pub fn executeContract(
             std.log.err("executeFromElf failed: {}", .{err});
             return ExecutionResult{
                 .success = false,
-                .gasUsed = 0,
-                .gasRemaining = executionBudget,
+                .budgetUsed = 0,
+                .budgetRemaining = executionBudget,
                 .returnData = &[_]u8{},
                 .logs = &[_]vm.syscallDispatch.LogEntry{},
                 .status = .fault,
@@ -978,8 +936,8 @@ pub fn executeContract(
 
     return ExecutionResult{
         .success = sysResult.status == .returned,
-        .gasUsed = sysResult.gasUsed,
-        .gasRemaining = sysResult.gasRemaining,
+        .budgetUsed = sysResult.budgetUsed,
+        .budgetRemaining = sysResult.budgetRemaining,
         .returnData = sysResult.returnData,
         .logs = host.logs.items,
         .status = sysResult.status,
@@ -1005,7 +963,7 @@ pub fn deployContract(
 
     return DeployResult{
         .success = result.success,
-        .gasUsed = result.gasUsed,
+        .budgetUsed = result.budgetUsed,
         .runtimeCode = result.returnData,
         .logs = result.logs,
     };
@@ -1015,8 +973,8 @@ pub fn deployContract(
 /// Detailed results from a contract execution session.
 pub const ExecutionResult = struct {
     success: bool,
-    gasUsed: u64,
-    gasRemaining: u64,
+    budgetUsed: u64,
+    budgetRemaining: u64,
     returnData: []const u8,
     /// Logs emitted during execution (from HostEnv)
     logs: []const vm.LogEntry,
@@ -1027,7 +985,7 @@ pub const ExecutionResult = struct {
 /// Results from a contract deployment (initcode execution).
 pub const DeployResult = struct {
     success: bool,
-    gasUsed: u64,
+    budgetUsed: u64,
     runtimeCode: []const u8,
     /// Logs emitted during deployment
     logs: []const vm.LogEntry,

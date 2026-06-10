@@ -5,8 +5,8 @@
 // sequences of instructions between control flow points (branches, jumps, ecalls).
 //
 // This enables two critical optimizations:
-//   1. Gas pre-computation: pre-compute total gas cost per basic block, reducing
-//      gas checks from per-instruction to per-block (~5-10 instructions amortized).
+//   1. budget pre-computation: pre-compute total budget cost per basic block, reducing
+//      budget checks from per-instruction to per-block (~5-10 instructions amortized).
 //   2. Super-instruction identification: detect common instruction patterns within
 //      blocks for pattern collapsing (e.g., LUI+ADDI → load immediate).
 //
@@ -17,7 +17,7 @@
 
 const std = @import("std");
 const decoder = @import("decoder.zig");
-const gas_table = @import("../gas/table.zig");
+const budget_table = @import("../budget/table.zig");
 
 /// A basic block is a maximal sequence of instructions with:
 ///   - One entry point (the first instruction, or a branch target)
@@ -29,8 +29,8 @@ pub const BasicBlock = struct {
     end_pc: u32,
     /// Number of instructions in this block
     insn_count: u16,
-    /// Pre-computed total gas cost for all instructions in this block
-    total_gas: u64,
+    /// Pre-computed total budget cost for all instructions in this block
+    total_budget: u64,
     /// Index of the fallthrough block (next sequential block), or null
     fallthrough: ?u16,
     /// Index of the branch target block, or null
@@ -77,11 +77,11 @@ const MAX_BLOCKS: u16 = 16384;
 const NO_BLOCK: u16 = 0xFFFF;
 
 /// Analyze a RISC-V program and identify basic blocks.
-/// Returns a ProgramAnalysis with pre-computed gas costs.
+/// Returns a ProgramAnalysis with pre-computed budget costs.
 ///
 /// The analysis works in two passes:
 ///   Pass 1: Identify block boundaries (branch targets + instructions after branches)
-///   Pass 2: Build basic blocks with gas costs
+///   Pass 2: Build basic blocks with budget costs
 pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !ProgramAnalysis {
     const insn_count = code_len / 4;
     if (insn_count == 0) {
@@ -157,7 +157,7 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
 
     var current_block: u16 = 0;
     var block_start: u32 = 0;
-    var block_gas: u64 = 0;
+    var block_budget: u64 = 0;
     var block_insn_count: u16 = 0;
 
     i = 0;
@@ -171,7 +171,7 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
                 block_start,
                 (i - 1) * 4,
                 block_insn_count,
-                block_gas,
+                block_budget,
                 code,
                 insn_count,
                 current_block,
@@ -179,27 +179,27 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
             );
             current_block += 1;
             block_start = pc;
-            block_gas = 0;
+            block_budget = 0;
             block_insn_count = 0;
         }
 
         // Map this PC to the current block
         pc_to_block[i] = current_block;
 
-        // Accumulate gas for this instruction
+        // Accumulate budget for this instruction
         const word = std.mem.readInt(u32, code[pc..][0..4], .little);
         const opcode: u7 = @truncate(word & 0x7F);
-        block_gas += gas_table.OPCODE_GAS_TABLE[opcode];
+        block_budget += budget_table.OPCODE_budget_TABLE[opcode];
 
-        // For M-extension instructions, add extra gas
+        // For M-extension instructions, add extra budget
         if (opcode == decoder.Opcode.OP) {
             const insn = decoder.decode(word) catch {
                 block_insn_count += 1;
                 continue;
             };
             if (insn == .rType and insn.rType.funct7 == decoder.Funct7.MULDIV) {
-                const extra = gas_table.instructionCost(insn) -| gas_table.InstructionGas.ALU;
-                block_gas += extra;
+                const extra = budget_table.instructionCost(insn) -| budget_table.Instructionbudget.ALU;
+                block_budget += extra;
             }
         }
 
@@ -212,7 +212,7 @@ pub fn analyze(allocator: std.mem.Allocator, code: []const u8, code_len: u32) !P
             block_start,
             (insn_count - 1) * 4,
             block_insn_count,
-            block_gas,
+            block_budget,
             code,
             insn_count,
             current_block,
@@ -233,7 +233,7 @@ fn buildBlock(
     start_pc: u32,
     end_pc: u32,
     insn_count: u16,
-    total_gas: u64,
+    total_budget: u64,
     code: []const u8,
     total_insn_count: u32,
     block_idx: u16,
@@ -275,7 +275,7 @@ fn buildBlock(
         .start_pc = start_pc,
         .end_pc = end_pc,
         .insn_count = insn_count,
-        .total_gas = total_gas,
+        .total_budget = total_budget,
         .fallthrough = fallthrough,
         .branch_target = branch_target,
         .ends_with_ecall = ends_with_ecall,
@@ -402,7 +402,7 @@ test "analyze: straight-line code = one block" {
     defer analysis.deinit();
     try testing.expectEqual(@as(u16, 1), analysis.block_count);
     try testing.expectEqual(@as(u16, 3), analysis.blocks[0].insn_count);
-    try testing.expect(analysis.blocks[0].total_gas > 0);
+    try testing.expect(analysis.blocks[0].total_budget > 0);
 }
 
 test "analyze: ECALL splits blocks" {
@@ -437,8 +437,8 @@ test "analyze: pc_to_block mapping" {
     try testing.expectEqual(@as(u16, 2), analysis.pc_to_block[3]);
 }
 
-test "analyze: gas pre-computation correct" {
-    // 3 ADDI instructions (1 gas each) → block total = 3
+test "analyze: budget pre-computation correct" {
+    // 3 ADDI instructions (1 budget each) → block total = 3
     const code = [_]u8{
         0x93, 0x00, 0x10, 0x00, // ADDI x1, x0, 1
         0x93, 0x80, 0x10, 0x00, // ADDI x1, x1, 1
@@ -446,8 +446,8 @@ test "analyze: gas pre-computation correct" {
     };
     var analysis = try analyze(testing.allocator, &code, 12);
     defer analysis.deinit();
-    // OP_IMM costs 1 gas each → total should be 3
-    try testing.expectEqual(@as(u64, 3), analysis.blocks[0].total_gas);
+    // OP_IMM costs 1 budget each → total should be 3
+    try testing.expectEqual(@as(u64, 3), analysis.blocks[0].total_budget);
 }
 
 test "super-instruction: LUI + ADDI detected" {

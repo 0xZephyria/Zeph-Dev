@@ -95,7 +95,7 @@ pub const HighPerfDB = struct {
         if (config.enable_wal) {
             const wal_path = try std.fmt.allocPrint(allocator, "{s}/wal.log", .{data_dir});
             defer allocator.free(wal_path);
-            wal = try WAL.init(allocator, io_engine, wal_path);
+            wal = try WAL.init(allocator, io_engine, wal_path, config.sync_wal);
         }
 
         // Initialize memtable
@@ -177,6 +177,7 @@ pub const HighPerfDB = struct {
             defer wal_entry.deinit(self.allocator);
             try wal_entry.append(self.allocator, 1); // PUT operation
             try wal_entry.appendSlice(self.allocator, &key);
+            if (value.len > std.math.maxInt(u32)) return error.ValueTooLarge;
             try wal_entry.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(value.len))));
             try wal_entry.appendSlice(self.allocator, value);
             try wal.append(wal_entry.items, 0);
@@ -275,6 +276,7 @@ pub const HighPerfDB = struct {
             defer wal_entry.deinit(self.allocator);
 
             try wal_entry.append(self.allocator, 2); // BATCH operation
+            if (batch.count() > std.math.maxInt(u32)) return error.BatchTooLarge;
             try wal_entry.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(batch.count()))));
 
             for (batch.ops.items) |op| {
@@ -282,6 +284,7 @@ pub const HighPerfDB = struct {
                 try wal_entry.appendSlice(self.allocator, &op.key);
                 if (!op.is_delete) {
                     if (op.value) |value| {
+                        if (value.len > std.math.maxInt(u32)) return error.ValueTooLarge;
                         try wal_entry.appendSlice(self.allocator, std.mem.asBytes(&@as(u32, @intCast(value.len))));
                         try wal_entry.appendSlice(self.allocator, value);
                     }

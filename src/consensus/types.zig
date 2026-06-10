@@ -118,7 +118,8 @@ pub const SlashingRecord = struct {
 
 pub const Vote = struct {
     sender: core.types.Address,
-    blockHash: core.types.Hash,
+    /// Canonical block id (Block.id()) — the single identifier voted on.
+    blockId: core.types.Hash,
     view: u64,
     signature: [96]u8, // BLS G2 signature
 };
@@ -126,7 +127,8 @@ pub const Vote = struct {
 // ── VoteMsg (used by VotePool and P2P) ──────────────────────────────────
 
 pub const VoteMsg = struct {
-    blockHash: core.types.Hash,
+    /// Canonical block id (Block.id()) voted on.
+    blockId: core.types.Hash,
     blockNumber: u64,
     view: u64,
     signature: [96]u8,
@@ -144,7 +146,7 @@ pub const AdaptiveBlockHeader = struct {
     /// Epoch number
     epoch: u64,
     /// Parent block's wovenRoot hash
-    parentHash: core.types.Hash,
+    parentWovenRoot: core.types.Hash,
     /// Proposer's validator index in the active set
     proposerIndex: u32,
     /// Proposer's VRF proof (proves legitimate selection)
@@ -194,14 +196,19 @@ pub const AdaptiveBlockHeader = struct {
             var i: usize = 0;
             while (i + 1 < count) : (i += 2) {
                 var hasher = std.crypto.hash.Blake3.init(.{});
+                hasher.update("ZEPH_WOVEN_V1");
                 hasher.update(&level[i].bytes);
                 hasher.update(&level[i + 1].bytes);
                 hasher.final(&level[next_count].bytes);
                 next_count += 1;
             }
-            // Odd element: promote directly
+            // Odd element: hash with itself (consistent with miner.computeWovenRoot)
             if (i < count) {
-                level[next_count] = level[i];
+                var hasher = std.crypto.hash.Blake3.init(.{});
+                hasher.update("ZEPH_WOVEN_V1");
+                hasher.update(&level[i].bytes);
+                hasher.update(&level[i].bytes);
+                hasher.final(&level[next_count].bytes);
                 next_count += 1;
             }
             count = next_count;
@@ -225,7 +232,7 @@ pub const AdaptiveBlockHeader = struct {
         hasher.update(&buf8);
         std.mem.writeInt(u64, &buf8, self.epoch, .big);
         hasher.update(&buf8);
-        hasher.update(&self.parentHash.bytes);
+        hasher.update(&self.parentWovenRoot.bytes);
         // Proposer
         var buf4: [4]u8 = undefined;
         std.mem.writeInt(u32, &buf4, self.proposerIndex, .big);
@@ -267,9 +274,12 @@ pub const ThreadAttestation = struct {
     attestingStake: u256,
 };
 
-/// Signing message for thread attestation: Blake3(slot ‖ threadId ‖ thread_root)
+/// Signing message for thread attestation.
+/// msg = Blake3("ZEPH_ATTEST_V1" ‖ slot(8,BE) ‖ threadId(1) ‖ thread_root(32))
+/// Domain tag prevents reuse of attestation messages as block votes or TX ids.
 pub fn threadAttestationMessage(slot: u64, threadId: u8, thread_root: core.types.Hash) [32]u8 {
     var hasher = std.crypto.hash.Blake3.init(.{});
+    hasher.update("ZEPH_ATTEST_V1");
     var buf8: [8]u8 = undefined;
     std.mem.writeInt(u64, &buf8, slot, .big);
     hasher.update(&buf8);

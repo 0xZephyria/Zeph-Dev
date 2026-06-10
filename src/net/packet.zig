@@ -9,7 +9,7 @@ pub const Packet = struct {
     ///   1280 is IPv6 minimum MTU
     ///   40 bytes is the size of the IPv6 header
     ///   8 bytes is the size of the fragment header
-    pub const DATA_SIZE: usize = 1232;
+    pub const DATA_SIZE: usize = 65536; // Max UDP payload size
 
     pub const ANY_EMPTY: Packet = .{
         .addr = std.net.Address.initIp4([4]u8{ 0, 0, 0, 0 }, 0),

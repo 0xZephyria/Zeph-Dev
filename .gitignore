@@ -5,7 +5,6 @@ zig-out/
 
 # object files
 *.o
-temp_polkavm/
 
 # logs
 node.log
@@ -19,8 +18,15 @@ node_modules/
 tests/artifacts/
 works.md
 reports/
+scripts/
+contract/
+temp-polkavm/
 
 
 # fozbin and resolved files
 *.fozbin
 *.resolved
+
+#md file
+tasks copy.md
+tasks copy 2.md

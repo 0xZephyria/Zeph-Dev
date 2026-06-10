@@ -29,7 +29,7 @@
 //      Overlay (same TX isolation boundary).
 //
 //   5. Each StateBridge carries full execution context (timestamp,
-//      tx_origin, gas_price, producer, prevRandao) so
+//      tx_origin, budget_price, producer, prevRandao) so
 //      nested calls see correct block/tx environment.
 
 const std = @import("std");
@@ -56,8 +56,8 @@ pub const StateBridge = struct {
     depth: u32,
     /// Maximum call depth (1024 per EIP)
     maxDepth: u32,
-    /// Gas remaining for this call frame
-    gasRemaining: u64,
+    /// Budget remaining for this call frame
+    budgetRemaining: u64,
 
     // ── Block/TX Context (propagated to all sub-calls) ──────────────
     /// Current block number
@@ -68,8 +68,8 @@ pub const StateBridge = struct {
     chainId: u64,
     /// Transaction originator (tx.origin — constant across all call frames)
     txOrigin: [32]u8,
-    /// Transaction gas price
-    gasPrice: u64,
+    /// Transaction compute price
+    computePrice: u64,
     /// Block producer (validator/miner address)
     producer: [32]u8,
     /// Block prevRandao (VRF randomness from consensus)
@@ -114,7 +114,7 @@ pub const StateBridge = struct {
         selfAddress: [32]u8,
         caller: [32]u8,
         value: [32]u8,
-        gas: u64,
+        budget: u64,
     ) Self {
         return Self{
             .overlay = overlay,
@@ -123,13 +123,13 @@ pub const StateBridge = struct {
             .value = value,
             .depth = 0,
             .maxDepth = 1024,
-            .gasRemaining = gas,
+            .budgetRemaining = budget,
             // Block/TX context — must be set by the caller after init
             .blockNumber = 0,
             .timestamp = 0,
             .chainId = 99999,
             .txOrigin = [_]u8{0} ** 32,
-            .gasPrice = 0,
+            .computePrice = 0,
             .producer = [_]u8{0} ** 32,
             .prevRandao = [_]u8{0} ** 32,
             .deltaQueue = null,
@@ -172,7 +172,7 @@ pub const StateBridge = struct {
         self.timestamp = parent.timestamp;
         self.chainId = parent.chainId;
         self.txOrigin = parent.txOrigin;
-        self.gasPrice = parent.gasPrice;
+        self.computePrice = parent.computePrice;
         self.producer = parent.producer;
         self.prevRandao = parent.prevRandao;
         // Inherit write-key restrictions to sub-calls
@@ -243,7 +243,7 @@ pub const StateBridge = struct {
     }
 
     /// Store a value to contract storage.
-    /// Returns the original value (for gas refund calculation).
+    /// Returns the original value (for budget refund calculation).
     /// When DAG write-key enforcement is active, validates the key
     /// against the declared write set. Unauthorized writes are dropped.
     pub fn storageStore(self: *Self, slot: [32]u8, value: [32]u8) [32]u8 {
@@ -410,21 +410,21 @@ pub const StateBridge = struct {
         target: [32]u8,
         callValue: [32]u8,
         _: []const u8,
-        gas: u64,
+        budget: u64,
     ) CallResult {
         // Check call depth (EIP limit: 1024)
         if (self.depth >= self.maxDepth) {
             return .{
                 .success = false,
-                .gasUsed = 0,
+                .budgetUsed = 0,
                 .returnData = &[_]u8{},
                 .errorMsg = "call depth exceeded",
             };
         }
 
-        // EIP-150: Max gas forwarded is 63/64 of remaining
-        const maxGas = self.gasRemaining - (self.gasRemaining / 64);
-        const actualGas = @min(gas, maxGas);
+        // EIP-150: Max budget forwarded is 63/64 of remaining
+        const maxbudget = self.budgetRemaining - (self.budgetRemaining / 64);
+        const actualbudget = @min(budget, maxbudget);
 
         // Create sub-bridge for the call target.
         // Shares the same overlay (same TX isolation boundary).
@@ -434,7 +434,7 @@ pub const StateBridge = struct {
             target,
             self.selfAddress,
             callValue,
-            actualGas,
+            actualbudget,
         );
         subBridge.depth = self.depth + 1;
         subBridge.inheritContext(self);
@@ -445,7 +445,7 @@ pub const StateBridge = struct {
             subBridge.transfer(target, callValue) catch {
                 return .{
                     .success = false,
-                    .gasUsed = 0,
+                    .budgetUsed = 0,
                     .returnData = &[_]u8{},
                     .errorMsg = "insufficient balance for call value",
                 };
@@ -456,7 +456,7 @@ pub const StateBridge = struct {
         const code = subBridge.getCode(target) catch {
             return .{
                 .success = true, // Call to EOA succeeds
-                .gasUsed = 0,
+                .budgetUsed = 0,
                 .returnData = &[_]u8{},
                 .errorMsg = null,
             };
@@ -465,18 +465,18 @@ pub const StateBridge = struct {
         if (code.len == 0) {
             return .{
                 .success = true, // Call to empty account succeeds
-                .gasUsed = 0,
+                .budgetUsed = 0,
                 .returnData = &[_]u8{},
                 .errorMsg = null,
             };
         }
 
-        // No VM callback registered — return success with estimated gas
+        // No VM callback registered — return success with estimated budget
         // (The actual recursive call is handled by the call_fn provider
         //  in riscv/mod.zig which has the full VM context)
         return .{
             .success = true,
-            .gasUsed = actualGas / 2,
+            .budgetUsed = actualbudget / 2,
             .returnData = &[_]u8{},
             .errorMsg = null,
         };
@@ -535,7 +535,7 @@ pub const StateBridge = struct {
 
 pub const CallResult = struct {
     success: bool,
-    gasUsed: u64,
+    budgetUsed: u64,
     returnData: []const u8,
     errorMsg: ?[]const u8,
 };

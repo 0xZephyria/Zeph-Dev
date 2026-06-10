@@ -1,11 +1,11 @@
-// File: vm/gas/table.zig
-// Gas cost table for RV64IM instructions and syscalls.
+// File: vm/budget/table.zig
+// budget cost table for RV64IM instructions and syscalls.
 // Costs are calibrated to approximate real CPU cycle costs.
 
 const decoder = @import("../core/decoder.zig");
 
-/// Gas costs for base RV64IM instructions (indexed by opcode)
-pub const InstructionGas = struct {
+/// budget costs for base RV64IM instructions (indexed by opcode)
+pub const Instructionbudget = struct {
     pub const ALU: u64 = 1; // unchanged
     pub const ALU_IMM: u64 = 1; // unchanged
     pub const MUL: u64 = 2; // unchanged (RV64 MULH still multi-cycle)
@@ -24,9 +24,9 @@ pub const InstructionGas = struct {
     pub const EBREAK: u64 = 1; // unchanged
 };
 
-/// Gas costs for syscalls (on top of ECALL_BASE)
+/// budget costs for syscalls (on top of ECALL_BASE)
 /// Aligned with EIP-2929 (warm/cold access) and EVM Shanghai costs.
-pub const SyscallGas = struct {
+pub const Syscallbudget = struct {
     // ── Storage (FORGE flat model, no warm/cold distinction) ──
     pub const STORAGE_LOAD: u64 = 200;
     pub const STORAGE_STORE: u64 = 500;
@@ -75,7 +75,7 @@ pub const SyscallGas = struct {
     pub const ECRECOVER: u64 = 3_000;
     pub const BLS_VERIFY: u64 = 45_000; // BLS12-381 pairing
 
-    // ── Parallel execution hints (gas rebate for conflict-free ops) ──
+    // ── Parallel execution hints (budget rebate for conflict-free ops) ──
     pub const PARALLEL_HINT: u64 = 0; // free — just metadata
     pub const RESOURCE_LOCK: u64 = 100;
     pub const RESOURCE_UNLOCK: u64 = 50;
@@ -84,49 +84,49 @@ pub const SyscallGas = struct {
     pub const DEBUG_LOG: u64 = 0;
 };
 
-/// Get gas cost for a decoded instruction.
+/// Get budget cost for a decoded instruction.
 pub fn instructionCost(insn: decoder.Instruction) u64 {
     return switch (insn) {
         .rType => |r| rTypeCost(r),
-        .iType => InstructionGas.ALU_IMM, // covers ADDI, SLTI, loads, JALR
-        .sType => InstructionGas.STORE,
-        .bType => InstructionGas.BRANCH,
-        .uType => InstructionGas.LUI, // LUI and AUIPC same cost
-        .jType => InstructionGas.JAL,
-        .system => InstructionGas.ECALL_BASE,
+        .iType => Instructionbudget.ALU_IMM, // covers ADDI, SLTI, loads, JALR
+        .sType => Instructionbudget.STORE,
+        .bType => Instructionbudget.BRANCH,
+        .uType => Instructionbudget.LUI, // LUI and AUIPC same cost
+        .jType => Instructionbudget.JAL,
+        .system => Instructionbudget.ECALL_BASE,
         // ZEPH custom instructions cost the same as an ECALL (base syscall cost)
-        .custom => InstructionGas.ECALL_BASE,
+        .custom => Instructionbudget.ECALL_BASE,
     };
 }
 
-/// Get gas cost for an R-type instruction based on funct7 (M extension vs normal).
+/// Get budget cost for an R-type instruction based on funct7 (M extension vs normal).
 fn rTypeCost(r: decoder.RType) u64 {
     if (r.funct7 == decoder.Funct7.MULDIV) {
         // M extension: MUL vs DIV
         return switch (r.funct3) {
-            decoder.Funct3.MUL, decoder.Funct3.MULH, decoder.Funct3.MULHSU, decoder.Funct3.MULHU => InstructionGas.MUL,
-            decoder.Funct3.DIV, decoder.Funct3.DIVU, decoder.Funct3.REM, decoder.Funct3.REMU => InstructionGas.DIV,
+            decoder.Funct3.MUL, decoder.Funct3.MULH, decoder.Funct3.MULHSU, decoder.Funct3.MULHU => Instructionbudget.MUL,
+            decoder.Funct3.DIV, decoder.Funct3.DIVU, decoder.Funct3.REM, decoder.Funct3.REMU => Instructionbudget.DIV,
         };
     }
-    return InstructionGas.ALU;
+    return Instructionbudget.ALU;
 }
 
-/// Opcode-indexed lookup table for fast gas costing from raw instruction words.
+/// Opcode-indexed lookup table for fast budget costing from raw instruction words.
 /// Index = opcode[6:0] (7 bits → 128 entries).
-pub const OPCODE_GAS_TABLE: [128]u64 = blk: {
+pub const OPCODE_budget_TABLE: [128]u64 = blk: {
     var table = [_]u64{0} ** 128;
-    table[decoder.Opcode.OP] = InstructionGas.ALU; // R-type (approximate, M-ext checked separately)
-    table[decoder.Opcode.OP_32] = InstructionGas.ALU;
-    table[decoder.Opcode.OP_IMM] = InstructionGas.ALU_IMM;
-    table[decoder.Opcode.OP_IMM_32] = InstructionGas.ALU_IMM;
-    table[decoder.Opcode.LOAD] = InstructionGas.LOAD_WORD;
-    table[decoder.Opcode.STORE] = InstructionGas.STORE;
-    table[decoder.Opcode.BRANCH] = InstructionGas.BRANCH;
-    table[decoder.Opcode.JAL] = InstructionGas.JAL;
-    table[decoder.Opcode.JALR] = InstructionGas.JALR;
-    table[decoder.Opcode.LUI] = InstructionGas.LUI;
-    table[decoder.Opcode.AUIPC] = InstructionGas.AUIPC;
-    table[decoder.Opcode.SYSTEM] = InstructionGas.ECALL_BASE;
+    table[decoder.Opcode.OP] = Instructionbudget.ALU; // R-type (approximate, M-ext checked separately)
+    table[decoder.Opcode.OP_32] = Instructionbudget.ALU;
+    table[decoder.Opcode.OP_IMM] = Instructionbudget.ALU_IMM;
+    table[decoder.Opcode.OP_IMM_32] = Instructionbudget.ALU_IMM;
+    table[decoder.Opcode.LOAD] = Instructionbudget.LOAD_WORD;
+    table[decoder.Opcode.STORE] = Instructionbudget.STORE;
+    table[decoder.Opcode.BRANCH] = Instructionbudget.BRANCH;
+    table[decoder.Opcode.JAL] = Instructionbudget.JAL;
+    table[decoder.Opcode.JALR] = Instructionbudget.JALR;
+    table[decoder.Opcode.LUI] = Instructionbudget.LUI;
+    table[decoder.Opcode.AUIPC] = Instructionbudget.AUIPC;
+    table[decoder.Opcode.SYSTEM] = Instructionbudget.ECALL_BASE;
     break :blk table;
 };
 
@@ -136,32 +136,32 @@ pub const OPCODE_GAS_TABLE: [128]u64 = blk: {
 
 const testing = @import("std").testing;
 
-test "ALU instruction costs 1 gas" {
-    try testing.expectEqual(@as(u64, 1), OPCODE_GAS_TABLE[decoder.Opcode.OP]);
+test "ALU instruction costs 1 budget" {
+    try testing.expectEqual(@as(u64, 1), OPCODE_budget_TABLE[decoder.Opcode.OP]);
 }
 
-test "LOAD instruction costs 2 gas" {
-    try testing.expectEqual(@as(u64, 2), OPCODE_GAS_TABLE[decoder.Opcode.LOAD]);
+test "LOAD instruction costs 2 budget" {
+    try testing.expectEqual(@as(u64, 2), OPCODE_budget_TABLE[decoder.Opcode.LOAD]);
 }
 
-test "STORE instruction costs 2 gas" {
-    try testing.expectEqual(@as(u64, 2), OPCODE_GAS_TABLE[decoder.Opcode.STORE]);
+test "STORE instruction costs 2 budget" {
+    try testing.expectEqual(@as(u64, 2), OPCODE_budget_TABLE[decoder.Opcode.STORE]);
 }
 
-test "BRANCH instruction costs 1 gas" {
-    try testing.expectEqual(@as(u64, 1), OPCODE_GAS_TABLE[decoder.Opcode.BRANCH]);
+test "BRANCH instruction costs 1 budget" {
+    try testing.expectEqual(@as(u64, 1), OPCODE_budget_TABLE[decoder.Opcode.BRANCH]);
 }
 
-test "ECALL costs 3 gas base" {
-    try testing.expectEqual(@as(u64, 3), OPCODE_GAS_TABLE[decoder.Opcode.SYSTEM]);
+test "ECALL costs 3 budget base" {
+    try testing.expectEqual(@as(u64, 3), OPCODE_budget_TABLE[decoder.Opcode.SYSTEM]);
 }
 
-test "MUL R-type costs 2 gas" {
+test "MUL R-type costs 2 budget" {
     const r = decoder.RType{ .rd = 1, .rs1 = 2, .rs2 = 3, .funct3 = decoder.Funct3.MUL, .funct7 = decoder.Funct7.MULDIV, .wordOp = false };
     try testing.expectEqual(@as(u64, 2), rTypeCost(r));
 }
 
-test "DIV R-type costs 5 gas" {
+test "DIV R-type costs 5 budget" {
     const r = decoder.RType{ .rd = 1, .rs1 = 2, .rs2 = 3, .funct3 = decoder.Funct3.DIV, .funct7 = decoder.Funct7.MULDIV, .wordOp = false };
     try testing.expectEqual(@as(u64, 5), rTypeCost(r));
 }

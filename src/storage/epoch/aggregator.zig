@@ -33,7 +33,7 @@ pub const EpochAggregator = struct {
 
     // Statistics
     tx_count: u64,
-    gas_used: u128,
+    budget_used: u128,
 
     // Persistence callback
     on_epoch_complete: ?*const fn (*Self, *AggregatedEpoch) anyerror!void,
@@ -62,7 +62,7 @@ pub const EpochAggregator = struct {
         self.signature_aggregator = try sig_agg.SignatureAggregator.init(allocator, validator_count);
         self.transfers = std.AutoHashMap(TransferKey, TransferValue).init(allocator);
         self.tx_count = 0;
-        self.gas_used = 0;
+        self.budget_used = 0;
         self.on_epoch_complete = null;
         return self;
     }
@@ -109,7 +109,7 @@ pub const EpochAggregator = struct {
             );
             self.transfers.clearRetainingCapacity();
             self.tx_count = 0;
-            self.gas_used = 0;
+            self.budget_used = 0;
 
             // Process current block into new epoch
             try self.addBlockToEpoch(block, state_diff);
@@ -137,8 +137,8 @@ pub const EpochAggregator = struct {
         // Track transactions - transactions is not optional
         for (block.transactions) |tx| {
             self.tx_count += 1;
-            // Note: core.types.Transaction doesn't have gas_used, track count only
-            // self.gas_used += tx.gas_used;
+            // Note: core.types.Transaction doesn't have budget_used, track count only
+            // self.budget_used += tx.budget_used;
 
             // Track transfers
             if (tx.value > 0) {
@@ -234,7 +234,7 @@ pub const EpochAggregator = struct {
                 .account_count = @intCast(self.epoch_delta.getStats().accounts),
                 .storage_count = @intCast(self.epoch_delta.getStats().storage),
                 .tx_count = self.tx_count,
-                .gas_used = self.gas_used,
+                .budget_used = self.budget_used,
                 .aggregated_sig = agg_sig,
                 .signers_bitmap = signers_bitmap,
                 .compressed_size = @intCast(compressed_delta.len),

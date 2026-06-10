@@ -17,7 +17,7 @@
 //   • Bloom filter for O(1) duplicate rejection
 //   • Per-account + global rate limiting (token bucket)
 //   • Lane depth limits (max 256 pending TXs per sender)
-//   • Hot-shard detection with gas price premium
+//   • Hot-shard detection with budget price premium
 //   • Orphan lane GC (evict inactive lanes after timeout)
 //   • Sequence gap protection (max 64 gap from state sequence)
 //   • TX sanitization (signature, bounds, malleability)
@@ -41,19 +41,19 @@ pub const DAGConfig = struct {
     maxTxsPerLane: u32 = 256,
     /// Maximum total vertices across all shards
     maxTotalVertices: u32 = 500_000,
-    /// Maximum gas budget per sender lane
-    maxLaneGas: u64 = 100_000_000,
+    /// Maximum budget budget per sender lane
+    maxLanebudget: u64 = 100_000_000,
     /// Orphan lane timeout in seconds
     orphanTimeoutS: u64 = 60,
     /// Maximum sequence gap from state sequence
     maxSequenceGap: u64 = 64,
-    /// Minimum gas price (1 Gwei anti-spam floor)
-    minGasPrice: u256 = 1_000_000_000,
-    /// Gas price bump required for TX replacement (10%)
+    /// Minimum budget price (1 Gwei anti-spam floor)
+    mincomputePrice: u256 = 1_000_000_000,
+    /// budget price bump required for TX replacement (10%)
     replacementBumpPct: u32 = 10,
     /// Hot-shard threshold multiplier (2x mean triggers premium)
     hotShardMultiplier: u32 = 2,
-    /// Hot-shard gas price premium (150% = 1.5x)
+    /// Hot-shard budget price premium (150% = 1.5x)
     hotShardPremiumPct: u32 = 150,
     /// Bloom filter size in bits (2M bits = 256KB)
     bloomSizeBits: u32 = 2_097_152,
@@ -65,8 +65,8 @@ pub const DAGConfig = struct {
     minExecutionBudget: u64 = 21_000,
     /// Maximum execution budget for any TX
     maxExecutionBudget: u64 = 30_000_000,
-    /// Maximum gas price (anti-grief)
-    maxGasPrice: u256 = 10_000_000_000_000_000_000_000,
+    /// Maximum budget price (anti-grief)
+    maxcomputePrice: u256 = 10_000_000_000_000_000_000_000,
     /// Maximum value transfer
     maxValue: u256 = 1_000_000_000_000_000_000_000_000_000,
     /// Chain ID for replay protection
@@ -88,8 +88,8 @@ pub const AccountLane = struct {
     txs: std.ArrayListUnmanaged(LaneTx),
     /// Current confirmed state sequence for this sender
     baseSequence: u64,
-    /// Total gas reserved by all TXs in this lane
-    totalGas: u64,
+    /// Total budget reserved by all TXs in this lane
+    totalbudget: u64,
     /// Monotonic timestamp of last TX addition (for GC)
     lastTouchNs: i128,
     /// Number of TXs that have been extracted for execution
@@ -101,7 +101,7 @@ pub const AccountLane = struct {
             .sender = sender,
             .txs = .{},
             .baseSequence = baseSequence,
-            .totalGas = 0,
+            .totalbudget = 0,
             .lastTouchNs = std.time.nanoTimestamp(),
             .extractedCount = 0,
         };
@@ -109,6 +109,11 @@ pub const AccountLane = struct {
 
     /// Deinitializes the AccountLane.
     pub fn deinit(self: *AccountLane, allocator: std.mem.Allocator) void {
+        for (self.txs.items) |*lt| {
+            if (!lt.isPlaceholder) {
+                lt.tx.deinit(allocator);
+            }
+        }
         self.txs.deinit(allocator);
     }
 
@@ -127,17 +132,17 @@ pub const AccountLane = struct {
         // Check if this is a replacement
         if (idx < self.txs.items.len) {
             const existing = &self.txs.items[idx];
-            // Enforce gas price bump for replacement
-            const minNewPrice = existing.tx.gasPrice +
-                (existing.tx.gasPrice * @as(u256, replacementBumpPct)) / 100;
-            if (tx.gasPrice < minNewPrice) return error.ReplacementGasTooLow;
+            // Enforce budget price bump for replacement
+            const minNewPrice = existing.tx.computePrice +
+                (existing.tx.computePrice * @as(u256, replacementBumpPct)) / 100;
+            if (tx.computePrice < minNewPrice) return error.ReplacementbudgetTooLow;
 
             // Replace
             const oldTx = existing.tx;
-            self.totalGas -= oldTx.executionBudget;
+            self.totalbudget -= oldTx.executionBudget;
             existing.tx = tx;
             existing.insertedAt = std.time.nanoTimestamp();
-            self.totalGas += tx.executionBudget;
+            self.totalbudget += tx.executionBudget;
             self.lastTouchNs = std.time.nanoTimestamp();
             return oldTx;
         }
@@ -157,7 +162,7 @@ pub const AccountLane = struct {
             .isPlaceholder = false,
         });
 
-        self.totalGas += tx.executionBudget;
+        self.totalbudget += tx.executionBudget;
         self.lastTouchNs = std.time.nanoTimestamp();
         return null;
     }
@@ -184,7 +189,7 @@ pub const AccountLane = struct {
 
         for (self.txs.items[0..removeCount]) |*lt| {
             if (!lt.isPlaceholder) {
-                self.totalGas -|= lt.tx.executionBudget;
+                self.totalbudget -|= lt.tx.executionBudget;
             }
         }
 
@@ -238,7 +243,7 @@ pub const Shard = struct {
     lock: std.Thread.Mutex,
     accounts: std.AutoHashMap(types.Address, *AccountLane),
     vertexCount: u32,
-    totalGas: u64,
+    totalbudget: u64,
 
     /// Initializes a new Shard.
     pub fn init() Shard {
@@ -246,7 +251,7 @@ pub const Shard = struct {
             .lock = .{},
             .accounts = undefined,
             .vertexCount = 0,
-            .totalGas = 0,
+            .totalbudget = 0,
         };
     }
 };
@@ -264,7 +269,7 @@ pub const DAGVertex = struct {
     writeKeys: [MAX_WRITE_KEYS][32]u8,
     writeKeyCount: u8,
     executionBudget: u64,
-    gasPrice: u256,
+    computePrice: u256,
     shardId: u8,
 
     /// Maximum number of unique state keys a transaction is expected to write.
@@ -274,13 +279,13 @@ pub const DAGVertex = struct {
     pub fn computeWriteKeys(tx: *const types.Transaction) DAGVertex {
         const State = state_mod.State;
         var vertex = DAGVertex{
-            .txHash = tx.hash(),
+            .txHash = tx.id(),
             .sender = tx.from,
             .sequence = tx.sequence,
             .writeKeys = undefined,
             .writeKeyCount = 0,
             .executionBudget = tx.executionBudget,
-            .gasPrice = tx.gasPrice,
+            .computePrice = tx.computePrice,
             .shardId = tx.from.bytes[0],
         };
 
@@ -334,7 +339,7 @@ pub const DAGVertex = struct {
 pub const ExtractionResult = struct {
     lanes: []ExtractedLane,
     totalTxs: u32,
-    totalGas: u64,
+    totalbudget: u64,
     allocator: std.mem.Allocator,
 
     /// Deinitializes the extraction result and frees all lane memory.
@@ -365,7 +370,7 @@ pub const Metrics = struct {
     duplicateRejected: u64,
     rateLimited: u64,
     sequenceRejected: u64,
-    gasPriceRejected: u64,
+    computePriceRejected: u64,
     sanitizationRejected: u64,
     hotShardPremiumApplied: u64,
     replacementCount: u64,
@@ -388,7 +393,7 @@ pub const DAGMempool = struct {
 
     // Global counters (atomic for cross-shard visibility)
     totalVertices: std.atomic.Value(u32),
-    totalGas: std.atomic.Value(u64),
+    totalbudget: std.atomic.Value(u64),
 
     // Metrics
     metrics: Metrics,
@@ -423,13 +428,13 @@ pub const DAGMempool = struct {
                 .maxCalldata = config.maxCalldata,
                 .minExecutionBudget = config.minExecutionBudget,
                 .maxExecutionBudget = config.maxExecutionBudget,
-                .maxGasPrice = config.maxGasPrice,
+                .maxcomputePrice = config.maxcomputePrice,
                 .maxValue = config.maxValue,
                 .chainId = config.chainId,
                 .maxSequenceGap = config.maxSequenceGap,
             }),
             .totalVertices = std.atomic.Value(u32).init(0),
-            .totalGas = std.atomic.Value(u64).init(0),
+            .totalbudget = std.atomic.Value(u64).init(0),
             .metrics = std.mem.zeroes(Metrics),
             .metrics_lock = .{},
             .by_hash = std.AutoHashMap(types.Hash, TxLocation).init(allocator),
@@ -461,7 +466,7 @@ pub const DAGMempool = struct {
     /// Thread-safe: only locks the target shard + brief hash index lock.
     /// Admits a new transaction into the mempool, performing sharded locking and sanitization.
     pub fn add(self: *DAGMempool, tx: *const types.Transaction) !void {
-        const txHash = tx.hash();
+        const txHash = tx.id();
 
         // 1. Bloom filter pre-check (O(1), no lock needed — false positives OK)
         if (self.bloom.mightContain(txHash)) {
@@ -477,8 +482,8 @@ pub const DAGMempool = struct {
 
         // 2. Global capacity check (atomic, no lock)
         if (self.totalVertices.load(.acquire) >= self.config.maxTotalVertices) {
-            // Try to evict lowest gas price TX before rejecting
-            if (!self.evictLowestGlobal(tx.gasPrice)) {
+            // Try to evict lowest budget price TX before rejecting
+            if (!self.evictLowestGlobal(tx.computePrice)) {
                 self.incrMetric(.totalRejected);
                 return error.MempoolFull;
             }
@@ -490,11 +495,11 @@ pub const DAGMempool = struct {
             return error.RateLimited;
         };
 
-        // 4. Minimum gas price floor
+        // 4. Minimum budget price floor
         const effective_min_price = self.getEffectiveMinPrice(tx.from);
-        if (tx.gasPrice < effective_min_price) {
-            self.incrMetric(.gasPriceRejected);
-            return error.GasPriceTooLow;
+        if (tx.computePrice < effective_min_price) {
+            self.incrMetric(.computePriceRejected);
+            return error.computePriceTooLow;
         }
 
         // 5. TX sanitization (signature, sequence bounds, balance)
@@ -522,10 +527,10 @@ pub const DAGMempool = struct {
             return error.LaneDepthExceeded;
         }
 
-        // 9. Lane gas budget check
-        if (lane.totalGas + tx.executionBudget > self.config.maxLaneGas) {
+        // 9. Lane budget budget check
+        if (lane.totalbudget + tx.executionBudget > self.config.maxLanebudget) {
             self.incrMetric(.totalRejected);
-            return error.LaneGasBudgetExceeded;
+            return error.LanebudgetBudgetExceeded;
         }
 
         // 10. Insert into lane (handles replacement)
@@ -533,11 +538,12 @@ pub const DAGMempool = struct {
 
         if (replaced) |old_tx| {
             // Remove old TX from hash index
-            const old_hash = old_tx.hash();
+            const old_hash = old_tx.id();
             self.by_hash_lock.lock();
             _ = self.by_hash.remove(old_hash);
             self.by_hash_lock.unlock();
             self.incrMetric(.replacementCount);
+            old_tx.deinit(self.allocator);
         } else {
             // New TX — increment counters
             _ = self.totalVertices.fetchAdd(1, .release);
@@ -566,12 +572,12 @@ pub const DAGMempool = struct {
     /// Extract execution-ready TX lanes for block building.
     /// Returns independent lanes — guaranteed zero-conflict parallel execution.
     /// Each lane contains sequence-ordered TXs from a single sender.
-    /// Extracts execution-ready transaction lanes for block production, respecting the gas budget.
-    pub fn extract(self: *DAGMempool, allocator: std.mem.Allocator, gas_budget: u64) !ExtractionResult {
+    /// Extracts execution-ready transaction lanes for block production, respecting the budget budget.
+    pub fn extract(self: *DAGMempool, allocator: std.mem.Allocator, budget_budget: u64) !ExtractionResult {
         var lanes = std.ArrayListUnmanaged(ExtractedLane){};
         defer lanes.deinit(allocator); // only on error path
         var totalTxs: u32 = 0;
-        var remaining_gas = gas_budget;
+        var remaining_budget = budget_budget;
 
         // Collect candidates from all shards
         var candidates = std.ArrayListUnmanaged(LaneCandidate){};
@@ -587,35 +593,35 @@ pub const DAGMempool = struct {
                 const ready = lane.getReady();
                 if (ready.len == 0) continue;
 
-                // Compute the highest gas price in this lane for priority
-                var maxGasPrice: u256 = 0;
-                var lane_gas: u64 = 0;
+                // Compute the highest budget price in this lane for priority
+                var maxcomputePrice: u256 = 0;
+                var lane_budget: u64 = 0;
                 for (ready) |*lt| {
-                    if (lt.tx.gasPrice > maxGasPrice) maxGasPrice = lt.tx.gasPrice;
-                    lane_gas += lt.tx.executionBudget;
+                    if (lt.tx.computePrice > maxcomputePrice) maxcomputePrice = lt.tx.computePrice;
+                    lane_budget += lt.tx.executionBudget;
                 }
 
                 try candidates.append(allocator, LaneCandidate{
                     .sender = lane.sender,
                     .ready_count = @intCast(ready.len),
-                    .maxGasPrice = maxGasPrice,
-                    .totalGas = lane_gas,
+                    .maxcomputePrice = maxcomputePrice,
+                    .totalbudget = lane_budget,
                     .baseSequence = lane.baseSequence,
                 });
             }
         }
 
-        // Sort candidates by max gas price (highest first — priority ordering)
+        // Sort candidates by max budget price (highest first — priority ordering)
         std.mem.sortUnstable(LaneCandidate, candidates.items, {}, struct {
             pub fn lessThan(_: void, a: LaneCandidate, b: LaneCandidate) bool {
-                // Higher gas price = higher priority = comes first
-                return a.maxGasPrice > b.maxGasPrice;
+                // Higher budget price = higher priority = comes first
+                return a.maxcomputePrice > b.maxcomputePrice;
             }
         }.lessThan);
 
-        // Extract TXs from each candidate lane, respecting gas budget
+        // Extract TXs from each candidate lane, respecting budget budget
         for (candidates.items) |*candidate| {
-            if (remaining_gas < 21_000) break; // Can't fit even a simple transfer
+            if (remaining_budget < 21_000) break; // Can't fit even a simple transfer
 
             const shardId = self.shardFor(candidate.sender);
             var shard = &self.shards[shardId];
@@ -630,9 +636,9 @@ pub const DAGMempool = struct {
                 defer txs.deinit(allocator); // only on error
 
                 for (ready) |*lt| {
-                    if (lt.tx.executionBudget > remaining_gas) break;
+                    if (lt.tx.executionBudget > remaining_budget) break;
                     try txs.append(allocator, lt.tx);
-                    remaining_gas -= lt.tx.executionBudget;
+                    remaining_budget -= lt.tx.executionBudget;
                 }
 
                 if (txs.items.len > 0) {
@@ -655,7 +661,7 @@ pub const DAGMempool = struct {
         return ExtractionResult{
             .lanes = result_lanes,
             .totalTxs = totalTxs,
-            .totalGas = gas_budget - remaining_gas,
+            .totalbudget = budget_budget - remaining_budget,
             .allocator = allocator,
         };
     }
@@ -671,20 +677,22 @@ pub const DAGMempool = struct {
         defer sender_max_sequence.deinit();
 
         for (transactions) |*tx| {
-            const txHash = tx.hash();
+            const txHash = tx.id();
 
             // Remove from hash index
             self.by_hash_lock.lock();
-            _ = self.by_hash.remove(txHash);
+            const removed = self.by_hash.remove(txHash);
             self.by_hash_lock.unlock();
+
+            if (removed) {
+                _ = self.totalVertices.fetchSub(1, .release);
+            }
 
             // Track max sequence per sender
             const gop = sender_max_sequence.getOrPut(tx.from) catch continue;
             if (!gop.found_existing or tx.sequence >= gop.value_ptr.*) {
                 gop.value_ptr.* = tx.sequence + 1;
             }
-
-            _ = self.totalVertices.fetchSub(1, .release);
         }
 
         // Advance each sender's lane
@@ -768,7 +776,7 @@ pub const DAGMempool = struct {
                     // Remove all TXs from hash index
                     for (lane.txs.items) |*lt| {
                         if (!lt.isPlaceholder) {
-                            const txHash = lt.tx.hash();
+                            const txHash = lt.tx.id();
                             self.by_hash_lock.lock();
                             _ = self.by_hash.remove(txHash);
                             self.by_hash_lock.unlock();
@@ -886,7 +894,7 @@ pub const DAGMempool = struct {
             .duplicateRejected = self.metrics.duplicateRejected,
             .rateLimited = self.metrics.rateLimited,
             .sequenceRejected = self.metrics.sequenceRejected,
-            .gasPriceRejected = self.metrics.gasPriceRejected,
+            .computePriceRejected = self.metrics.computePriceRejected,
             .replacementCount = self.metrics.replacementCount,
             .bloomCount = self.bloom.count,
             .maxShardLoad = max_shard_load,
@@ -921,7 +929,7 @@ pub const DAGMempool = struct {
         return lane;
     }
 
-    /// Compute effective minimum gas price accounting for hot-shard premium.
+    /// Compute effective minimum budget price accounting for hot-shard premium.
     fn getEffectiveMinPrice(self: *DAGMempool, sender: types.Address) u256 {
         const shardId = self.shardFor(sender);
         const shard = &self.shards[shardId];
@@ -936,19 +944,19 @@ pub const DAGMempool = struct {
         // If this shard has > 2x the mean, apply premium
         if (mean > 0 and shard.vertexCount > mean * self.config.hotShardMultiplier) {
             self.incrMetric(.hotShardPremiumApplied);
-            return (self.config.minGasPrice * @as(u256, self.config.hotShardPremiumPct)) / 100;
+            return (self.config.mincomputePrice * @as(u256, self.config.hotShardPremiumPct)) / 100;
         }
 
-        return self.config.minGasPrice;
+        return self.config.mincomputePrice;
     }
 
-    /// Try to evict the lowest gas price TX globally to make room.
-    fn evictLowestGlobal(self: *DAGMempool, incoming_gas_price: u256) bool {
+    /// Try to evict the lowest budget price TX globally to make room.
+    fn evictLowestGlobal(self: *DAGMempool, incoming_budget_price: u256) bool {
         var lowest_price: u256 = std.math.maxInt(u256);
         var lowest_shard: ?u8 = null;
         var lowest_sender: ?types.Address = null;
 
-        // Find the lowest gas price TX across all shards
+        // Find the lowest budget price TX across all shards
         for (&self.shards, 0..) |*shard, shardIdx| {
             shard.lock.lock();
             defer shard.lock.unlock();
@@ -958,8 +966,8 @@ pub const DAGMempool = struct {
                 const lane = entry.value_ptr.*;
                 const ready = lane.getReady();
                 for (ready) |*lt| {
-                    if (lt.tx.gasPrice < lowest_price) {
-                        lowest_price = lt.tx.gasPrice;
+                    if (lt.tx.computePrice < lowest_price) {
+                        lowest_price = lt.tx.computePrice;
                         lowest_shard = @intCast(shardIdx);
                         lowest_sender = lane.sender;
                     }
@@ -967,8 +975,8 @@ pub const DAGMempool = struct {
             }
         }
 
-        // Only evict if incoming TX has higher gas price
-        if (lowest_shard != null and incoming_gas_price > lowest_price) {
+        // Only evict if incoming TX has higher budget price
+        if (lowest_shard != null and incoming_budget_price > lowest_price) {
             if (lowest_sender) |sender| {
                 const sid = lowest_shard.?;
                 var shard = &self.shards[sid];
@@ -981,11 +989,11 @@ pub const DAGMempool = struct {
                         const last_idx = lane.txs.items.len - 1;
                         const evicted = lane.txs.items[last_idx];
                         if (!evicted.isPlaceholder) {
-                            const txHash = evicted.tx.hash();
+                            const txHash = evicted.tx.id();
                             self.by_hash_lock.lock();
                             _ = self.by_hash.remove(txHash);
                             self.by_hash_lock.unlock();
-                            lane.totalGas -|= evicted.tx.executionBudget;
+                            lane.totalbudget -|= evicted.tx.executionBudget;
                         }
                         lane.txs.items.len -= 1;
                         shard.vertexCount -|= 1;
@@ -1018,8 +1026,8 @@ const TxLocation = struct {
 const LaneCandidate = struct {
     sender: types.Address,
     ready_count: u32,
-    maxGasPrice: u256,
-    totalGas: u64,
+    maxcomputePrice: u256,
+    totalbudget: u64,
     baseSequence: u64,
 };
 
@@ -1033,7 +1041,7 @@ pub const DAGMempoolStats = struct {
     duplicateRejected: u64,
     rateLimited: u64,
     sequenceRejected: u64,
-    gasPriceRejected: u64,
+    computePriceRejected: u64,
     replacementCount: u64,
     bloomCount: u32,
     maxShardLoad: u32,

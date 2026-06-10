@@ -23,6 +23,7 @@ const types = @import("types.zig");
 
 const blst_mod = core.crypto.blst;
 const blst_c = blst_mod.c;
+const secureZero = @import("utils").secureZero;
 
 const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
 
@@ -251,11 +252,6 @@ pub const ThreadAttestationPool = struct {
         blst_c.blst_p2_compress(&sig_bytes, &sig);
 
         return sig_bytes;
-    }
-
-    fn secureZero(buf: []u8) void {
-        const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
-        for (0..buf.len) |i| ptr[i] = 0;
     }
 
     /// Get statistics.

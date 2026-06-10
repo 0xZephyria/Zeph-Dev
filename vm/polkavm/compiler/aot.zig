@@ -14,8 +14,8 @@ pub const AotContext = extern struct {
     pc: *u32,
     memory_backing: [*]u8,
     memory_size: u32,
-    gas_limit: *u64,
-    gas_used: *u64,
+    budget_limit: *u64,
+    budget_used: *u64,
     status: *u32,
     syscall_handler: *const fn (vm_ctx: ?*anyopaque, syscall_id: u32) callconv(.c) i32,
     vm_ctx: ?*anyopaque,
@@ -50,8 +50,8 @@ pub fn generateCSource(allocator: std.mem.Allocator, pkg: *const zephbinLoader.Z
         \\    uint32_t* pc;
         \\    uint8_t* memory;
         \\    uint32_t memory_size;
-        \\    uint64_t* gas_limit;
-        \\    uint64_t* gas_used;
+        \\    uint64_t* budget_limit;
+        \\    uint64_t* budget_used;
         \\    uint32_t* status;
         \\    int32_t (*syscall_handler)(void* vm_ctx, uint32_t syscall_id);
         \\    void* vm_ctx;
@@ -161,10 +161,10 @@ pub fn generateCSource(allocator: std.mem.Allocator, pkg: *const zephbinLoader.Z
     return try out.toOwnedSlice(allocator);
 }
 
-fn getInstructionGasCost(word: u32) u64 {
+fn getInstructionbudgetCost(word: u32) u64 {
     const opcode: u7 = @truncate(word & 0x7F);
     const insn = decoder.decode(word) catch return 0;
-    // Use the same OPCODE_GAS_TABLE as the interpreter fast path
+    // Use the same OPCODE_budget_TABLE as the interpreter fast path
     const base = switch (opcode) {
         decoder.Opcode.OP, decoder.Opcode.OP_32 => blk: {
             // R-type: M-extension gets extra on top of base ALU cost
@@ -177,7 +177,7 @@ fn getInstructionGasCost(word: u32) u64 {
             break :blk @as(u64, 1); // ALU
         },
         decoder.Opcode.OP_IMM, decoder.Opcode.OP_IMM_32 => @as(u64, 1), // ALU_IMM
-        decoder.Opcode.LOAD => @as(u64, 2), // LOAD_WORD (matches OPCODE_GAS_TABLE[LOAD])
+        decoder.Opcode.LOAD => @as(u64, 2), // LOAD_WORD (matches OPCODE_budget_TABLE[LOAD])
         decoder.Opcode.STORE => @as(u64, 2), // STORE
         decoder.Opcode.BRANCH => @as(u64, 1), // BRANCH
         decoder.Opcode.JAL => @as(u64, 2), // JAL
@@ -258,7 +258,7 @@ fn transpileAction(allocator: std.mem.Allocator, writer: anytype, action: zephbi
         }
     }
 
-    // Precompute basic block gas costs
+    // Precompute basic block budget costs
     const block_costs = try allocator.alloc(u64, num_insns);
     defer allocator.free(block_costs);
     @memset(block_costs, 0);
@@ -274,7 +274,7 @@ fn transpileAction(allocator: std.mem.Allocator, writer: anytype, action: zephbi
                         break;
                     }
                     const word = std.mem.readInt(u32, code[j * 4 ..][0..4], .little);
-                    cost += getInstructionGasCost(word);
+                    cost += getInstructionbudgetCost(word);
                     const insn = decoder.decode(word) catch break;
                     const is_control = switch (insn) {
                         .bType, .jType, .system, .custom => true,
@@ -303,8 +303,8 @@ fn transpileAction(allocator: std.mem.Allocator, writer: anytype, action: zephbi
         \\void action_{0x:0>8}(AotContext* ctx) {{
         \\    uint32_t pc = *ctx->pc;
         \\    uint32_t fault = 0;
-        \\    uint64_t gas_used = *ctx->gas_used;
-        \\    uint64_t gas_limit = *ctx->gas_limit;
+        \\    uint64_t budget_used = *ctx->budget_used;
+        \\    uint64_t budget_limit = *ctx->budget_limit;
         \\    int32_t sys_err = 0;
         \\    bool taken = false;
         \\
@@ -347,9 +347,9 @@ fn transpileAction(allocator: std.mem.Allocator, writer: anytype, action: zephbi
 
         try writer.print("    pc_{d}: // Word: 0x{X:0>8}\n", .{ offset, word });
 
-        // Emit block gas check if this is a block start
+        // Emit block budget check if this is a block start
         if (starts[offset / 4]) {
-            try emitGasCheck(writer, block_costs[offset / 4]);
+            try emitbudgetCheck(writer, block_costs[offset / 4]);
         }
 
         // Translate the instruction
@@ -364,15 +364,15 @@ fn transpileAction(allocator: std.mem.Allocator, writer: anytype, action: zephbi
         \\        goto dispatch;
         \\
         \\    pc_stub_ecall:
-        \\        // Charge gas for stub instructions (ADDI a0,0,0x50 = 1 + ECALL = 3)
-        \\        gas_used += 4;
-        \\        if (gas_used > gas_limit) {{
-        \\            *ctx->gas_used = gas_limit;
-        \\            *ctx->status = 3; // outOfGas
+        \\        // Charge budget for stub instructions (ADDI a0,0,0x50 = 1 + ECALL = 3)
+        \\        budget_used += 4;
+        \\        if (budget_used > budget_limit) {{
+        \\            *ctx->budget_used = budget_limit;
+        \\            *ctx->status = 3; // outOfbudget
         \\            goto end;
         \\        }}
         \\        *ctx->pc = {d};
-        \\        *ctx->gas_used = gas_used;
+        \\        *ctx->budget_used = budget_used;
         \\        sys_err = ctx->syscall_handler(ctx->vm_ctx, 0x50);
         \\        ctx->regs[0] = 0;
         \\        if (sys_err != 0) {{
@@ -391,7 +391,7 @@ fn transpileAction(allocator: std.mem.Allocator, writer: anytype, action: zephbi
     // End function block
     try writer.writeAll(
         \\    end:
-        \\        *ctx->gas_used = gas_used;
+        \\        *ctx->budget_used = budget_used;
         \\        *ctx->pc = pc;
         \\        if (fault != 0) {
         \\            *ctx->status = 4; // fault
@@ -837,15 +837,15 @@ fn translateInstruction(writer: anytype, insn: decoder.Instruction, pc: u32, stu
                 .ecall => {
                     try writer.print("        *ctx->pc = {d};\n", .{pc});
                     try writer.writeAll(
-                        \\        *ctx->gas_used = gas_used;
+                        \\        *ctx->budget_used = budget_used;
                         \\        sys_err = ctx->syscall_handler(ctx->vm_ctx, (uint32_t)ctx->regs[10]);
                         \\        ctx->regs[0] = 0;
-                        \\        gas_used = *ctx->gas_used;
+                        \\        budget_used = *ctx->budget_used;
                         \\        if (sys_err != 0) {
                         \\            if (sys_err == 1) *ctx->status = 1; // returned
                         \\            else if (sys_err == 2) *ctx->status = 2; // reverted
                         \\            else if (sys_err == 3) *ctx->status = 6; // selfDestruct
-                        \\            else if (sys_err == 4) *ctx->status = 3; // outOfGas
+                        \\            else if (sys_err == 4) *ctx->status = 3; // outOfbudget
                         \\            else *ctx->status = 4; // fault
                         \\            goto end;
                         \\        }
@@ -1005,10 +1005,10 @@ fn translateInstruction(writer: anytype, insn: decoder.Instruction, pc: u32, stu
 
             try writer.writeAll(
                 \\            ctx->regs[10] = syscallId;
-                \\            *ctx->gas_used = gas_used;
+                \\            *ctx->budget_used = budget_used;
                 \\            sys_err = ctx->syscall_handler(ctx->vm_ctx, syscallId);
                 \\            ctx->regs[0] = 0;
-                \\            gas_used = *ctx->gas_used;
+                \\            budget_used = *ctx->budget_used;
                 \\            if (sys_err != 0) {
                 \\                if (sys_err == 1) *ctx->status = 1;
                 \\                else if (sys_err == 2) *ctx->status = 2;
@@ -1031,12 +1031,12 @@ fn translateInstruction(writer: anytype, insn: decoder.Instruction, pc: u32, stu
     }
 }
 
-fn emitGasCheck(writer: anytype, cost: u64) !void {
+fn emitbudgetCheck(writer: anytype, cost: u64) !void {
     try writer.print(
-        \\        gas_used += {d};
-        \\        if (gas_used > gas_limit) {{
-        \\            *ctx->gas_used = gas_limit;
-        \\            *ctx->status = 3; // outOfGas
+        \\        budget_used += {d};
+        \\        if (budget_used > budget_limit) {{
+        \\            *ctx->budget_used = budget_limit;
+        \\            *ctx->status = 3; // outOfbudget
         \\            goto end;
         \\        }}
         \\
@@ -1152,7 +1152,7 @@ test "AOT compiler: TokenTest.fozbin AOT vs Interpreter compatibility" {
         _ = unsetenv("FORGE_NO_AOT");
         var env_aot = syscallDispatch.HostEnv.init(allocator);
         defer env_aot.deinit();
-        env_aot.gasLimit = 10_000_000;
+        env_aot.executionBudget = 10_000_000;
         env_aot.chainId = 99999;
         env_aot.blockNumber = 1;
         env_aot.timestamp = 1716422400;
@@ -1173,7 +1173,7 @@ test "AOT compiler: TokenTest.fozbin AOT vs Interpreter compatibility" {
         _ = setenv("FORGE_NO_AOT", "1", 1);
         var env_interp = syscallDispatch.HostEnv.init(allocator);
         defer env_interp.deinit();
-        env_interp.gasLimit = 10_000_000;
+        env_interp.executionBudget = 10_000_000;
         env_interp.chainId = 99999;
         env_interp.blockNumber = 1;
         env_interp.timestamp = 1716422400;
@@ -1189,7 +1189,7 @@ test "AOT compiler: TokenTest.fozbin AOT vs Interpreter compatibility" {
 
         // Assert compatibility
         try testing.expectEqual(interp_res.status, aot_res.status);
-        try testing.expectEqual(interp_res.gasUsed, aot_res.gasUsed);
+        try testing.expectEqual(interp_res.budgetUsed, aot_res.budgetUsed);
         try testing.expectEqualSlices(u8, interp_res.returnData, aot_res.returnData);
     }
     _ = unsetenv("FORGE_NO_AOT");

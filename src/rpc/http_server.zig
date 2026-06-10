@@ -17,6 +17,7 @@ pub const Context = struct {
     handler: methods.RpcHandler,
     running: std.atomic.Value(bool),
     thread: ?std.Thread,
+    port: u16, // Actual listening port (may differ from requested)
 
     // Rate Limiting
     rateLimiter: std.AutoHashMap(u32, RateLimitEntry),
@@ -40,11 +41,28 @@ pub const Context = struct {
         exec: *core.dag_executor.DAGExecutor,
         state: *core.state.State,
     ) !*Context {
-        const addr = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, port);
-        const tcp_server = try addr.listen(.{
-            .force_nonblocking = false,
-            .reuse_address = true,
-        });
+        // Retry with next port on AddressInUse
+        const max_retries = 10;
+        var actual_port = port;
+        var attempt: u32 = 0;
+        const tcp_server = while (attempt < max_retries) : (attempt += 1) {
+            const addr = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, actual_port);
+            if (addr.listen(.{ .force_nonblocking = false, .reuse_address = true })) |srv| {
+                break srv;
+            } else |err| switch (err) {
+                error.AddressInUse => {
+                    actual_port = port + @as(u16, @intCast(attempt + 1));
+                    continue;
+                },
+                else => |e| return e,
+            }
+        } else {
+            log.err("RPC: failed to bind after {} attempts\n", .{max_retries});
+            return error.AddressInUse;
+        };
+        if (actual_port != port) {
+            log.warn("RPC: port conflict, moved to {d}\n", .{actual_port});
+        }
 
         const handler = methods.RpcHandler.init(allocator, chain, pool, exec, state);
 
@@ -57,6 +75,7 @@ pub const Context = struct {
             .handler = handler,
             .running = std.atomic.Value(bool).init(true),
             .thread = null,
+            .port = actual_port,
             .rateLimiter = std.AutoHashMap(u32, RateLimitEntry).init(allocator),
             .rateLimitMutex = .{},
         };

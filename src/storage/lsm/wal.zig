@@ -26,11 +26,12 @@ pub const WAL = struct {
     file: std.fs.File,
     current_offset: u64,
     replayed: bool,
+    sync_wal: bool,
 
     const MAGIC = 0x5A4257414C; // ZBWAL
     const VERSION = 1;
 
-    pub fn init(allocator: Allocator, io_engine: io.IoEngine, path: []const u8) !*WAL {
+    pub fn init(allocator: Allocator, io_engine: io.IoEngine, path: []const u8, sync_wal: bool) !*WAL {
         const file = try std.fs.cwd().createFile(path, .{ .read = true, .truncate = false });
 
         const self = try allocator.create(WAL);
@@ -40,6 +41,7 @@ pub const WAL = struct {
             .file = file,
             .current_offset = 0,
             .replayed = false,
+            .sync_wal = sync_wal,
         };
 
         try self.recover();
@@ -115,11 +117,13 @@ pub const WAL = struct {
         @memcpy(buffer[0..@sizeOf(EntryHeader)], std.mem.asBytes(&header));
         @memcpy(buffer[@sizeOf(EntryHeader)..], data);
 
-        // SYNCHRONOUS WRITE: Write directly to file (no async I/O)
+        // Write directly to file (no async I/O)
         try self.file.pwriteAll(buffer, self.current_offset);
 
-        // Force sync to disk immediately
-        try self.file.sync();
+        // Conditionally sync to disk based on config
+        if (self.sync_wal) {
+            try self.file.sync();
+        }
 
         self.current_offset += total_len;
     }

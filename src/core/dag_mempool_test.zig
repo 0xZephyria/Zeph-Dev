@@ -8,8 +8,8 @@
 //   • Account lane sequence ordering
 //   • Shard assignment correctness
 //   • Cross-lane conflict freedom (isolated model guarantee)
-//   • Security: lane depth limits, sequence gaps, gas price enforcement
-//   • Extraction and gas budget management
+//   • Security: lane depth limits, sequence gaps, budget price enforcement
+//   • Extraction and budget budget management
 //   • Scheduler plan generation and validation
 //   • DAG root computation determinism
 
@@ -26,7 +26,7 @@ test "DAGVertex: write keys for simple transfer" {
 
     const tx = types.Transaction{
         .sequence = 0,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 21_000,
         .from = types.Address{ .bytes = [_]u8{0xAA} ** 32 },
         .to = types.Address{ .bytes = [_]u8{0xBB} ** 32 },
@@ -48,7 +48,7 @@ test "DAGVertex: write keys for contract call" {
 
     const tx = types.Transaction{
         .sequence = 0,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 100_000,
         .from = types.Address{ .bytes = [_]u8{0xAA} ** 32 },
         .to = types.Address{ .bytes = [_]u8{0xCC} ** 32 },
@@ -69,7 +69,7 @@ test "DAGVertex: write keys for contract creation" {
 
     const tx = types.Transaction{
         .sequence = 5,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 500_000,
         .from = types.Address{ .bytes = [_]u8{0xDD} ** 32 },
         .to = null,
@@ -93,7 +93,7 @@ test "DAGVertex: different senders never conflict" {
     // Alice → Bob transfer
     const tx_alice = types.Transaction{
         .sequence = 0,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 21_000,
         .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 },
         .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 31 },
@@ -104,7 +104,7 @@ test "DAGVertex: different senders never conflict" {
     // Bob → Carol transfer
     const tx_bob = types.Transaction{
         .sequence = 0,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 21_000,
         .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 },
         .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 31 },
@@ -128,7 +128,7 @@ test "DAGVertex: same sender DOES conflict" {
 
     const tx1 = types.Transaction{
         .sequence = 0,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 21_000,
         .from = alice,
         .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 31 },
@@ -138,7 +138,7 @@ test "DAGVertex: same sender DOES conflict" {
 
     const tx2 = types.Transaction{
         .sequence = 1,
-        .gasPrice = 1_000_000_000,
+        .computePrice = 1_000_000_000,
         .executionBudget = 21_000,
         .from = alice,
         .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 31 },
@@ -168,7 +168,7 @@ test "AccountLane: sequence-ordered insertion" {
     // Insert TX with sequence 0
     const tx0 = types.Transaction{
         .sequence = 0,
-        .gasPrice = 100,
+        .computePrice = 100,
         .executionBudget = 21_000,
         .from = sender,
         .to = sender,
@@ -182,7 +182,7 @@ test "AccountLane: sequence-ordered insertion" {
     // Insert TX with sequence 1
     const tx1 = types.Transaction{
         .sequence = 1,
-        .gasPrice = 100,
+        .computePrice = 100,
         .executionBudget = 21_000,
         .from = sender,
         .to = sender,
@@ -199,7 +199,7 @@ test "AccountLane: sequence-ordered insertion" {
     try std.testing.expectEqual(@as(u64, 1), ready[1].tx.sequence);
 }
 
-test "AccountLane: replacement requires gas bump" {
+test "AccountLane: replacement requires budget bump" {
     const core = @import("core");
     const dag_mempool = core.dag_mempool;
     const types = core.types;
@@ -209,10 +209,10 @@ test "AccountLane: replacement requires gas bump" {
     var lane = dag_mempool.AccountLane.init(sender, 0);
     defer lane.deinit(allocator);
 
-    // Insert TX with sequence 0, gas price 100
+    // Insert TX with sequence 0, budget price 100
     _ = try lane.insert(allocator, types.Transaction{
         .sequence = 0,
-        .gasPrice = 100,
+        .computePrice = 100,
         .executionBudget = 21_000,
         .from = sender,
         .to = sender,
@@ -220,22 +220,22 @@ test "AccountLane: replacement requires gas bump" {
         .data = &[_]u8{},
     }, 10);
 
-    // Try replacement with insufficient gas bump (gas price 105, need 110)
+    // Try replacement with insufficient budget bump (budget price 105, need 110)
     const result = lane.insert(allocator, types.Transaction{
         .sequence = 0,
-        .gasPrice = 105,
+        .computePrice = 105,
         .executionBudget = 21_000,
         .from = sender,
         .to = sender,
         .value = 0,
         .data = &[_]u8{},
     }, 10);
-    try std.testing.expectError(error.ReplacementGasTooLow, result);
+    try std.testing.expectError(error.ReplacementbudgetTooLow, result);
 
-    // Replacement with sufficient gas bump (gas price 111, need 110)
+    // Replacement with sufficient budget bump (budget price 111, need 110)
     const replaced = try lane.insert(allocator, types.Transaction{
         .sequence = 0,
-        .gasPrice = 111,
+        .computePrice = 111,
         .executionBudget = 21_000,
         .from = sender,
         .to = sender,
@@ -243,7 +243,7 @@ test "AccountLane: replacement requires gas bump" {
         .data = &[_]u8{},
     }, 10);
     try std.testing.expect(replaced != null);
-    try std.testing.expectEqual(@as(u256, 100), replaced.?.gasPrice);
+    try std.testing.expectEqual(@as(u256, 100), replaced.?.computePrice);
 }
 
 test "AccountLane: advance removes committed TXs" {
@@ -260,7 +260,7 @@ test "AccountLane: advance removes committed TXs" {
     for (0..3) |i| {
         _ = try lane.insert(allocator, types.Transaction{
             .sequence = @intCast(i),
-            .gasPrice = 100,
+            .computePrice = 100,
             .executionBudget = 21_000,
             .from = sender,
             .to = sender,
@@ -289,7 +289,7 @@ test "AccountLane: sequence too low rejected" {
     // TX with sequence 3 (< base_sequence 5) should fail
     const result = lane.insert(allocator, types.Transaction{
         .sequence = 3,
-        .gasPrice = 100,
+        .computePrice = 100,
         .executionBudget = 21_000,
         .from = sender,
         .to = sender,
@@ -327,11 +327,11 @@ test "DAGScheduler: plan generation from TX list" {
 
     var txs = [_]types.Transaction{
         // Alice's TX
-        .{ .sequence = 0, .gasPrice = 200, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 31 }, .value = 100, .data = &[_]u8{} },
+        .{ .sequence = 0, .computePrice = 200, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 31 }, .value = 100, .data = &[_]u8{} },
         // Bob's TX
-        .{ .sequence = 0, .gasPrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 31 }, .value = 50, .data = &[_]u8{} },
+        .{ .sequence = 0, .computePrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 31 }, .value = 50, .data = &[_]u8{} },
         // Alice's second TX
-        .{ .sequence = 1, .gasPrice = 200, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x05} ++ [_]u8{0} ** 31 }, .value = 75, .data = &[_]u8{} },
+        .{ .sequence = 1, .computePrice = 200, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x05} ++ [_]u8{0} ** 31 }, .value = 75, .data = &[_]u8{} },
     };
 
     var plan = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{
@@ -365,8 +365,8 @@ test "DAGScheduler: plan validation passes for valid plan" {
     const allocator = std.testing.allocator;
 
     var txs = [_]types.Transaction{
-        .{ .sequence = 0, .gasPrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 31 }, .value = 10, .data = &[_]u8{} },
-        .{ .sequence = 0, .gasPrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 31 }, .value = 20, .data = &[_]u8{} },
+        .{ .sequence = 0, .computePrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x03} ++ [_]u8{0} ** 31 }, .value = 10, .data = &[_]u8{} },
+        .{ .sequence = 0, .computePrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x04} ++ [_]u8{0} ** 31 }, .value = 20, .data = &[_]u8{} },
     };
 
     var plan = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{});
@@ -383,7 +383,7 @@ test "DAGScheduler: DAG root is deterministic" {
     const allocator = std.testing.allocator;
 
     var txs = [_]types.Transaction{
-        .{ .sequence = 0, .gasPrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 }, .value = 10, .data = &[_]u8{} },
+        .{ .sequence = 0, .computePrice = 100, .executionBudget = 21_000, .from = types.Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 31 }, .to = types.Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 31 }, .value = 10, .data = &[_]u8{} },
     };
 
     var plan1 = try dag_scheduler.scheduleFromTxs(allocator, &txs, .{});
@@ -398,18 +398,18 @@ test "DAGScheduler: DAG root is deterministic" {
     try std.testing.expectEqualSlices(u8, &root1.bytes, &root2.bytes);
 }
 
-test "DAGScheduler: thread assignment is gas-balanced" {
+test "DAGScheduler: thread assignment is budget-balanced" {
     const core = @import("core");
     const dag_scheduler = core.dag_scheduler;
     const types = core.types;
     const allocator = std.testing.allocator;
 
-    // 4 senders with varying gas loads
+    // 4 senders with varying budget loads
     var txs: [4]types.Transaction = undefined;
     for (&txs, 0..) |*tx, i| {
         tx.* = types.Transaction{
             .sequence = 0,
-            .gasPrice = 100,
+            .computePrice = 100,
             .executionBudget = @as(u64, @intCast(21_000 * (i + 1))),
             .from = types.Address{ .bytes = [_]u8{@intCast(i + 1)} ++ [_]u8{0} ** 31 },
             .to = types.Address{ .bytes = [_]u8{0xFF} ++ [_]u8{0} ** 31 },

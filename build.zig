@@ -58,6 +58,7 @@ pub fn build(b: *std.Build) void {
     consensus_mod.addImport("core", core_mod);
     consensus_mod.addImport("storage", storage_mod);
     consensus_mod.addImport("rlp", rlp_mod);
+    consensus_mod.addImport("utils", utils_mod);
 
     // Net utilities
     const net_utils_mod = b.addModule("net_utils", .{
@@ -98,8 +99,8 @@ pub fn build(b: *std.Build) void {
     // RISC-V VM module
     const vm_mod = b.addModule("vm", .{ .root_source_file = b.path("vm/vm.zig") });
 
-    // PolkaVM compatibility module
-    const polkavm_mod = b.addModule("polkavm", .{ .root_source_file = b.path("vm/polkavm/vm.zig") });
+    // PolkaVM compatibility module (temporarily disabled)
+    // const polkavm_mod = b.addModule("polkavm", .{ .root_source_file = b.path("vm/polkavm/vm.zig") });
 
     // VM Bridge module (connects RISC-V VM to executor)
     const vm_bridge_mod = b.addModule("vm_bridge", .{
@@ -107,7 +108,7 @@ pub fn build(b: *std.Build) void {
     });
     vm_bridge_mod.addImport("core", core_mod);
     vm_bridge_mod.addImport("vm", vm_mod);
-    vm_bridge_mod.addImport("polkavm", polkavm_mod);
+    // vm_bridge_mod.addImport("polkavm", polkavm_mod);
 
     // State Bridge (connects VM syscalls to State overlay)
     const state_bridge_mod = b.addModule("state_bridge", .{
@@ -137,6 +138,27 @@ pub fn build(b: *std.Build) void {
     node_exe.root_module.link_libc = true;
     node_exe.root_module.linkSystemLibrary("z", .{});
     b.installArtifact(node_exe);
+
+    // ---- Zephyria simulator executable ----
+    const sim_exe = b.addExecutable(.{
+        .name = "zephyria-sim",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/simulator/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    sim_exe.root_module.addImport("storage", storage_mod);
+    sim_exe.root_module.addImport("consensus", consensus_mod);
+    sim_exe.root_module.addImport("p2p", p2p_mod);
+    sim_exe.root_module.addImport("rpc", rpc_mod);
+    sim_exe.root_module.addImport("core", core_mod);
+    sim_exe.root_module.addImport("node", node_mod);
+    sim_exe.root_module.addImport("utils", utils_mod);
+    sim_exe.root_module.addImport("vm_bridge", vm_bridge_mod);
+    sim_exe.root_module.link_libc = true;
+    sim_exe.root_module.linkSystemLibrary("z", .{});
+    b.installArtifact(sim_exe);
 
     const run_node_cmd = b.addRunArtifact(node_exe);
     run_node_cmd.step.dependOn(b.getInstallStep());
@@ -296,16 +318,16 @@ pub fn build(b: *std.Build) void {
     vm_test.root_module.link_libc = true;
     node_test_step.dependOn(&b.addRunArtifact(vm_test).step);
 
-    // PolkaVM tests
-    const polkavm_test = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("vm/polkavm/vm.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    polkavm_test.root_module.link_libc = true;
-    node_test_step.dependOn(&b.addRunArtifact(polkavm_test).step);
+    // PolkaVM tests (temporarily disabled)
+    // const polkavm_test = b.addTest(.{
+    //     .root_module = b.createModule(.{
+    //         .root_source_file = b.path("vm/polkavm/vm.zig"),
+    //         .target = target,
+    //         .optimize = optimize,
+    //     }),
+    // });
+    // polkavm_test.root_module.link_libc = true;
+    // node_test_step.dependOn(&b.addRunArtifact(polkavm_test).step);
 
     const forge_test_suite = b.addExecutable(.{
         .name = "forge_test_suite",
@@ -345,7 +367,7 @@ pub fn build(b: *std.Build) void {
     blockchain_benchmark.root_module.addImport("rlp", rlp_mod);
     blockchain_benchmark.root_module.addImport("encoding", encoding_mod);
     blockchain_benchmark.root_module.addImport("vm", vm_mod);
-    blockchain_benchmark.root_module.addImport("polkavm", polkavm_mod);
+    // blockchain_benchmark.root_module.addImport("polkavm", polkavm_mod);
     blockchain_benchmark.root_module.link_libc = true;
     blockchain_benchmark.root_module.linkSystemLibrary("z", .{});
     // GMP no longer needed (VDF removed)

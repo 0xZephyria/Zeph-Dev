@@ -32,9 +32,11 @@ pub const PipelineStage = enum {
 };
 
 /// Block proposal (adaptive — supports threaded blocks)
+/// This struct crosses the pipeline → chain boundary and MUST only carry
+/// canonical block-level hashes, never pipeline-internal stage hashes.
 pub const Proposal = struct {
     blockNumber: u64,
-    parentHash: core.types.Hash,
+    parentId: core.types.Hash, // Canonical Block.id() of the parent block
     proposer: core.types.Address,
     txHashes: []const core.types.Hash,
     stage: PipelineStage,
@@ -235,9 +237,21 @@ pub const Pipeline = struct {
     }
 
     /// Stage 1: Create an adaptive block proposal with thread awareness.
-    pub fn propose(self: *Self, blockNumber: u64, parentHash: core.types.Hash, txHashes: []const core.types.Hash) !*Proposal {
+    /// Caller MUST pass the canonical Block.id() of the parent block as parentId.
+    /// No pipeline-internal stage hashes should ever be passed here (type boundary).
+    pub fn propose(self: *Self, blockNumber: u64, parentId: core.types.Hash, txHashes: []const core.types.Hash) !*Proposal {
         self.lock.lock();
         defer self.lock.unlock();
+
+        // ── Firewall 2: Verify blockNumber advances the chain ────────────
+        const head = self.headNumber.load(.acquire);
+        if (head > 0 and blockNumber <= head) return error.BlockNumberStale;
+        if (blockNumber > head + 1) return error.BlockNumberSkipsSlot;
+
+        // ── Firewall 1: parentId must be canonical and non-zero for non-genesis ──
+        if (blockNumber > 0 and std.mem.eql(u8, &parentId.bytes, &core.types.Hash.zero().bytes)) {
+            return error.InvalidParentId;
+        }
 
         const slot = @as(usize, @intCast(blockNumber % RING_SIZE));
 
@@ -247,8 +261,8 @@ pub const Pipeline = struct {
                 _ = self.equivocationsDetected.fetchAdd(1, .monotonic);
                 try self.equivocationLog.append(self.allocator, EquivocationEvidence{
                     .blockNumber = blockNumber,
-                    .firstHash = existing.parentHash,
-                    .secondHash = parentHash,
+                    .firstHash = existing.parentId,
+                    .secondHash = parentId,
                     .proposer = self.ourAddress,
                     .timestamp = @intCast(std.time.timestamp()),
                 });
@@ -265,12 +279,12 @@ pub const Pipeline = struct {
 
         self.proposals[slot] = Proposal{
             .blockNumber = blockNumber,
-            .parentHash = parentHash,
+            .parentId = parentId,
             .proposer = self.ourAddress,
             .txHashes = hashes,
             .stage = .Propose,
             .voteCount = 1,
-            .voteBitmap = @as(u256, 1) << @intCast(self.ourIndex),
+            .voteBitmap = if (self.ourIndex < 256) @as(u256, 1) << @as(u7, @intCast(self.ourIndex & 0xFF)) else @as(u256, 0),
             .isFinalized = false,
             .isIrreversible = false,
             .createdAtNs = std.time.nanoTimestamp(),

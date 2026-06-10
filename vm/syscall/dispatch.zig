@@ -6,7 +6,7 @@
 const std = @import("std");
 const executor = @import("../core/executor.zig");
 const sandbox = @import("../memory/sandbox.zig");
-const gasTable = @import("../gas/table.zig");
+const budgetTable = @import("../budget/table.zig");
 
 pub const ForgeVM = executor.ForgeVM;
 pub const SyscallError = executor.SyscallError;
@@ -65,9 +65,9 @@ pub const SyscallId = struct {
     pub const GET_BLOCK_NUMBER: u32 = 0x65;
     pub const GET_TIMESTAMP: u32 = 0x66;
     pub const GET_CHAIN_ID: u32 = 0x67;
-    pub const GET_GAS_REMAINING: u32 = 0x68;
+    pub const GET_budget_REMAINING: u32 = 0x68;
     pub const GET_TX_ORIGIN: u32 = 0x69;
-    pub const GET_GAS_PRICE: u32 = 0x6A;
+    pub const GET_budget_PRICE: u32 = 0x6A;
     pub const GET_COINBASE: u32 = 0x6B;
     pub const GET_BLOCK_HASH: u32 = 0x6C; // VRF randomness
 
@@ -128,7 +128,7 @@ pub const LogEntry = struct {
 };
 
 /// EIP-2929 access tracking — tracks which storage slots and addresses
-/// have been accessed during this execution for warm/cold gas pricing.
+/// have been accessed during this execution for warm/cold budget pricing.
 pub const AccessSets = struct {
     /// Warm storage slots (keys already accessed in this execution)
     warmSlots: std.AutoHashMap([32]u8, void),
@@ -202,7 +202,7 @@ pub const HostEnv = struct {
     timestamp: u64,
     chainId: u64,
     txOrigin: [32]u8,
-    gasPrice: u64,
+    computePrice: u64,
     producer: [32]u8,
     executionBudget: u64,
     prevrandao: [32]u8,
@@ -239,16 +239,16 @@ pub const HostEnv = struct {
 
     /// Call provider: execute a cross-contract call.
     /// Returns (success, returnData). If null, calls return failure.
-    callFn: ?*const fn (callType: CallType, to: [32]u8, value: [32]u8, data: []const u8, gas: u64) CallProviderResult = null,
+    callFn: ?*const fn (callType: CallType, to: [32]u8, value: [32]u8, data: []const u8, budget: u64) CallProviderResult = null,
 
     /// Create provider: deploy a new contract.
     /// Returns (success, newAddress). If null, creates return failure.
-    createFn: ?*const fn (code: []const u8, value: [32]u8, gas: u64) CreateProviderResult = null,
+    createFn: ?*const fn (code: []const u8, value: [32]u8, budget: u64) CreateProviderResult = null,
 
     /// Create2 provider: deploy a contract with salt-based deterministic address.
     /// Address = keccak256(0xFF || sender || salt || keccak256(initcode))[12..32]
     /// If null, create2 returns failure.
-    create2Fn: ?*const fn (code: []const u8, salt: [32]u8, value: [32]u8, gas: u64) CreateProviderResult = null,
+    create2Fn: ?*const fn (code: []const u8, salt: [32]u8, value: [32]u8, budget: u64) CreateProviderResult = null,
 
     /// Selfdestruct provider: transfers balance to beneficiary and marks account for deletion.
     /// If null, selfdestruct is a no-op that still halts execution.
@@ -287,7 +287,7 @@ pub const HostEnv = struct {
 
     // ---- EIP-1153: Transient Storage (per-TX ephemeral key-value store) ----
     // Transient storage is automatically cleared when HostEnv is deinitialized
-    // (at the end of each transaction). Cheap (100 gas) alternative to SSTORE
+    // (at the end of each transaction). Cheap (100 budget) alternative to SSTORE
     // for values that don't need to persist across transactions.
     // Use cases: re-entrancy locks, flash loan callbacks, multi-hop routing state.
     transientStorage: std.AutoHashMap([32]u8, [32]u8),
@@ -312,7 +312,7 @@ pub const HostEnv = struct {
             .timestamp = 0,
             .chainId = 1,
             .txOrigin = [_]u8{0} ** 32,
-            .gasPrice = 0,
+            .computePrice = 0,
             .producer = [_]u8{0} ** 32,
 
             .executionBudget = 30_000_000,
@@ -395,14 +395,14 @@ pub const CallType = enum {
 pub const CallProviderResult = struct {
     success: bool,
     returnData: []const u8,
-    gasUsed: u64,
+    budgetUsed: u64,
 };
 
 /// Result from a create provider
 pub const CreateProviderResult = struct {
     success: bool,
     newAddress: [32]u8,
-    gasUsed: u64,
+    budgetUsed: u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -469,9 +469,9 @@ fn syscallDispatch(vm_opaque: *anyopaque) executor.SyscallError!void {
         SyscallId.GET_BLOCK_NUMBER => getBlockNumber(vm, env),
         SyscallId.GET_TIMESTAMP => getTimestamp(vm, env),
         SyscallId.GET_CHAIN_ID => getChainId(vm, env),
-        SyscallId.GET_GAS_REMAINING => getGasRemaining(vm),
+        SyscallId.GET_budget_REMAINING => getbudgetRemaining(vm),
         SyscallId.GET_TX_ORIGIN => getTxOrigin(vm, env),
-        SyscallId.GET_GAS_PRICE => getGasPrice(vm, env),
+        SyscallId.GET_budget_PRICE => getcomputePrice(vm, env),
         SyscallId.GET_COINBASE => getCoinbase(vm, env),
         SyscallId.GET_SELF_ADDRESS => getSelfAddress(vm, env),
         SyscallId.GET_BLOCK_HASH => getPrevrandao(vm, env),
@@ -509,10 +509,10 @@ fn storageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const keyRef = vm.memory.getAligned32(keyPtr) catch return SyscallError.SegFault;
     const key = keyRef.*;
 
-    // EIP-2929: charge warm (100) or cold (2100) gas
+    // EIP-2929: charge warm (100) or cold (2100) budget
     const wasWarm = env.accessSets.markSlotWarm(key);
-    const gasCost = gasTable.SyscallGas.STORAGE_LOAD;
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    const budgetCost = budgetTable.SyscallBudget.STORAGE_LOAD;
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     // Fast path: check inline SLOAD value cache (avoids storage backend round-trip)
     const value = if (wasWarm)
@@ -558,12 +558,12 @@ fn storageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
         env.accessSets.recordOriginalValue(key, currentValue);
     }
 
-    // FORGE flat gas model
+    // FORGE flat budget model
     if (!wasWarm) {
-        vm.gas.consume(gasTable.SyscallGas.STORAGE_STORE) catch return SyscallError.OutOfGas;
+        vm.budget.consume(budgetTable.SyscallBudget.STORAGE_STORE) catch return SyscallError.OutOfBudget;
     }
 
-    // Determine SSTORE gas based on current and new values
+    // Determine SSTORE budget based on current and new values
     const isNoop = std.mem.eql(u8, &currentValue, &newValue);
     const originalValue = env.accessSets.getOriginalValue(key) orelse currentValue;
     const orig_is_current = std.mem.eql(u8, &originalValue, &currentValue);
@@ -572,27 +572,27 @@ fn storageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
     if (isNoop) {
         // No-op: value unchanged — charge warm access only
-        vm.gas.consume(gasTable.SyscallGas.STORAGE_STORE) catch return SyscallError.OutOfGas;
+        vm.budget.consume(budgetTable.SyscallBudget.STORAGE_STORE) catch return SyscallError.OutOfBudget;
     } else if (orig_is_current) {
         if (orig_is_zero) {
             // 0 → non-zero: fresh allocation
-            vm.gas.consume(gasTable.SyscallGas.STORAGE_STORE_SET) catch return SyscallError.OutOfGas;
+            vm.budget.consume(budgetTable.SyscallBudget.STORAGE_STORE_SET) catch return SyscallError.OutOfBudget;
         } else {
             // non-zero → different non-zero (or non-zero → zero): reset
-            vm.gas.consume(gasTable.SyscallGas.STORAGE_STORE) catch return SyscallError.OutOfGas;
+            vm.budget.consume(budgetTable.SyscallBudget.STORAGE_STORE) catch return SyscallError.OutOfBudget;
             // EIP-3529: refund for clearing (non-zero → zero)
             if (new_is_zero) {
-                vm.gas.addRefund(gasTable.SyscallGas.STORAGE_CLEAR_REFUND);
+                vm.budget.addRefund(budgetTable.SyscallBudget.STORAGE_CLEAR_REFUND);
             }
         }
     } else {
         // Dirty slot (already modified this transaction) — warm access
-        vm.gas.consume(gasTable.SyscallGas.STORAGE_STORE) catch return SyscallError.OutOfGas;
+        vm.budget.consume(budgetTable.SyscallBudget.STORAGE_STORE) catch return SyscallError.OutOfBudget;
 
         // EIP-3529 refund adjustments for restoring original value
         if (!orig_is_zero and new_is_zero) {
             // Restoring to zero from a dirty non-zero
-            vm.gas.addRefund(gasTable.SyscallGas.STORAGE_CLEAR_REFUND);
+            vm.budget.addRefund(budgetTable.SyscallBudget.STORAGE_CLEAR_REFUND);
         }
     }
 
@@ -614,9 +614,9 @@ fn emitEvent(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
     if (topicCount > 4) return SyscallError.InternalError;
 
-    // Gas: base + per-byte for data
-    const gasCost = gasTable.SyscallGas.EMIT_EVENT_BASE + gasTable.SyscallGas.EMIT_EVENT_PER_BYTE * @as(u64, dataLen);
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    // budget: base + per-byte for data
+    const budgetCost = budgetTable.SyscallBudget.EMIT_EVENT_BASE + budgetTable.SyscallBudget.EMIT_EVENT_PER_BYTE * @as(u64, dataLen);
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     var logEntry = LogEntry.init(env.allocator);
 
@@ -641,7 +641,7 @@ fn emitEvent(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
 /// Syscall 0x06: get_caller → writes msg.sender (32 bytes) to memory at a0
 fn getCaller(vm: *ForgeVM, env: *HostEnv) void {
-    vm.gas.consume(gasTable.SyscallGas.GET_CALLER) catch return;
+    vm.budget.consume(budgetTable.SyscallBudget.GET_CALLER) catch return;
     const bufPtr = vm.regs[11];
     const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.caller);
@@ -649,7 +649,7 @@ fn getCaller(vm: *ForgeVM, env: *HostEnv) void {
 
 /// Syscall 0x07: get_callvalue → writes msg.value (32 bytes) to memory at a0
 fn getCallValue(vm: *ForgeVM, env: *HostEnv) void {
-    vm.gas.consume(gasTable.SyscallGas.GET_CALLVALUE) catch return;
+    vm.budget.consume(budgetTable.SyscallBudget.GET_CALLVALUE) catch return;
     const bufPtr = vm.regs[11];
     const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.callValue);
@@ -714,8 +714,8 @@ fn getBalance(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var addr: [32]u8 = undefined;
     @memcpy(&addr, addrSlice);
 
-    const gasCost = gasTable.SyscallGas.ASSET_QUERY_BALANCE;
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    const budgetCost = budgetTable.SyscallBudget.ASSET_QUERY_BALANCE;
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     // Get balance via provider, or return zero
     const balance = if (env.balanceFn) |f| f(addr) else [_]u8{0} ** 32;
@@ -728,25 +728,25 @@ fn getBalance(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
 /// Syscall 0x65: get_block_number → a0 = low 32 bits
 fn getBlockNumber(vm: *ForgeVM, env: *HostEnv) void {
-    vm.gas.consume(gasTable.SyscallGas.GET_BLOCK_NUMBER) catch return;
+    vm.budget.consume(budgetTable.SyscallBudget.GET_BLOCK_NUMBER) catch return;
     vm.regs[10] = @truncate(env.blockNumber);
 }
 
 /// Syscall 0x66: get_timestamp → a0 = low 32 bits
 fn getTimestamp(vm: *ForgeVM, env: *HostEnv) void {
-    vm.gas.consume(gasTable.SyscallGas.GET_TIMESTAMP) catch return;
+    vm.budget.consume(budgetTable.SyscallBudget.GET_TIMESTAMP) catch return;
     vm.regs[10] = @truncate(env.timestamp);
 }
 
 /// Syscall 0x67: get_chain_id → a0 = chain ID
 fn getChainId(vm: *ForgeVM, env: *HostEnv) void {
-    vm.gas.consume(gasTable.SyscallGas.GET_CHAIN_ID) catch return;
+    vm.budget.consume(budgetTable.SyscallBudget.GET_CHAIN_ID) catch return;
     vm.regs[10] = @truncate(env.chainId);
 }
 
-/// Syscall 0x68: get_gas_remaining → a0 = remaining gas (low 32 bits)
-fn getGasRemaining(vm: *ForgeVM) void {
-    vm.regs[10] = vm.gas.remaining();
+/// Syscall 0x68: get_budget_remaining → a0 = remaining budget (low 32 bits)
+fn getbudgetRemaining(vm: *ForgeVM) void {
+    vm.regs[10] = vm.budget.remaining();
 }
 
 /// Syscall 0x15: get_tx_origin → writes 32 bytes to memory at a1
@@ -756,9 +756,9 @@ fn getTxOrigin(vm: *ForgeVM, env: *HostEnv) void {
     @memcpy(slice, &env.txOrigin);
 }
 
-/// Syscall GET_GAS_PRICE → a0 = gas price (low 32 bits), result overwrites a0
-fn getGasPrice(vm: *ForgeVM, env: *HostEnv) void {
-    vm.regs[10] = @truncate(env.gasPrice);
+/// Syscall GET_budget_PRICE → a0 = budget price (low 32 bits), result overwrites a0
+fn getcomputePrice(vm: *ForgeVM, env: *HostEnv) void {
+    vm.regs[10] = @truncate(env.computePrice);
 }
 
 /// Syscall 0x17: get_coinbase → writes 32 bytes to memory at a1
@@ -769,7 +769,7 @@ fn getCoinbase(vm: *ForgeVM, env: *HostEnv) void {
 }
 
 /// Syscall 0x18: get execution budget → a0 = execution budget (low 32 bits)
-fn getGasLimit(vm: *ForgeVM, env: *HostEnv) void {
+fn getbudgetLimit(vm: *ForgeVM, env: *HostEnv) void {
     vm.regs[10] = @truncate(env.executionBudget);
 }
 
@@ -777,7 +777,7 @@ fn getGasLimit(vm: *ForgeVM, env: *HostEnv) void {
 /// a0 = syscallId, a1 = ptr to 32-byte output buffer
 /// Writes the VRF prevrandao value (Zephyria uses VRF-based randomness).
 fn getPrevrandao(vm: *ForgeVM, env: *HostEnv) void {
-    vm.gas.consume(20) catch return; // cheap env read
+    vm.budget.consume(20) catch return; // cheap env read
     const bufPtr = vm.regs[11]; // a1
     const slice = vm.memory.getSliceMut(bufPtr, 32) catch return;
     @memcpy(slice, &env.prevrandao);
@@ -801,11 +801,11 @@ fn logRaw(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
     if (topicCount > 4) return SyscallError.InternalError;
 
-    // Gas: base_cost + per_topic + per_byte_data
-    const gasCost = gasTable.SyscallGas.EMIT_EVENT_BASE +
-        @as(u64, topicCount) * 375 + // EVM LOG_TOPIC_GAS = 375
-        gasTable.SyscallGas.EMIT_EVENT_PER_BYTE * @as(u64, dataLen);
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    // budget: base_cost + per_topic + per_byte_data
+    const budgetCost = budgetTable.SyscallBudget.EMIT_EVENT_BASE +
+        @as(u64, topicCount) * 375 + // EVM LOG_TOPIC_budget = 375
+        budgetTable.SyscallBudget.EMIT_EVENT_PER_BYTE * @as(u64, dataLen);
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     var logEntry = LogEntry.init(env.allocator);
 
@@ -841,9 +841,9 @@ fn callContract(vm: *ForgeVM, env: *HostEnv, callType: CallType) SyscallError!vo
     var to_addr_peek: [32]u8 = undefined;
     @memcpy(&to_addr_peek, to_slice_peek);
 
-    // FORGE flat gas model
-    const call_gas = gasTable.SyscallGas.CALL_CONTRACT;
-    vm.gas.consume(call_gas) catch return SyscallError.OutOfGas;
+    // FORGE flat budget model
+    const call_budget = budgetTable.SyscallBudget.CALL_CONTRACT;
+    vm.budget.consume(call_budget) catch return SyscallError.OutOfBudget;
 
     const toPtr = vm.regs[11];
     const value_ptr = vm.regs[12];
@@ -889,11 +889,11 @@ fn callContract(vm: *ForgeVM, env: *HostEnv, callType: CallType) SyscallError!vo
         env.reentrantGuard.put(to, {}) catch {};
         defer _ = env.reentrantGuard.remove(to);
 
-        const gas_to_forward = vm.gas.remaining();
-        const result = callFn(callType, to, value, data, gas_to_forward);
+        const budget_to_forward = vm.budget.remaining();
+        const result = callFn(callType, to, value, data, budget_to_forward);
 
-        // Consume gas used by the subcall
-        vm.gas.consume(result.gasUsed) catch {};
+        // Consume budget used by the subcall
+        vm.budget.consume(result.budgetUsed) catch {};
 
         // Store last return data for RETURNDATASIZE/RETURNDATACOPY
         env.lastReturnData = result.returnData;
@@ -923,7 +923,7 @@ fn callContract(vm: *ForgeVM, env: *HostEnv, callType: CallType) SyscallError!vo
 /// a3 = ptr to 20-byte result buffer (new address written here)
 /// Returns: a0 = 1 (success) or 0 (failure)
 fn createContract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(gasTable.SyscallGas.CREATE_CONTRACT) catch return SyscallError.OutOfGas;
+    vm.budget.consume(budgetTable.SyscallBudget.CREATE_CONTRACT) catch return SyscallError.OutOfBudget;
 
     const code_ptr = vm.regs[11];
     const code_len = vm.regs[12];
@@ -941,9 +941,9 @@ fn createContract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     if (code_len > 0) {
         code = vm.memory.getSlice(code_ptr, code_len) catch return SyscallError.SegFault;
 
-        // EIP-3860: charge 2 gas per 32-byte word of initcode
+        // EIP-3860: charge 2 budget per 32-byte word of initcode
         const words = (code_len + 31) / 32;
-        vm.gas.consume(2 * @as(u64, words)) catch return SyscallError.OutOfGas;
+        vm.budget.consume(2 * @as(u64, words)) catch return SyscallError.OutOfBudget;
     }
 
     // Read value
@@ -961,10 +961,10 @@ fn createContract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
         env.callDepth += 1;
         defer env.callDepth -= 1;
 
-        const gas_to_forward = vm.gas.remaining();
-        const result = createFn(code, value, gas_to_forward);
+        const budget_to_forward = vm.budget.remaining();
+        const result = createFn(code, value, budget_to_forward);
 
-        vm.gas.consume(result.gasUsed) catch {};
+        vm.budget.consume(result.budgetUsed) catch {};
 
         if (result.success) {
             // Write new address to result buffer
@@ -994,8 +994,8 @@ fn createContract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 /// This enables counterfactual addresses, factory patterns (Uniswap V3),
 /// minimal proxy clones, and deterministic deployment across chains.
 fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    // Base gas: same as CREATE (32000) + per-word hash cost for initcode
-    vm.gas.consume(32000) catch return SyscallError.OutOfGas;
+    // Base budget: same as CREATE (32000) + per-word hash cost for initcode
+    vm.budget.consume(32000) catch return SyscallError.OutOfBudget;
 
     const code_ptr = vm.regs[11]; // a1
     const code_len = vm.regs[12]; // a2
@@ -1008,9 +1008,9 @@ fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     if (code_len > 0) {
         code = vm.memory.getSlice(code_ptr, code_len) catch return SyscallError.SegFault;
 
-        // Charge per-word gas for hashing initcode (same as EIP-3860)
+        // Charge per-word budget for hashing initcode (same as EIP-3860)
         const words = (code_len + 31) / 32;
-        vm.gas.consume(gasTable.SyscallGas.CREATE2_PER_WORD * @as(u64, words)) catch return SyscallError.OutOfGas;
+        vm.budget.consume(budgetTable.SyscallBudget.CREATE2_PER_WORD * @as(u64, words)) catch return SyscallError.OutOfBudget;
     }
 
     // Read salt (32 bytes)
@@ -1033,10 +1033,10 @@ fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
         env.callDepth += 1;
         defer env.callDepth -= 1;
 
-        const gas_to_forward = vm.gas.remaining();
-        const result = create2Fn(code, salt, value, gas_to_forward);
+        const budget_to_forward = vm.budget.remaining();
+        const result = create2Fn(code, salt, value, budget_to_forward);
 
-        vm.gas.consume(result.gasUsed) catch {};
+        vm.budget.consume(result.budgetUsed) catch {};
 
         if (result.success) {
             // Write new address to result buffer
@@ -1057,18 +1057,18 @@ fn create2Contract(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 // ---------------------------------------------------------------------------
 // EIP-1153: Transient Storage (TLOAD / TSTORE)
 // ---------------------------------------------------------------------------
-// Transient storage provides a cheap (100 gas) key-value store that is
+// Transient storage provides a cheap (100 budget) key-value store that is
 // automatically cleared at the end of each transaction. It does NOT persist
-// to the state trie and does NOT trigger warm/cold gas pricing.
+// to the state trie and does NOT trigger warm/cold budget pricing.
 //
 // Use cases:
-//   - Re-entrancy locks without 5000 gas SSTORE cost
+//   - Re-entrancy locks without 5000 budget SSTORE cost
 //   - Flash loan callback state
 //   - Multi-hop AMM routing intermediate state
 //   - EIP-1153 compatible smart contracts
 
 fn derivedStorageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     const userPtr = vm.regs[11];
     const keyPtr = vm.regs[12];
@@ -1091,7 +1091,7 @@ fn derivedStorageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 }
 
 fn derivedStorageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(5000) catch return SyscallError.OutOfGas;
+    vm.budget.consume(5000) catch return SyscallError.OutOfBudget;
 
     const userPtr = vm.regs[11];
     const keyPtr = vm.regs[12];
@@ -1113,7 +1113,7 @@ fn derivedStorageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 }
 
 fn globalStorageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     const keyPtr = vm.regs[11];
     const resultPtr = vm.regs[12];
@@ -1131,7 +1131,7 @@ fn globalStorageLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 }
 
 fn globalStorageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(5000) catch return SyscallError.OutOfGas;
+    vm.budget.consume(5000) catch return SyscallError.OutOfBudget;
 
     const keyPtr = vm.regs[11];
     const deltaPtr = vm.regs[12];
@@ -1152,9 +1152,9 @@ fn globalStorageStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
 /// Syscall 0x23: tload — read from transient storage
 /// a0 = syscallId, a1 = pointer to 32-byte key, a2 = pointer to 32-byte result buffer
-/// Gas: 100 (EIP-1153, same as warm SLOAD)
+/// budget: 100 (EIP-1153, same as warm SLOAD)
 fn transientLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     const keyPtr = vm.regs[11]; // a1
     const resultPtr = vm.regs[12]; // a2
@@ -1174,9 +1174,9 @@ fn transientLoad(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
 /// Syscall 0x24: tstore — write to transient storage
 /// a0 = syscallId, a1 = pointer to 32-byte key, a2 = pointer to 32-byte value
-/// Gas: 100 (EIP-1153, same as warm SSTORE)
+/// budget: 100 (EIP-1153, same as warm SSTORE)
 fn transientStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     const keyPtr = vm.regs[11]; // a1
     const value_ptr = vm.regs[12]; // a2
@@ -1202,8 +1202,8 @@ fn transientStore(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 /// a5 = ptr to 32-byte result buffer (blake3(pubkey) address)
 /// Returns: a0 = 1 (success) or 0 (failure); signer address written to result buffer.
 fn ecrecover(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    // Gas: signature verification cost (cheaper than EVM ecrecover)
-    vm.gas.consume(2000) catch return SyscallError.OutOfGas;
+    // budget: signature verification cost (cheaper than EVM ecrecover)
+    vm.budget.consume(2000) catch return SyscallError.OutOfBudget;
 
     const hash_ptr = vm.regs[11]; // a1 — 32-byte message hash
     const scheme: u8 = @truncate(vm.regs[12]); // a2 — signature scheme
@@ -1258,11 +1258,11 @@ fn ecrecover(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
 /// Syscall SELFDESTRUCT — destroy contract and send balance to beneficiary
 /// a0 = syscallId, a1 = ptr to 20-byte beneficiary address
-/// EIP-2929: charges warm/cold gas for beneficiary address
+/// EIP-2929: charges warm/cold budget for beneficiary address
 /// EIP-6780: only effective if called in the same TX as creation (enforced at state level)
 fn selfDestructSyscall(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    // Base gas for SELFDESTRUCT
-    vm.gas.consume(5000) catch return SyscallError.OutOfGas;
+    // Base budget for SELFDESTRUCT
+    vm.budget.consume(5000) catch return SyscallError.OutOfBudget;
 
     const beneficiaryPtr = vm.regs[11]; // a1 — a0 is syscall ID
 
@@ -1274,7 +1274,7 @@ fn selfDestructSyscall(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     // EIP-2929: charge cold access if beneficiary is not warm
     const wasWarm = env.accessSets.markAddressWarm(beneficiary);
     if (!wasWarm) {
-        vm.gas.consume(25000) catch return SyscallError.OutOfGas;
+        vm.budget.consume(25000) catch return SyscallError.OutOfBudget;
     }
 
     // Execute via provider — transfers balance + marks for deletion
@@ -1299,13 +1299,13 @@ fn getReturnDataSize(vm: *ForgeVM, env: *HostEnv) void {
 /// Syscall: returndatacopy — copy return data from last sub-call
 /// a0 = syscallId, a1 = dest_ptr, a2 = offset into return data, a3 = length
 fn returnDataCopy(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
-    // Gas: 3 per word (same as EVM RETURNDATACOPY)
+    // budget: 3 per word (same as EVM RETURNDATACOPY)
     const dest_ptr = vm.regs[11]; // a1
     const offset = vm.regs[12]; // a2
     const length = vm.regs[13]; // a3
 
     const words = (length + 31) / 32;
-    vm.gas.consume(3 + 3 * @as(u64, words)) catch return SyscallError.OutOfGas;
+    vm.budget.consume(3 + 3 * @as(u64, words)) catch return SyscallError.OutOfBudget;
 
     // Bounds check on return data
     if (offset + length > env.lastReturnData.len) return SyscallError.SegFault;
@@ -1321,7 +1321,7 @@ fn returnDataCopy(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
 /// Syscall: codesize — a0 = syscallId; result in a0
 fn getCodeSize(vm: *ForgeVM) void {
-    vm.gas.consume(2) catch return; // GAS_BASE
+    vm.budget.consume(2) catch return; // budget_BASE
     vm.regs[10] = vm.code_len;
 }
 
@@ -1332,9 +1332,9 @@ fn codeCopy(vm: *ForgeVM) SyscallError!void {
     const offset = vm.regs[12]; // a2
     const length = vm.regs[13]; // a3
 
-    // Gas: 3 + 3 per word
+    // budget: 3 + 3 per word
     const words = (length + 31) / 32;
-    vm.gas.consume(3 + 3 * @as(u64, words)) catch return SyscallError.OutOfGas;
+    vm.budget.consume(3 + 3 * @as(u64, words)) catch return SyscallError.OutOfBudget;
 
     // Read from code region (offset already relative to code start)
     if (offset + length > vm.code_len) {
@@ -1362,10 +1362,10 @@ fn extCodeSize(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var addr: [32]u8 = undefined;
     @memcpy(&addr, addrSlice);
 
-    // EIP-2929 warm/cold gas
+    // EIP-2929 warm/cold budget
     const wasWarm = env.accessSets.markAddressWarm(addr);
-    const gasCost: u64 = if (wasWarm) 100 else 2600;
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    const budgetCost: u64 = if (wasWarm) 100 else 2600;
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     // For now: return 0 for all addresses (external code size requires provider)
     // In practice, a codesize_fn provider would query the state overlay.
@@ -1389,7 +1389,7 @@ fn getCodeHash(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
 
     // Warmth check: charge EXTCODEHASH warm/cold cost
     const cost: u64 = 100;
-    vm.gas.consume(cost) catch return SyscallError.OutOfGas;
+    vm.budget.consume(cost) catch return SyscallError.OutOfBudget;
 
     const hash = if (env.codeHashFn) |f| f(addr) else [_]u8{0} ** 32;
     const res_slice = vm.memory.getSliceMut(resultPtr, 32) catch return SyscallError.SegFault;
@@ -1411,7 +1411,7 @@ fn roleCheck(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var acc: [32]u8 = undefined;
     @memcpy(&acc, vm.memory.getSlice(accPtr, 32) catch return SyscallError.SegFault);
 
-    vm.gas.consume(400) catch return SyscallError.OutOfGas;
+    vm.budget.consume(400) catch return SyscallError.OutOfBudget;
 
     const has_role = if (env.roleCheckFn) |f| f(addr, role, acc) else false;
     vm.regs[10] = if (has_role) 1 else 0;
@@ -1431,7 +1431,7 @@ fn roleGrant(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var acc: [32]u8 = undefined;
     @memcpy(&acc, vm.memory.getSlice(accPtr, 32) catch return SyscallError.SegFault);
 
-    vm.gas.consume(2000) catch return SyscallError.OutOfGas;
+    vm.budget.consume(2000) catch return SyscallError.OutOfBudget;
 
     if (env.roleGrantFn) |f| f(addr, role, acc);
 }
@@ -1450,7 +1450,7 @@ fn roleRevoke(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var acc: [32]u8 = undefined;
     @memcpy(&acc, vm.memory.getSlice(accPtr, 32) catch return SyscallError.SegFault);
 
-    vm.gas.consume(2000) catch return SyscallError.OutOfGas;
+    vm.budget.consume(2000) catch return SyscallError.OutOfBudget;
 
     if (env.roleRevokeFn) |f| f(addr, role, acc);
 }
@@ -1466,7 +1466,7 @@ fn resourceLock(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var id: [32]u8 = undefined;
     @memcpy(&id, vm.memory.getSlice(id_ptr, 32) catch return SyscallError.SegFault);
 
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     const locked = if (env.resourceLockFn) |f| f(addr, id) else true;
     vm.regs[10] = if (locked) 1 else 0;
@@ -1480,8 +1480,8 @@ fn handleBlake3(vm: *ForgeVM, _: *HostEnv) SyscallError!void {
     const outPtr = vm.regs[13]; // a3
 
     const word_count = (dataLen + 7) / 8;
-    const gasCost = gasTable.SyscallGas.HASH_BLAKE3_BASE + (word_count * gasTable.SyscallGas.HASH_BLAKE3_PER_WORD);
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    const budgetCost = budgetTable.SyscallBudget.HASH_BLAKE3_BASE + (word_count * budgetTable.SyscallBudget.HASH_BLAKE3_PER_WORD);
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     const data = vm.memory.getSlice(dataPtr, dataLen) catch return SyscallError.SegFault;
     var out: [32]u8 = undefined;
@@ -1500,8 +1500,8 @@ fn handleSha256(vm: *ForgeVM, _: *HostEnv) SyscallError!void {
     const outPtr = vm.regs[13]; // a3
 
     const word_count = (dataLen + 31) / 32;
-    const gasCost = gasTable.SyscallGas.HASH_SHA256_BASE + (word_count * gasTable.SyscallGas.HASH_SHA256_PER_WORD);
-    vm.gas.consume(gasCost) catch return SyscallError.OutOfGas;
+    const budgetCost = budgetTable.SyscallBudget.HASH_SHA256_BASE + (word_count * budgetTable.SyscallBudget.HASH_SHA256_PER_WORD);
+    vm.budget.consume(budgetCost) catch return SyscallError.OutOfBudget;
 
     const data = vm.memory.getSlice(dataPtr, dataLen) catch return SyscallError.SegFault;
     var out: [32]u8 = undefined;
@@ -1519,7 +1519,7 @@ fn handleAssetTransfer(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const toPtr = vm.regs[13];
     const amountPtr = vm.regs[14];
 
-    vm.gas.consume(gasTable.SyscallGas.ASSET_TRANSFER) catch return SyscallError.OutOfGas;
+    vm.budget.consume(budgetTable.SyscallBudget.ASSET_TRANSFER) catch return SyscallError.OutOfBudget;
 
     var assetId: [32]u8 = undefined;
     @memcpy(&assetId, vm.memory.getSlice(assetIdPtr, 32) catch return SyscallError.SegFault);
@@ -1549,8 +1549,8 @@ fn handleParallelHint(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     const keysPtr = vm.regs[11];
     const keysLen = vm.regs[12]; // Number of 32-byte keys
 
-    // Extremely cheap gas to encourage parallel hinting
-    vm.gas.consume(10 + keysLen * 2) catch return SyscallError.OutOfGas;
+    // Extremely cheap budget to encourage parallel hinting
+    vm.budget.consume(10 + keysLen * 2) catch return SyscallError.OutOfBudget;
 
     // In actual implementation, this sets rw-sets ahead of time
     // to allow scheduler optimization
@@ -1570,7 +1570,7 @@ fn resourceUnlock(vm: *ForgeVM, env: *HostEnv) SyscallError!void {
     var id: [32]u8 = undefined;
     @memcpy(&id, vm.memory.getSlice(id_ptr, 32) catch return SyscallError.SegFault);
 
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     if (env.resourceUnlockFn) |f| f(addr, id);
 }
@@ -1581,7 +1581,7 @@ fn debugLog(vm: *ForgeVM, _: *HostEnv) SyscallError!void {
     const dataPtr = vm.regs[11]; // a1
     const dataLen = vm.regs[12]; // a2
 
-    vm.gas.consume(100) catch return SyscallError.OutOfGas;
+    vm.budget.consume(100) catch return SyscallError.OutOfBudget;
 
     const slice = vm.memory.getSlice(dataPtr, dataLen) catch return SyscallError.SegFault;
     std.debug.print("[VM DEBUG] {s}\n", .{slice});

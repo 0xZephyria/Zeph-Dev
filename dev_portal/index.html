@@ -645,8 +645,8 @@
                     
                     <div class="flex-row">
                         <div class="form-group">
-                            <label>Gas Limit</label>
-                            <input type="number" id="packGas" value="3000000">
+                            <label>budget Limit</label>
+                            <input type="number" id="packbudget" value="3000000">
                         </div>
                         <div class="form-group">
                             <label>Value (ZEPH)</label>
@@ -671,8 +671,8 @@
 
                     <div class="flex-row">
                         <div class="form-group">
-                            <label>Gas Limit</label>
-                            <input type="number" id="customGas" value="5000000">
+                            <label>budget Limit</label>
+                            <input type="number" id="custombudget" value="5000000">
                         </div>
                         <div class="form-group">
                             <label>Value (ZEPH)</label>
@@ -714,8 +714,8 @@
                         <input type="number" id="sandboxValue" value="0" step="any">
                     </div>
                     <div class="form-group">
-                        <label>Gas Limit</label>
-                        <input type="number" id="sandboxGas" value="3000000">
+                        <label>budget Limit</label>
+                        <input type="number" id="sandboxbudget" value="3000000">
                     </div>
                 </div>
 
@@ -1013,7 +1013,7 @@
                 return;
             }
             
-            const gas = parseInt(document.getElementById("packGas").value);
+            const budget = parseInt(document.getElementById("packbudget").value);
             const valZeph = parseFloat(document.getElementById("packValue").value);
             const valWeiHex = toWeiHex(valZeph);
 
@@ -1024,7 +1024,7 @@
                 const txHash = await sendRpc("eth_sendTransaction", [{
                     from: legacyDevAddress,
                     to: "",
-                    gas: "0x" + gas.toString(16),
+                    budget: "0x" + budget.toString(16),
                     value: valWeiHex,
                     data: EMBEDDED_ELF_HEX.startsWith("0x") ? EMBEDDED_ELF_HEX : "0x" + EMBEDDED_ELF_HEX
                 }]);
@@ -1044,7 +1044,7 @@
         async function deployCustomContract() {
             if (!isNodeOnline || !customElfHex) return;
             
-            const gas = parseInt(document.getElementById("customGas").value);
+            const budget = parseInt(document.getElementById("custombudget").value);
             const valZeph = parseFloat(document.getElementById("customValue").value);
             const valWeiHex = toWeiHex(valZeph);
 
@@ -1054,7 +1054,7 @@
                 const txHash = await sendRpc("eth_sendTransaction", [{
                     from: legacyDevAddress,
                     to: "",
-                    gas: "0x" + gas.toString(16),
+                    budget: "0x" + budget.toString(16),
                     value: valWeiHex,
                     data: customElfHex
                 }]);
@@ -1085,7 +1085,7 @@
                         const contractAddr = receipt.contractAddress;
                         
                         if (status === 1) {
-                            logMsg(`Transaction MINED SUCCESSFULLY. Gas Used: ${parseInt(receipt.gasUsed, 16)}`, "success");
+                            logMsg(`Transaction MINED SUCCESSFULLY. budget Used: ${parseInt(receipt.budgetUsed, 16)}`, "success");
                             if (contractAddr) {
                                 logMsg(`CONTRACT DEPLOYED AT: ${contractAddr}`, "success");
                                 sandboxContractAddr.value = contractAddr;
@@ -1115,7 +1115,7 @@
             const target = document.getElementById("sandboxContractAddr").value.trim();
             let data = document.getElementById("sandboxCalldata").value.trim();
             const valZeph = parseFloat(document.getElementById("sandboxValue").value);
-            const gas = parseInt(document.getElementById("sandboxGas").value);
+            const budget = parseInt(document.getElementById("sandboxbudget").value);
 
             if (!target.startsWith("0x") || target.length < 40) {
                 logMsg("Invalid target contract address.", "error");
@@ -1149,7 +1149,7 @@
                         from: legacyDevAddress,
                         to: target,
                         data: data,
-                        gas: "0x" + gas.toString(16),
+                        budget: "0x" + budget.toString(16),
                         value: valWeiHex
                     }]);
 

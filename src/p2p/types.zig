@@ -59,12 +59,11 @@ pub const MsgEpochTransition: u64 = 0x25;
 
 pub const MAX_CONNECTIONS: u32 = 512;
 pub const COMMITTEE_SIZE: u32 = 256;
-pub const AGGREGATION_SUBNETS: u32 = 16;
-pub const GOSSIP_SUBNETS: u32 = 64;
-pub const SUBNETS_PER_VALIDATOR: u32 = 2;
+pub const GOSSIP_SUBNETS: u32 = 128; // One subnet per thread (matches consensus.MAX_THREADS)
+pub const SUBNETS_PER_VALIDATOR: u32 = 1; // Each validator subscribes to their thread's subnet
 pub const PEERS_PER_SUBNET: u32 = 8;
 pub const TURBINE_FANOUT: u32 = 32;
-pub const MAX_SHRED_SIZE: u32 = 1232; // IPv6 MTU - headers
+pub const MAX_SHRED_SIZE: u32 = 262144; // IPv4 Max UDP payload - headers
 pub const EPOCH_BLOCKS: u64 = 2048;
 pub const SLOT_DURATION_MS: u64 = 1000;
 pub const VIEW_CHANGE_TIMEOUT_MS: u64 = 4000;
@@ -78,7 +77,7 @@ pub const MAX_BATCH_SIZE: u32 = 4096;
 
 // ── Subnet & Committee Types ────────────────────────────────────────────
 
-pub const SubnetID = u8; // 0..63 for gossip subnets, 0..15 for aggregation subnets
+pub const SubnetID = u8; // 0..127 for thread-topology subnets
 
 pub const PeerRole = enum(u8) {
     Validator = 0,
@@ -100,7 +99,7 @@ pub const CommitteeAssignment = struct {
     slotEnd: u64,
     committeeIndex: u32,
     role: CommitteeRole,
-    aggregationSubnet: SubnetID,
+    threadId: u8,
 };
 
 // ── Rate Limiting ───────────────────────────────────────────────────────
@@ -128,7 +127,7 @@ pub const StatusMsg = struct {
     challenge: [32]u8,
     peerRole: PeerRole,
     stakeAmount: u64,
-    subscribedSubnets: [8]u8, // Bitmap: 64 subnets packed into 8 bytes
+    subscribedSubnets: [16]u8, // Bitmap: 128 subnets packed into 16 bytes
 };
 
 pub const NewBlockMsg = struct {
@@ -156,7 +155,7 @@ pub const TxBatchMsg = struct {
 };
 
 pub const VoteMsg = struct {
-    blockHash: core.types.Hash,
+    blockId: core.types.Hash,
     blockNumber: u64,
     view: u64,
     signature: [96]u8,
@@ -199,7 +198,7 @@ pub const NodeInfo = struct {
     ipLen: u8,
     port: u16,
     peerRole: PeerRole,
-    subnets: [8]u8,
+    subnets: [16]u8,
 };
 
 pub const GetNodeDataMsg = struct {
@@ -230,15 +229,17 @@ pub const ShredType = enum(u8) {
 };
 
 pub const ShredMsg = struct {
+    /// Canonical block id — allows receiver to authenticate which block this shred belongs to
+    blockId: core.types.Hash,
     blockNumber: u64,
     shredIndex: u32,
     totalDataShreds: u32,
     totalParityShreds: u32,
     shredType: ShredType,
     payload: []const u8,
-    producerSignature: [64]u8,
-    treeLayer: u8,
-    treeIndex: u16,
+    /// Block-level BLS signature — same on every shred for a given block.
+    /// Verified after block reconstruction by consensus verify().
+    producerSignature: [96]u8,
     /// Thread ID (Loom Genesis: which thread this shred belongs to)
     threadId: u8,
 };
@@ -317,25 +318,25 @@ pub const SubnetSubscribeMsg = struct {
 
 // ── Utility Functions ───────────────────────────────────────────────────
 
-/// Check if a subnet bit is set in a 64-subnet bitmap (8 bytes)
-pub fn isSubnetSubscribed(bitmap: [8]u8, subnet: SubnetID) bool {
-    if (subnet >= 64) return false;
+/// Check if a subnet bit is set in a 128-subnet bitmap (16 bytes)
+pub fn isSubnetSubscribed(bitmap: [16]u8, subnet: SubnetID) bool {
+    if (subnet >= 128) return false;
     const byte_idx = subnet / 8;
     const bit_idx: u3 = @intCast(subnet % 8);
     return (bitmap[byte_idx] & (@as(u8, 1) << bit_idx)) != 0;
 }
 
-/// Set a subnet bit in a 64-subnet bitmap
-pub fn setSubnetBit(bitmap: *[8]u8, subnet: SubnetID) void {
-    if (subnet >= 64) return;
+/// Set a subnet bit in a 128-subnet bitmap
+pub fn setSubnetBit(bitmap: *[16]u8, subnet: SubnetID) void {
+    if (subnet >= 128) return;
     const byte_idx = subnet / 8;
     const bit_idx: u3 = @intCast(subnet % 8);
     bitmap[byte_idx] |= (@as(u8, 1) << bit_idx);
 }
 
-/// Clear a subnet bit in a 64-subnet bitmap
-pub fn clearSubnetBit(bitmap: *[8]u8, subnet: SubnetID) void {
-    if (subnet >= 64) return;
+/// Clear a subnet bit in a 128-subnet bitmap
+pub fn clearSubnetBit(bitmap: *[16]u8, subnet: SubnetID) void {
+    if (subnet >= 128) return;
     const byte_idx = subnet / 8;
     const bit_idx: u3 = @intCast(subnet % 8);
     bitmap[byte_idx] &= ~(@as(u8, 1) << bit_idx);

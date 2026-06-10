@@ -5,7 +5,7 @@
 // Usage:
 //   const vm_mod = @import("vm");
 //   var host = vm_mod.HostEnv.init(allocator);
-//   var vm = try vm_mod.ForgeVM.create(bytecode, calldata, gas_limit, &host);
+//   var vm = try vm_mod.ForgeVM.create(bytecode, calldata, budget_limit, &host);
 //   const result = vm.run();
 
 const std = @import("std");
@@ -14,8 +14,8 @@ pub const executor = @import("core/executor.zig");
 pub const threaded_executor = @import("core/threaded_executor.zig");
 pub const basicBlock = @import("core/basic_block.zig");
 pub const sandbox = @import("memory/sandbox.zig");
-pub const gasMeter = @import("gas/meter.zig");
-pub const gasTable = @import("gas/table.zig");
+pub const budgetMeter = @import("budget/meter.zig");
+pub const budgetTable = @import("budget/table.zig");
 pub const syscallDispatch = @import("syscall/dispatch.zig");
 pub const forgeLoader = @import("loader/forge_loader.zig");
 pub const forgeFormat = @import("loader/forge_format.zig");
@@ -29,7 +29,7 @@ pub const Instruction = decoder.Instruction;
 pub const DecodeError = decoder.DecodeError;
 pub const SandboxMemory = sandbox.SandboxMemory;
 pub const MemoryError = sandbox.MemoryError;
-pub const GasMeter = gasMeter.GasMeter;
+pub const BudgetMeter = budgetMeter.BudgetMeter;
 pub const ExecutionStatus = executor.ExecutionStatus;
 pub const ExecutionResult = executor.ExecutionResult;
 pub const HostEnv = syscallDispatch.HostEnv;
@@ -52,7 +52,7 @@ pub const ForgeVM = struct {
         allocator: std.mem.Allocator,
         bytecode: []const u8,
         calldata: []const u8,
-        gas_limit: u64,
+        budget_limit: u64,
         host: *HostEnv,
     ) !ForgeVM {
         // Allocate and initialize sandboxed memory
@@ -74,7 +74,7 @@ pub const ForgeVM = struct {
         const core = CoreVM.init(
             &memory,
             @intCast(bytecode.len),
-            gas_limit,
+            budget_limit,
             handler,
         );
 
@@ -99,7 +99,7 @@ pub const ForgeVM = struct {
     }
 
     /// Execute the contract using the threaded interpreter with pre-decoded
-    /// instructions and per-basic-block gas accounting.
+    /// instructions and per-basic-block budget accounting.
     /// This is the high-performance path — 2-3x faster than the switch-based run().
     pub fn runThreaded(self: *ForgeVM, allocator: std.mem.Allocator) !ExecutionResult {
         self.core.memory = &self.memory;
@@ -153,14 +153,14 @@ pub const ForgeVM = struct {
         );
     }
 
-    /// Get gas used.
-    pub fn gasUsed(self: *const ForgeVM) u64 {
-        return self.core.gas.used;
+    /// Get budget used.
+    pub fn budgetUsed(self: *const ForgeVM) u64 {
+        return self.core.budget.consumed;
     }
 
-    /// Get remaining gas.
-    pub fn gasRemaining(self: *const ForgeVM) u64 {
-        return self.core.gas.remaining();
+    /// Get remaining budget.
+    pub fn budgetRemaining(self: *const ForgeVM) u64 {
+        return self.core.budget.remaining();
     }
 
     /// Get accumulated logs.
@@ -204,7 +204,7 @@ test "ForgeVM: simple ADDI program" {
     try testing.expectEqual(@as(u32, 42), vm.getReg(1));
 }
 
-test "ForgeVM: gas tracking" {
+test "ForgeVM: budget tracking" {
     var host = HostEnv.init(testing.allocator);
     defer host.deinit();
 
@@ -227,7 +227,7 @@ test "ForgeVM: gas tracking" {
 
     const result = vm.run();
     try testing.expectEqual(ExecutionStatus.breakpoint, result.status);
-    try testing.expect(result.gasUsed > 0);
+    try testing.expect(result.budgetUsed > 0);
     try testing.expectEqual(@as(u32, 3), vm.getReg(1));
 }
 

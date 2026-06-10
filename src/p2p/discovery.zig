@@ -16,6 +16,7 @@ const Allocator = std.mem.Allocator;
 const core = @import("core");
 const types = @import("types.zig");
 const log = core.logger;
+const secureZero = @import("utils").secureZero;
 
 // ── Kademlia Constants ──────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ pub const Node = struct {
     pingFailures: u8,
     peerRole: types.PeerRole,
     validatorAddress: core.types.Address,
-    subscribedSubnets: [8]u8,
+    subscribedSubnets: [16]u8,
     stakeAmount: u64,
 
     pub fn distance(self: *const Node, other_hash: NodeHash) NodeHash {
@@ -64,12 +65,12 @@ pub const Node = struct {
 pub const ZnrRecord = struct {
     seq: u64,
     id: [4]u8, // "znr1"
-    pubkey: [33]u8, // Compressed secp256k1 public key
+    pubkey: [33]u8, // Compressed Ed25519 public key
     ip4: [4]u8,
     udpPort: u16,
     tcpPort: u16,
     validatorAddr: core.types.Address,
-    subnets: [8]u8,
+    subnets: [16]u8,
     stake: u64,
 
     pub fn init(pubkey: [33]u8, ip4: [4]u8, udpPort: u16) ZnrRecord {
@@ -81,14 +82,14 @@ pub const ZnrRecord = struct {
             .udpPort = udpPort,
             .tcpPort = 0,
             .validatorAddr = core.types.Address.zero(),
-            .subnets = [_]u8{0} ** 8,
+            .subnets = [_]u8{0} ** 16,
             .stake = 0,
         };
     }
 
     /// Serialize ZNR to bytes for transmission
     pub fn serialize(self: *const ZnrRecord, buf: []u8) usize {
-        if (buf.len < 101) return 0;
+        if (buf.len < 109) return 0;
         @memcpy(buf[0..4], &self.id);
         std.mem.writeInt(u64, buf[4..12], self.seq, .big);
         @memcpy(buf[12..45], &self.pubkey);
@@ -96,14 +97,14 @@ pub const ZnrRecord = struct {
         std.mem.writeInt(u16, buf[49..51], self.udpPort, .big);
         std.mem.writeInt(u16, buf[51..53], self.tcpPort, .big);
         @memcpy(buf[53..85], &self.validatorAddr.bytes);
-        @memcpy(buf[85..93], &self.subnets);
-        std.mem.writeInt(u64, buf[93..101], self.stake, .big);
-        return 101;
+        @memcpy(buf[85..101], &self.subnets);
+        std.mem.writeInt(u64, buf[101..109], self.stake, .big);
+        return 109;
     }
 
     /// Deserialize ZNR from bytes
     pub fn deserialize(data: []const u8) ?ZnrRecord {
-        if (data.len < 101) return null;
+        if (data.len < 109) return null;
         var znr: ZnrRecord = undefined;
         @memcpy(&znr.id, data[0..4]);
         znr.seq = std.mem.readInt(u64, data[4..12], .big);
@@ -112,18 +113,18 @@ pub const ZnrRecord = struct {
         znr.udpPort = std.mem.readInt(u16, data[49..51], .big);
         znr.tcpPort = std.mem.readInt(u16, data[51..53], .big);
         @memcpy(&znr.validatorAddr.bytes, data[53..85]);
-        @memcpy(&znr.subnets, data[85..93]);
-        znr.stake = std.mem.readInt(u64, data[93..101], .big);
+        @memcpy(&znr.subnets, data[85..101]);
+        znr.stake = std.mem.readInt(u64, data[101..109], .big);
         return znr;
     }
 
     /// Format ZnrRecord as a copy-pastable base64 string prefixed with "znr:"
     pub fn toConnectionString(self: *const ZnrRecord, buf: []u8) ![]const u8 {
-        var temp_bin: [101]u8 = undefined;
+        var temp_bin: [109]u8 = undefined;
         _ = self.serialize(&temp_bin);
 
         const prefix = "znr:";
-        if (buf.len < prefix.len + std.base64.standard_no_pad.Encoder.calcSize(101)) {
+        if (buf.len < prefix.len + std.base64.standard_no_pad.Encoder.calcSize(109)) {
             return error.BufferTooSmall;
         }
 
@@ -139,9 +140,9 @@ pub const ZnrRecord = struct {
         if (!std.mem.startsWith(u8, str, prefix)) return error.InvalidFormat;
 
         const b64_str = str[prefix.len..];
-        var temp_bin: [101]u8 = undefined;
+        var temp_bin: [109]u8 = undefined;
         const decoded_len = try std.base64.standard_no_pad.Decoder.calcSizeForSlice(b64_str);
-        if (decoded_len != 101) return error.InvalidFormat;
+        if (decoded_len != 109) return error.InvalidFormat;
 
         try std.base64.standard_no_pad.Decoder.decode(&temp_bin, b64_str);
         return deserialize(&temp_bin) orelse error.InvalidFormat;
@@ -324,7 +325,7 @@ pub const DiscoveryService = struct {
                 .pingFailures = 0,
                 .peerRole = .Validator,
                 .validatorAddress = core.types.Address.zero(),
-                .subscribedSubnets = [_]u8{0} ** 8,
+                .subscribedSubnets = [_]u8{0} ** 16,
                 .stakeAmount = 0,
             },
             .localZnr = znr,
@@ -592,7 +593,4 @@ fn compareDist(a: NodeHash, b: NodeHash) std.math.Order {
     return std.mem.order(u8, &a, &b);
 }
 
-fn secureZero(buf: []u8) void {
-    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
-    for (0..buf.len) |i| ptr[i] = 0;
-}
+

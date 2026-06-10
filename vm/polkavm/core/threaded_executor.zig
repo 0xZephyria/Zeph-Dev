@@ -2,15 +2,15 @@
 // Threaded Interpreter for ForgeVM — High-Performance Execution Engine.
 //
 // Replaces the switch-based dispatch in executor.zig with a direct-threaded
-// interpreter using a pre-decoded instruction cache and per-basic-block gas
+// interpreter using a pre-decoded instruction cache and per-basic-block budget
 // accounting. This eliminates three sources of overhead:
 //
 //   1. Instruction decode overhead: instructions are decoded ONCE at load time
 //      and cached in a parallel DecodedInsn array.
 //   2. Branch prediction misses: instead of a central switch(opcode), each handler
 //      chains directly to the next via the instruction stream.
-//   3. Gas accounting overhead: gas is checked once per basic block instead of
-//      per instruction, reducing gas checks from ~1/insn to ~1/6 insns.
+//   3. budget accounting overhead: budget is checked once per basic block instead of
+//      per instruction, reducing budget checks from ~1/insn to ~1/6 insns.
 //
 // Combined speedup: 2-3x over the original switch-based executor.
 //
@@ -20,14 +20,14 @@
 const std = @import("std");
 const decoder = @import("decoder.zig");
 const sandbox = @import("../memory/sandbox.zig");
-const gas_meter = @import("../gas/meter.zig");
-const gas_table = @import("../gas/table.zig");
+const budget_meter = @import("../budget/meter.zig");
+const budget_table = @import("../budget/table.zig");
 const basic_block = @import("basic_block.zig");
 const executor = @import("executor.zig");
 
 const ForgeVM = executor.ForgeVM;
 const SandboxMemory = sandbox.SandboxMemory;
-const GasMeter = gas_meter.GasMeter;
+const budgetMeter = budget_meter.budgetMeter;
 const Instruction = decoder.Instruction;
 const ExecutionStatus = executor.ExecutionStatus;
 const ExecutionResult = executor.ExecutionResult;
@@ -36,15 +36,15 @@ const ExecutionResult = executor.ExecutionResult;
 // Pre-decoded instruction representation
 // ---------------------------------------------------------------------------
 
-/// A pre-decoded instruction with its gas cost and opcode stored alongside.
-/// This eliminates decode + gas lookup from the hot execution loop.
+/// A pre-decoded instruction with its budget cost and opcode stored alongside.
+/// This eliminates decode + budget lookup from the hot execution loop.
 pub const DecodedInsn = struct {
     /// The fully decoded instruction union
     insn: Instruction,
     /// Original opcode (for I-type/U-type disambiguation that uses re-fetch)
     opcode: u7,
-    /// Pre-computed gas cost for this instruction
-    gasCost: u64,
+    /// Pre-computed budget cost for this instruction
+    budgetCost: u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -72,22 +72,22 @@ pub fn preDecodeProgram(allocator: std.mem.Allocator, code: []const u8, codeLen:
             insns[i] = .{
                 .insn = .{ .system = .ebreak },
                 .opcode = 0,
-                .gasCost = 0,
+                .budgetCost = 0,
             };
             continue;
         };
 
-        // Compute gas cost
-        var gasCost = gas_table.OPCODE_GAS_TABLE[opcode];
+        // Compute budget cost
+        var budgetCost = budget_table.OPCODE_budget_TABLE[opcode];
         if (insn == .rType and insn.rType.funct7 == decoder.Funct7.MULDIV) {
-            const extra = gas_table.instructionCost(insn) -| gas_table.InstructionGas.ALU;
-            gasCost += extra;
+            const extra = budget_table.instructionCost(insn) -| budget_table.Instructionbudget.ALU;
+            budgetCost += extra;
         }
 
         insns[i] = .{
             .insn = insn,
             .opcode = opcode,
-            .gasCost = gasCost,
+            .budgetCost = budgetCost,
         };
     }
 
@@ -99,12 +99,12 @@ pub fn preDecodeProgram(allocator: std.mem.Allocator, code: []const u8, codeLen:
 // ---------------------------------------------------------------------------
 
 /// Execute a program using the threaded interpreter with pre-decoded instructions
-/// and per-basic-block gas accounting.
+/// and per-basic-block budget accounting.
 ///
 /// This is the high-performance execution path. It:
-///   1. Pre-charges gas for the entire basic block at block entry
-///   2. Dispatches each instruction without decode or gas overhead
-///   3. Only returns to gas checking at block boundaries
+///   1. Pre-charges budget for the entire basic block at block entry
+///   2. Dispatches each instruction without decode or budget overhead
+///   3. Only returns to budget checking at block boundaries
 pub fn executeThreaded(
     vm: *ForgeVM,
     decoded: []const DecodedInsn,
@@ -119,9 +119,9 @@ pub fn executeThreaded(
             break;
         }
 
-        // ---- Basic block gas pre-check ----
+        // ---- Basic block budget pre-check ----
         // If we have analysis data and we're at a block boundary, pre-charge
-        // the entire block's gas cost in one shot.
+        // the entire block's budget cost in one shot.
         if (analysis) |a| {
             const block_idx = a.getBlockForPC(vm.pc);
             if (block_idx) |bi| {
@@ -129,11 +129,11 @@ pub fn executeThreaded(
                     const block = a.blocks[bi];
                     // Only pre-charge if we're at the start of the block
                     if (vm.pc == block.start_pc) {
-                        vm.gas.consume(block.total_gas) catch {
-                            vm.status = .outOfGas;
+                        vm.budget.consume(block.total_budget) catch {
+                            vm.status = .outOfbudget;
                             break;
                         };
-                        // Execute the entire block without per-instruction gas checks
+                        // Execute the entire block without per-instruction budget checks
                         executeBlock(vm, decoded, block);
                         if (vm.status != .running) break;
                         continue;
@@ -153,9 +153,9 @@ pub fn executeThreaded(
 
         const di = decoded[insn_idx];
 
-        // Per-instruction gas (only when not using block-level gas)
-        vm.gas.consume(di.gasCost) catch {
-            vm.status = .outOfGas;
+        // Per-instruction budget (only when not using block-level budget)
+        vm.budget.consume(di.budgetCost) catch {
+            vm.status = .outOfbudget;
             break;
         };
 
@@ -173,7 +173,7 @@ pub fn executeThreaded(
 }
 
 /// Execute all instructions within a single basic block.
-/// Gas has already been pre-charged for the entire block.
+/// budget has already been pre-charged for the entire block.
 fn executeBlock(
     vm: *ForgeVM,
     decoded: []const DecodedInsn,
@@ -592,7 +592,7 @@ inline fn execSystem(vm: *ForgeVM, sys: decoder.SystemOp) void {
                         error.ReturnData => vm.status = .returned,
                         error.Revert => vm.status = .reverted,
                         error.SelfDestruct => vm.status = .selfDestruct,
-                        error.OutOfGas => vm.status = .outOfGas,
+                        error.OutOfbudget => vm.status = .outOfbudget,
                         error.UnknownSyscall => {
                             vm.status = .fault;
                             vm.faultReason = "Unknown syscall";
@@ -643,7 +643,7 @@ fn encodeI(rd: u5, rs1: u5, funct3: u3, imm: i12, opcode: u7) u32 {
 }
 
 /// Create a test VM with pre-decoded instructions
-fn createThreadedTestVM(code: []const u32, gas: u64) !struct {
+fn createThreadedTestVM(code: []const u32, budget: u64) !struct {
     vm: ForgeVM,
     mem: SandboxMemory,
     decoded: []DecodedInsn,
@@ -664,7 +664,7 @@ fn createThreadedTestVM(code: []const u32, gas: u64) !struct {
     try mem.loadCode(code_bytes);
     const codeLen: u32 = @intCast(code_bytes.len);
     const decoded = try preDecodeProgram(testing.allocator, mem.backing[0..codeLen], codeLen);
-    const vm = ForgeVM.init(&mem, codeLen, gas, null);
+    const vm = ForgeVM.init(&mem, codeLen, budget, null);
     return .{ .vm = vm, .mem = mem, .decoded = decoded };
 }
 
@@ -725,7 +725,7 @@ test "threaded: x0 always zero" {
     try testing.expectEqual(@as(u64, 0), ctx.vm.regs[0]);
 }
 
-test "threaded: gas tracking" {
+test "threaded: budget tracking" {
     const code = [_]u32{
         0x00100093, // ADDI x1, x0, 1
         0x00108093, // ADDI x1, x1, 1
@@ -737,21 +737,21 @@ test "threaded: gas tracking" {
     defer ctx.deinit();
     const result = executeThreaded(&ctx.vm, ctx.decoded, null);
     try testing.expectEqual(ExecutionStatus.breakpoint, result.status);
-    try testing.expect(result.gasUsed > 0);
+    try testing.expect(result.budgetUsed > 0);
     try testing.expectEqual(@as(u64, 3), ctx.vm.regs[1]);
 }
 
-test "threaded: out of gas" {
+test "threaded: out of budget" {
     const code = [_]u32{
         0x00100093, // ADDI x1, x0, 1
         0x00108093, // ADDI x1, x1, 1
         0x00108093, // ADDI x1, x1, 1
     };
-    var ctx = try createThreadedTestVM(&code, 2); // Only 2 gas for 3 instructions
+    var ctx = try createThreadedTestVM(&code, 2); // Only 2 budget for 3 instructions
     ctx.fixMemPtr();
     defer ctx.deinit();
     const result = executeThreaded(&ctx.vm, ctx.decoded, null);
-    try testing.expectEqual(ExecutionStatus.outOfGas, result.status);
+    try testing.expectEqual(ExecutionStatus.outOfbudget, result.status);
 }
 
 test "threaded: with basic block analysis" {

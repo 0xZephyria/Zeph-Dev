@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("core");
 const blst_mod = core.crypto.blst;
 const c = blst_mod.c;
+const secureZero = @import("utils").secureZero;
 
 const VRF_DST = "ZEPHYRIA_VRF_DST_V01";
 
@@ -166,7 +167,4 @@ pub const VRF = struct {
     }
 };
 
-fn secureZero(buf: []u8) void {
-    const ptr = @as([*]volatile u8, @ptrCast(buf.ptr));
-    for (0..buf.len) |i| ptr[i] = 0;
-}
+

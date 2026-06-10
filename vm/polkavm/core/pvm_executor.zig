@@ -19,8 +19,8 @@ pub const PvmExecutor = struct {
     // ---- VM State ----
     memory: *sandbox.SandboxMemory,
     program: *const pvmLoader.PvmProgram,
-    gas_remaining: u64,
-    gas_used: u64 = 0,
+    budget_remaining: u64,
+    budget_used: u64 = 0,
     status: executor.ExecutionStatus = .running,
     syscall_handler: ?executor.SyscallFn = null,
     host_ctx: ?*anyopaque = null,
@@ -35,7 +35,7 @@ pub const PvmExecutor = struct {
     pub fn init(
         memory: *sandbox.SandboxMemory,
         program: *const pvmLoader.PvmProgram,
-        gas_limit: u64,
+        budget_limit: u64,
         syscall_handler: ?executor.SyscallFn,
         host_ctx: ?*anyopaque,
         calldata_len: u32,
@@ -43,7 +43,7 @@ pub const PvmExecutor = struct {
         var exec = PvmExecutor{
             .memory = memory,
             .program = program,
-            .gas_remaining = gas_limit,
+            .budget_remaining = budget_limit,
             .syscall_handler = syscall_handler,
             .host_ctx = host_ctx,
             .calldata_len = calldata_len,
@@ -72,8 +72,8 @@ pub const PvmExecutor = struct {
         }
         return .{
             .status = self.status,
-            .gasUsed = self.gas_used,
-            .gasRemaining = self.gas_remaining,
+            .budgetUsed = self.budget_used,
+            .budgetRemaining = self.budget_remaining,
             .returnDataOffset = self.return_data_offset,
             .returnDataLen = self.return_data_len,
             .faultPc = self.fault_pc,
@@ -182,15 +182,15 @@ pub const PvmExecutor = struct {
         self.regs[reg] = val;
     }
 
-    fn consumeGas(self: *PvmExecutor, gas: u64) !void {
-        if (self.gas_remaining < gas) {
-            self.gas_used += self.gas_remaining;
-            self.gas_remaining = 0;
-            self.status = .outOfGas;
-            return error.OutOfGas;
+    fn consumebudget(self: *PvmExecutor, budget: u64) !void {
+        if (self.budget_remaining < budget) {
+            self.budget_used += self.budget_remaining;
+            self.budget_remaining = 0;
+            self.status = .outOfbudget;
+            return error.OutOfbudget;
         }
-        self.gas_remaining -= gas;
-        self.gas_used += gas;
+        self.budget_remaining -= budget;
+        self.budget_used += budget;
     }
 
     fn findNextPc(self: *const PvmExecutor, current_pc: u32) u32 {
@@ -227,7 +227,7 @@ pub const PvmExecutor = struct {
             std.debug.print("PVM STEP: pc=0x{x:0>4}, opcode={}, skip={}, args={any}\n", .{ self.pc, opcode, skip, args });
         }
 
-        self.consumeGas(5) catch return;
+        self.consumebudget(5) catch return;
 
         self.pc_updated = false;
         self.dispatch(opcode, args, skip);
@@ -1210,7 +1210,7 @@ pub const PvmExecutor = struct {
                 .pc = self.pc,
                 .pcUpdated = false,
                 .memory = self.memory,
-                .gas = executor.GasMeter.init(self.gas_remaining),
+                .budget = executor.budgetMeter.init(self.budget_remaining),
                 .codeLen = @intCast(self.program.code.len),
                 .calldataLen = self.calldata_len,
                 .status = .running,
@@ -1235,9 +1235,9 @@ pub const PvmExecutor = struct {
             riscv_vm.regs[16] = self.get64(12); // A5
 
             handler(&riscv_vm) catch |err| {
-                // Sync gas back
-                self.gas_remaining = riscv_vm.gas.remaining();
-                self.gas_used = riscv_vm.gas.limit - self.gas_remaining;
+                // Sync budget back
+                self.budget_remaining = riscv_vm.budget.remaining();
+                self.budget_used = riscv_vm.budget.limit - self.budget_remaining;
                 
                 // Copy return data offsets
                 self.return_data_offset = riscv_vm.returnDataOffset;
@@ -1252,9 +1252,9 @@ pub const PvmExecutor = struct {
                 }
             };
 
-            // Sync gas back
-            self.gas_remaining = riscv_vm.gas.remaining();
-            self.gas_used = riscv_vm.gas.limit - self.gas_remaining;
+            // Sync budget back
+            self.budget_remaining = riscv_vm.budget.remaining();
+            self.budget_used = riscv_vm.budget.limit - self.budget_remaining;
 
             // Copy return register back to PVM register A0 (7)
             self.set64(7, riscv_vm.regs[10]);
@@ -1399,7 +1399,7 @@ fn mapNameToSyscallId(name: []const u8) ?u32 {
     if (std.mem.eql(u8, name, "seal_caller")) return 0x108;
     if (std.mem.eql(u8, name, "seal_address")) return 0x109;
     if (std.mem.eql(u8, name, "seal_value_transferred")) return 0x10A;
-    if (std.mem.eql(u8, name, "seal_gas_left")) return 0x10B;
+    if (std.mem.eql(u8, name, "seal_budget_left")) return 0x10B;
     if (std.mem.eql(u8, name, "seal_balance")) return 0x10C;
     if (std.mem.eql(u8, name, "seal_hash_keccak_256")) return 0x10D;
     if (std.mem.eql(u8, name, "seal_hash_blake2_256")) return 0x10E;
@@ -1414,7 +1414,7 @@ fn mapNameToSyscallId(name: []const u8) ?u32 {
     if (std.mem.eql(u8, name, "seal_now")) return 0x117;
     if (std.mem.eql(u8, name, "seal_minimum_balance")) return 0x118;
     if (std.mem.eql(u8, name, "seal_weight_to_fee")) return 0x119;
-    if (std.mem.eql(u8, name, "seal_gas_price")) return 0x11A;
+    if (std.mem.eql(u8, name, "seal_budget_price")) return 0x11A;
     if (std.mem.eql(u8, name, "seal_terminate")) return 0x11B;
 
     // revive / modern PolkaVM host functions
@@ -1433,11 +1433,11 @@ fn mapNameToSyscallId(name: []const u8) ?u32 {
     if (std.mem.eql(u8, name, "chain_id")) return 0x20D;
     if (std.mem.eql(u8, name, "code_hash")) return 0x20E;
     if (std.mem.eql(u8, name, "code_size")) return 0x20F;
-    if (std.mem.eql(u8, name, "consume_all_gas")) return 0x210;
+    if (std.mem.eql(u8, name, "consume_all_budget")) return 0x210;
     if (std.mem.eql(u8, name, "delegate_call_evm")) return 0x211;
     if (std.mem.eql(u8, name, "deposit_event")) return 0x212;
-    if (std.mem.eql(u8, name, "gas_limit")) return 0x213;
-    if (std.mem.eql(u8, name, "gas_price")) return 0x214;
+    if (std.mem.eql(u8, name, "budget_limit")) return 0x213;
+    if (std.mem.eql(u8, name, "budget_price")) return 0x214;
     if (std.mem.eql(u8, name, "get_immutable_data")) return 0x215;
     if (std.mem.eql(u8, name, "get_storage_or_zero")) return 0x216;
     if (std.mem.eql(u8, name, "hash_keccak_256")) return 0x217;
