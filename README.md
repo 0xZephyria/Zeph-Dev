@@ -1,5 +1,5 @@
 # Zephyria Network's Performance Metrics After Recursive Optimizations and ZephyrDB (Flat) Architecture.
-![Status](https://img.shields.io/badge/Status-inactive-red.svg)
+![Status](https://img.shields.io/badge/Status-active-success.svg)
 ![License](https://img.shields.io/badge/license-GPLv2-blue.svg)
 ![Zig Version](https://img.shields.io/badge/zig-0.15.2-orange)
 
