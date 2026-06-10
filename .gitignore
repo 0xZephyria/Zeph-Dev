@@ -9,6 +9,7 @@ zig-out/
 # logs
 node.log
 node.pid
+node1.log
 
 # dependencies
 node_modules/
@@ -21,7 +22,7 @@ reports/
 scripts/
 contract/
 temp-polkavm/
-
+contracts/bin/resolc
 
 # fozbin and resolved files
 *.fozbin
