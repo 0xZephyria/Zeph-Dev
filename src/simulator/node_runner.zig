@@ -111,7 +111,7 @@ pub const VirtualNode = struct {
 
         // Block Producer
         self.block_producer = try self.ts_allocator.create(core.block_producer.BlockProducer);
-        self.block_producer.* = core.block_producer.BlockProducer.init(
+        self.block_producer.* = try core.block_producer.BlockProducer.init(
             self.ts_allocator,
             self.chain,
             self.world_state,

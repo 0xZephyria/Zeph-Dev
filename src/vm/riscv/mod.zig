@@ -18,7 +18,7 @@
 //
 // Isolated Accounts & Zero-Conflict Parallel Model:
 //   The VM operates within per-TX Overlay isolation. Each SLOAD/SSTORE goes through
-//   the Overlay → Verkle trie path where:
+//   the Overlay → KV HighperfDB and ZephyrDB path where:
 //     StorageKey = blake3(contract || slot)          — different slots = zero conflict
 //     DerivedKey = blake3(user || contract || slot)   — different users = zero conflict
 //     GlobalKey  = blake3(contract || "global" || slot) — commutative accumulators

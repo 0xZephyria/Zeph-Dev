@@ -47,11 +47,12 @@ pub fn printDashboard(
 
     std.debug.print("◆ NETWORK WORKFLOW & P2P METRICS:\n", .{});
     for (nodes) |n| {
+        const stats = n.p2p_server.getStats();
         std.debug.print("  v{d} - Pkts Rx/Tx: {d}/{d} │ Bytes Rx: {d} KB │ Mempool: {d} TXs\n", .{
             n.node_index,
-            n.p2p_server.stats.packetsReceived,
-            n.p2p_server.stats.packetsSent,
-            n.p2p_server.stats.bytesReceived / 1024,
+            stats.packetsReceived,
+            stats.packetsSent,
+            stats.bytesReceived / 1024,
             n.dag_pool.count(),
         });
     }

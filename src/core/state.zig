@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const accounts = @import("accounts/mod.zig");
 const storage = @import("storage");
+const logger = @import("logger.zig");
 
 /// Zephyria State — coordinator layer.
 ///
@@ -557,7 +558,9 @@ pub const Overlay = struct {
 
     pub fn getBalance(self: *Overlay, addr: types.Address) u256 {
         const key = accounts.common.balanceKey(addr);
-        self.read_set.put(key, {}) catch {};
+        self.read_set.put(key, {}) catch |err| {
+            logger.err("Overlay read_set.put failed for balance key: {}\n", .{err});
+        };
         if (self.dirty.get(key)) |d| {
             return std.mem.readInt(u256, d[0..32], .big);
         }
@@ -587,7 +590,9 @@ pub const Overlay = struct {
 
     pub fn getSequence(self: *Overlay, addr: types.Address) u64 {
         const key = accounts.common.sequenceKey(addr);
-        self.read_set.put(key, {}) catch {};
+        self.read_set.put(key, {}) catch |err| {
+            logger.err("Overlay read_set.put failed for sequence key: {}\n", .{err});
+        };
         if (self.dirty.get(key)) |d| {
             return std.mem.readInt(u64, d[0..8], .big);
         }
@@ -652,7 +657,9 @@ pub const Overlay = struct {
 
     pub fn getStorage(self: *Overlay, addr: types.Address, slot: [32]u8) [32]u8 {
         const key = accounts.storage_cell.storageKey(addr, slot);
-        self.read_set.put(key, {}) catch {};
+        self.read_set.put(key, {}) catch |err| {
+            logger.err("Overlay read_set.put failed for storage key: {}\n", .{err});
+        };
         if (self.dirty.get(key)) |d| {
             var result: [32]u8 = undefined;
             @memcpy(&result, d[0..32]);
@@ -707,7 +714,9 @@ pub const Overlay = struct {
 
     pub fn getGlobalStorage(self: *Overlay, contract: types.Address, slot: [32]u8) [32]u8 {
         const key = accounts.derived.globalStorageKey(contract, slot);
-        self.read_set.put(key, {}) catch {};
+        self.read_set.put(key, {}) catch |err| {
+            logger.err("Overlay read_set.put failed for global storage key: {}\n", .{err});
+        };
         if (self.dirty.get(key)) |d| {
             var result: [32]u8 = undefined;
             @memcpy(&result, d[0..32]);

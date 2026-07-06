@@ -458,9 +458,8 @@ pub const Staking = struct {
     }
 
     /// Compute the consensus tier based on active validator count.
-    /// Convenience wrapper around AdaptiveConsensus.computeTier.
     pub fn computeTier(self: *Self) @import("types.zig").ConsensusTier {
-        return @import("adaptive.zig").AdaptiveConsensus.computeTier(self.validatorCount());
+        return @import("slot.zig").computeTier(self.validatorCount());
     }
 
     /// Get all active validator stakes as a u256 slice (for committee formation).

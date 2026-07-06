@@ -38,9 +38,10 @@ pub fn handleMessage(server: *Server, peer: *Peer, code: u64, payload: []const u
         types.MsgSnowballQuery => try handleSnowballQuery(server, peer, payload),
         types.MsgSnowballResponse => try handleSnowballResponse(server, peer, payload),
         types.MsgEpochTransition => try handleEpochTransition(server, peer, payload),
+        types.MsgThreadTimeoutProof => try handleThreadTimeoutProof(server, peer, payload),
         else => {
             peer.updateScore(-5);
-            server.stats.invalidPackets += 1;
+            server.countInvalidPackets();
         },
     }
 }
@@ -63,13 +64,14 @@ fn handleStatus(server: *Server, peer: *Peer, payload: []const u8) !void {
         return;
     }
 
-    peer.updateHead(msg.headHash, msg.headNumber);
+    peer.mutex.lock();
+    peer.headHash = msg.headHash;
+    peer.headNumber = msg.headNumber;
+    peer.lastMessageTime = std.time.milliTimestamp();
     peer.protocolVersion = msg.protocolVersion;
     peer.peerRole = msg.peerRole;
     peer.stakeAmount = msg.stakeAmount;
     peer.subscribedSubnets = msg.subscribedSubnets;
-
-    peer.mutex.lock();
     const was_handshaked = peer.handshakeComplete;
     peer.handshakeComplete = true;
     peer.updateScoreLocked(5);
@@ -89,7 +91,7 @@ fn handleStatus(server: *Server, peer: *Peer, payload: []const u8) !void {
             .subscribedSubnets = server.localSubnets,
             .stakeAmount = blk_stake: {
                 var amt: u64 = 0;
-                for (server.engine.activeValidators) |v| {
+                for (server.engine.validator_set.active) |v| {
                     if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
                         amt = @intCast(@min(v.stake, std.math.maxInt(u64)));
                         break;
@@ -145,11 +147,180 @@ fn handleStatus(server: *Server, peer: *Peer, payload: []const u8) !void {
     }
 }
 
+// ── Shared Block Processing Pipeline ────────────────────────────────────────
+
+/// Shared block processing pipeline used by both gossip (handleNewBlock)
+/// and Turbine (handleShred) paths.
+///
+///   engine.verify() → replayBlockTransactions() + stateRoot compare →
+///   dagPool.removeCommitted() → chain.addBlock() → bookkeeping → BLS vote
+///
+/// Does NOT free heapBlock on failure — caller manages ownership via defers.
+/// Returns true if block was added as chain head (chain now owns heapBlock).
+fn processReceivedBlock(
+    server: *Server,
+    peer: *Peer,
+    heapBlock: *core.types.Block,
+) !bool {
+    const parent_block = try server.chain.getBlockById(heapBlock.header.parentId) orelse {
+        const req = types.GetBlocksMsg{
+            .startHash = server.chain.getHeadId(),
+            .limit = 64,
+            .direction = 0,
+        };
+        peer.send(types.MsgGetBlocks, req) catch |send_err| {
+            log.warn("processReceivedBlock: send GetBlocks failed: {}\n", .{send_err});
+        };
+        return error.ParentNotFound;
+    };
+    defer server.chain.freeBlock(parent_block);
+
+    try server.engine.verify(heapBlock, &parent_block.header);
+
+    // ── Firewall 3: Verify finality in ancestor chain ─────────────────
+    // A block that passes the height check (number > lastFinalizedBlock)
+    // could still be on a fork that orphaned finalized blocks.
+    // Walk the ancestor chain to confirm the finalized block is present.
+    if (server.engine.lastFinalizedBlock > 0) {
+        if (heapBlock.header.number <= server.engine.lastFinalizedBlock) {
+            return error.FinalizedBlockConflict;
+        }
+        const finalized_blk = server.chain.getBlockByNumber(server.engine.lastFinalizedBlock) orelse {
+            return error.FinalizedBlockConflict;
+        };
+        defer server.chain.freeBlock(finalized_blk);
+        const finalized_id = finalized_blk.id();
+
+        var current_id = heapBlock.header.parentId;
+        var found = false;
+        while (!found) {
+            if (std.mem.eql(u8, &current_id.bytes, &core.types.Hash.zero().bytes)) break;
+            const ancestor = try server.chain.getBlockById(current_id) orelse break;
+            defer server.chain.freeBlock(ancestor);
+            if (ancestor.header.number == server.engine.lastFinalizedBlock) {
+                const ancestor_id = ancestor.id();
+                if (std.mem.eql(u8, &ancestor_id.bytes, &finalized_id.bytes)) {
+                    found = true;
+                }
+                break;
+            }
+            if (ancestor.header.number < server.engine.lastFinalizedBlock) break;
+            current_id = ancestor.header.parentId;
+        }
+        if (!found) return error.FinalizedBlockConflict;
+    }
+
+    if (server.dagExecutor) |executor| {
+        const computed_root = try executor.replayBlockTransactions(heapBlock.transactions);
+        if (!std.mem.eql(u8, &computed_root.bytes, &heapBlock.header.stateRoot.bytes)) {
+            log.err("State root mismatch! computed={x} expected={x} — possible fraud by producer {x}",
+                .{ computed_root.bytes, heapBlock.header.stateRoot.bytes, heapBlock.header.producer.bytes });
+            return error.StateRootMismatch;
+        }
+    } else {
+        log.warn("No DAGExecutor configured — skipping state root validation", .{});
+    }
+
+    server.dagPool.removeCommitted(heapBlock.transactions);
+
+    const is_head = try server.chain.addBlock(heapBlock);
+
+    const blockNumber = heapBlock.header.number;
+    const blockId = heapBlock.id();
+
+    server.dagPool.syncWithState();
+    server.engine.adaptive.advanceSlot(blockNumber);
+    server.chain.setLastFinalized(server.engine.lastFinalizedBlock);
+    server.gulfStream.advanceSlot(server.engine.adaptive.currentSlot);
+    server.engine.handleEpochRotationIfBoundary(blockNumber, blockId.bytes) catch |err| {
+        log.err("Block {d}: epoch rotation failed: {}", .{blockNumber, err});
+    };
+
+    // Find our validator index (needed for both BLS voting and Snowball)
+    var our_index: u32 = 0;
+    if (server.engine.blsPrivKey != null) {
+        for (server.engine.validator_set.active, 0..) |v, i| {
+            if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
+                our_index = @intCast(i);
+                break;
+            }
+        }
+    }
+
+    if (server.engine.blsPrivKey) |_| {
+        const view = server.engine.adaptive.currentSlot;
+        const vote_sig = server.engine.createVote(blockId, view) catch |err| {
+            log.warn("Block {d}: failed to create BLS vote: {}", .{blockNumber, err});
+            return is_head;
+        };
+
+        const vote_msg = types.VoteMsg{
+            .blockId = blockId,
+            .blockNumber = blockNumber,
+            .view = view,
+            .signature = vote_sig,
+            .validatorIndex = our_index,
+        };
+        const vote_payload = rlp.encode(server.allocator, vote_msg) catch |err| {
+            log.warn("Block {d}: failed to encode vote: {}", .{blockNumber, err});
+            return is_head;
+        };
+        defer server.allocator.free(vote_payload);
+        broadcastToCommittee(server, types.MsgVote, vote_payload) catch |err| {
+            log.warn("Block {d}: failed to broadcast vote: {}\n", .{blockNumber, err});
+        };
+    }
+
+    // ── Tier 3: Activate Snowball for sub-sampled finality ──────
+    if (server.snowballEngine) |sb| {
+        if (server.engine.getCurrentTier() == .FullLoom) {
+            sb.startInstance(blockNumber, blockId, .Accept) catch |err| {
+                log.warn("Snowball: startInstance({d}) failed: {}", .{blockNumber, err});
+            };
+
+            const epoch_seed = server.engine.epochSeed;
+            var selected_peers: [consensus.types.SNOWBALL_K]u32 = undefined;
+            const peers_ok = blk: {
+                const result = sb.selectPeers(
+                    epoch_seed,
+                    blockNumber,
+                    0,
+                    @intCast(server.engine.validator_set.active.len),
+                    our_index,
+                ) catch |err| {
+                    log.warn("Snowball: selectPeers failed: {}", .{err});
+                    break :blk false;
+                };
+                selected_peers = result;
+                break :blk true;
+            };
+
+            if (peers_ok) {
+                sb.setQueriedPeers(blockNumber, &selected_peers);
+                for (selected_peers) |peer_idx| {
+                    if (peer_idx >= server.engine.validator_set.active.len) continue;
+                    const peer_addr = server.engine.validator_set.active[peer_idx].address;
+                    const target = server.findPeerByValidatorAddress(peer_addr) orelse continue;
+                    const query = types.SnowballQueryMsg{
+                        .slot = blockNumber,
+                        .blockHash = blockId,
+                        .round = 0,
+                        .querierIndex = our_index,
+                    };
+                    target.send(types.MsgSnowballQuery, query) catch continue;
+                }
+            }
+        }
+    }
+
+    return is_head;
+}
+
 // ── New Block ──────────────────────────────────────────────────────────────
 
 fn handleNewBlock(server: *Server, peer: *Peer, payload: []const u8) !void {
     if (payload.len > 8 * 1024 * 1024) {
-        server.stats.blocksDroppedOversized += 1;
+        server.countBlocksDroppedOversized();
         peer.updateScore(-10);
         return error.MessageTooLarge;
     }
@@ -163,25 +334,25 @@ fn handleNewBlock(server: *Server, peer: *Peer, payload: []const u8) !void {
         return;
     }
     if (msg.block.header.number > headNumber + 10) {
-        server.stats.blocksDroppedSemantic += 1;
+        server.countBlocksDroppedSemantic();
         return;
     }
 
     const incomingId = msg.block.id();
     if (server.checkSeenBlockId(incomingId)) {
-        server.stats.blocksDroppedDuplicate += 1;
+        server.countBlocksDroppedDuplicate();
         return;
     }
     server.recordSeenBlockId(incomingId);
 
     const producerKnown = blk: {
-        for (server.engine.activeValidators) |v| {
+        for (server.engine.validator_set.active) |v| {
             if (std.mem.eql(u8, &v.address.bytes, &msg.block.header.producer.bytes)) break :blk true;
         }
         break :blk false;
     };
     if (!producerKnown) {
-        server.stats.blocksDroppedSemantic += 1;
+        server.countBlocksDroppedSemantic();
         peer.updateScore(-10);
         return;
     }
@@ -192,79 +363,14 @@ fn handleNewBlock(server: *Server, peer: *Peer, payload: []const u8) !void {
         server.allocator.destroy(heapBlock);
     };
 
-    const parent_block = try server.chain.getBlockById(msg.block.header.parentId) orelse {
-        log.warn("Parent block not found for incoming block {d}, triggering sync with peer {x}", .{msg.block.header.number, peer.id});
-        const req = types.GetBlocksMsg{
-            .startHash = server.chain.getHeadId(),
-            .limit = 64,
-            .direction = 0,
-        };
-        peer.send(types.MsgGetBlocks, req) catch {};
-        return;
-    };
-    defer server.chain.freeBlock(parent_block);
-
-    server.engine.verify(heapBlock, &parent_block.header) catch |err| {
-        log.err("Block verification failed: {}", .{err});
-        peer.updateScore(-50);
-        return;
-    };
-
-    const blockNumber = heapBlock.header.number;
-    const blockId = heapBlock.id();
-
-    server.dagPool.removeCommitted(heapBlock.transactions);
-
-    const is_head = server.chain.addBlock(heapBlock) catch |err| {
-        log.debug("Invalid block from peer: {}", .{err});
+    const accepted = processReceivedBlock(server, peer, heapBlock) catch |err| {
+        log.debug("handleNewBlock: block rejected: {}", .{err});
         peer.updateScore(-20);
         return;
     };
-    owned_by_chain = is_head;
+    owned_by_chain = accepted;
 
     peer.updateScore(10);
-    server.dagPool.syncWithState();
-
-    server.engine.adaptive.advanceSlot(blockNumber);
-    server.engine.syncFinalityFromAdaptive();
-    server.gulfStream.advanceSlot(server.engine.adaptive.currentSlot);
-
-    server.engine.handleEpochRotationIfBoundary(blockNumber, blockId.bytes) catch |err| {
-        log.err("P2P: Failed to rotate epoch on block {d}: {}", .{blockNumber, err});
-    };
-
-    vote_cast: {
-        const bls_key = server.engine.blsPrivKey orelse break :vote_cast;
-        _ = bls_key;
-
-        const view = server.engine.adaptive.currentSlot;
-        const vote_sig = server.engine.createVote(blockId, view) catch |err| {
-            log.warn("Failed to create BLS vote: {}", .{err});
-            break :vote_cast;
-        };
-
-        var our_index: u32 = 0;
-        for (server.engine.activeValidators, 0..) |v, i| {
-            if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
-                our_index = @intCast(i);
-                break;
-            }
-        }
-
-        const vote_msg = types.VoteMsg{
-            .blockId = blockId,
-            .blockNumber = blockNumber,
-            .view = view,
-            .signature = vote_sig,
-            .validatorIndex = our_index,
-        };
-        const vote_payload = rlp.encode(server.allocator, vote_msg) catch |err| {
-            log.warn("Failed to encode vote: {}", .{err});
-            break :vote_cast;
-        };
-        defer server.allocator.free(vote_payload);
-        broadcastToCommittee(server, types.MsgVote, vote_payload) catch {};
-    }
 
     if (msg.hopCount < 2) {
         var relayMsg = msg;
@@ -300,7 +406,7 @@ fn handleTxBatch(server: *Server, peer: *Peer, payload: []const u8) !void {
 
         const txId = tx.id();
         if (server.checkSeenTxId(txId)) {
-            server.stats.txsDroppedDuplicate += 1;
+            server.countTxsDroppedDuplicate();
             continue;
         }
         server.recordSeenTxId(txId);
@@ -416,108 +522,45 @@ fn handleShred(server: *Server, peer: *Peer, payload: []const u8) !void {
         const reconstructed_id = block.id();
         if (!std.mem.eql(u8, &reconstructed_id.bytes, &msg.blockId.bytes)) {
             log.err("Turbine: Reconstructed block id mismatch — possible proposer misbehaviour", .{});
-            server.stats.blocksDroppedSemantic += 1;
+            server.countBlocksDroppedSemantic();
             block.deinit(server.allocator);
             return;
         }
 
-        var turbine_owned_by_chain = false;
-        defer if (!turbine_owned_by_chain) block.deinit(server.allocator);
-
         if (block.header.number <= server.chain.getHeadNumber()) {
-            std.debug.print("[SHRED-RX] Block {d}: stale, already at {d}\n", .{block.header.number, server.chain.getHeadNumber()});
+            block.deinit(server.allocator);
             return;
         }
 
         const heapBlock = try server.allocator.create(core.types.Block);
         heapBlock.* = block;
-        defer if (!turbine_owned_by_chain) {
+
+        const is_head = processReceivedBlock(server, peer, heapBlock) catch |err| {
+            log.debug("Turbine: block {d} rejected: {}", .{block.header.number, err});
+            block.deinit(server.allocator);
             server.allocator.destroy(heapBlock);
-        };
-
-        const parent_block = try server.chain.getBlockById(block.header.parentId) orelse {
-            log.warn("Turbine: Parent block not found for block {d}, triggering sync with peer {x}", .{block.header.number, peer.id});
-            std.debug.print("[SHRED-RX] Block {d}: PARENT NOT FOUND (parent={x})\n", .{block.header.number, block.header.parentId.bytes});
-
-            const req = types.GetBlocksMsg{
-                .startHash = server.chain.getHeadId(),
-                .limit = 64,
-                .direction = 0,
-            };
-            peer.send(types.MsgGetBlocks, req) catch {};
             return;
         };
-        defer server.chain.freeBlock(parent_block);
-
-        server.engine.verify(heapBlock, &parent_block.header) catch |err| {
-            log.err("Turbine: Block verification failed: {}", .{err});
+        if (!is_head) {
+            block.deinit(server.allocator);
+            server.allocator.destroy(heapBlock);
             return;
-        };
-
-        const blockNumber = heapBlock.header.number;
-        const blockId = heapBlock.id();
-
-        server.dagPool.removeCommitted(heapBlock.transactions);
-
-        const is_head = server.chain.addBlock(heapBlock) catch |err| {
-            log.debug("Turbine: Invalid block: {}", .{err});
-            return;
-        };
-        turbine_owned_by_chain = is_head;
-
-        server.dagPool.syncWithState();
-
-        server.engine.adaptive.advanceSlot(blockNumber);
-        server.engine.syncFinalityFromAdaptive();
-        server.gulfStream.advanceSlot(server.engine.adaptive.currentSlot);
-
-        server.engine.handleEpochRotationIfBoundary(blockNumber, blockId.bytes) catch |err| {
-            log.err("Turbine: Failed to rotate epoch on block {d}: {}", .{blockNumber, err});
-        };
-
-        vote_cast: {
-            const bls_key = server.engine.blsPrivKey orelse break :vote_cast;
-            _ = bls_key;
-
-            const view = server.engine.adaptive.currentSlot;
-            const vote_sig = server.engine.createVote(blockId, view) catch |err| {
-                log.warn("Turbine: Failed to create BLS vote: {}", .{err});
-                break :vote_cast;
-            };
-            var our_index: u32 = 0;
-            for (server.engine.activeValidators, 0..) |v, i| {
-                if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
-                    our_index = @intCast(i);
-                    break;
-                }
-            }
-            const vote_msg = types.VoteMsg{
-                .blockId = blockId,
-                .blockNumber = blockNumber,
-                .view = view,
-                .signature = vote_sig,
-                .validatorIndex = our_index,
-            };
-            const vote_payload = rlp.encode(server.allocator, vote_msg) catch |err| {
-                log.warn("Turbine: Failed to encode vote: {}", .{err});
-                break :vote_cast;
-            };
-            defer server.allocator.free(vote_payload);
-            broadcastToCommittee(server, types.MsgVote, vote_payload) catch {};
         }
 
-        log.info("Turbine: Block {d} fully processed from shreds ({d} TXs)", .{ blockNumber, block.transactions.len });
+        // Success — chain now owns heapBlock (via setHeadLocked)
+
+        log.info("Turbine: Block {d} fully processed from shreds ({d} TXs)", .{ heapBlock.header.number, heapBlock.transactions.len });
         peer.updateScore(15);
     }
 
-    server.stats.shredsRelayed += 1;
+    server.countShredsRelayed();
 
     var peers = std.ArrayList(turbine_mod.StakeWeightedPeer).empty;
     defer peers.deinit(server.allocator);
 
     if (!std.mem.eql(u8, &server.config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
         const my_stake = blk: {
-            for (server.engine.activeValidators) |v| {
+            for (server.engine.validator_set.active) |v| {
                 if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
                     break :blk v.stake;
                 }
@@ -533,7 +576,7 @@ fn handleShred(server: *Server, peer: *Peer, payload: []const u8) !void {
     for (server.peers.items) |p| {
         if (p.handshakeComplete) {
             const stake = blk: {
-                for (server.engine.activeValidators) |v| {
+                for (server.engine.validator_set.active) |v| {
                     if (std.mem.eql(u8, &v.address.bytes, &p.validatorAddress.bytes)) {
                         break :blk v.stake;
                     }
@@ -619,7 +662,9 @@ fn handleShredRepairRequest(server: *Server, peer: *Peer, payload: []const u8) !
                 .producerSignature = shred.producerSignature,
                 .threadId = shred.threadId,
             };
-            peer.send(types.MsgShred, resp) catch {};
+            peer.send(types.MsgShred, resp) catch |send_err| {
+                log.warn("handleShredRepair: send MsgShred to peer {s}:{} failed: {}\n", .{ peer.ipSlice(), peer.port, send_err });
+            };
         }
     }
 }
@@ -636,7 +681,7 @@ fn handleAttestation(server: *Server, peer: *Peer, payload: []const u8) !void {
     }
 
     peer.updateScore(3);
-    server.stats.attestationsRelayed += 1;
+    server.countAttestationsRelayed();
 
     gossipToSubnet(server, msg.subnetId, types.MsgAttestation, payload, peer);
 }
@@ -684,7 +729,7 @@ fn handleViewChange(server: *Server, peer: *Peer, payload: []const u8) !void {
         return;
     }
 
-    const quorum_reached = server.engine.voteViewChange();
+    const quorum_reached = server.engine.voteViewChange(msg.validatorIndex);
     if (quorum_reached) {
         server.engine.completeViewChange();
         server.engine.resetViewChangeBackoff();
@@ -696,6 +741,8 @@ fn handleViewChange(server: *Server, peer: *Peer, payload: []const u8) !void {
 
 fn handleVote(server: *Server, peer: *Peer, payload: []const u8) !void {
     const msg = try rlp.decode(server.allocator, types.VoteMsg, payload);
+
+    if (msg.view != server.engine.adaptive.currentSlot) return;
 
     const sig_valid = try server.engine.verifyVoteSignature(
         msg.validatorIndex,
@@ -711,35 +758,34 @@ fn handleVote(server: *Server, peer: *Peer, payload: []const u8) !void {
 
     peer.updateScore(5);
 
-    var voter_stake: u256 = 1;
-    if (msg.validatorIndex < server.engine.activeValidators.len) {
-        voter_stake = server.engine.activeValidators[msg.validatorIndex].stake;
-        if (voter_stake == 0) voter_stake = 1;
-    }
-
-    const quorum_reached = try server.engine.adaptive.addVote(
-        msg.validatorIndex,
-        msg.signature,
-        voter_stake,
-    );
+    const cons_vote: consensus.types.VoteMsg = .{
+        .blockId = msg.blockId,
+        .blockNumber = msg.blockNumber,
+        .view = msg.view,
+        .signature = msg.signature,
+        .validatorIndex = msg.validatorIndex,
+    };
+    const quorum_reached = try server.voteCollector.addVote(cons_vote, server.engine.validator_set.active);
 
     if (quorum_reached) {
-        if (server.engine.adaptive.buildQC(msg.blockId)) |qc| {
-            server.engine.updateFinality(qc.slot);
-            server.engine.resetViewChangeBackoff();
+        if (try server.voteCollector.aggregateBlock(msg.blockId, msg.view, server.engine.validator_set.active)) |agg| {
+            defer server.allocator.free(agg.voterBitmap);
+            if (try server.engine.adaptive.buildQC(msg.blockId, agg)) |qc| {
+                server.engine.updateFinality(qc.slot);
+                server.chain.setLastFinalized(qc.slot);
+                server.engine.resetViewChangeBackoff();
 
-            log.info("QC formed for slot {} — block finalized (stake: {})\n", .{
-                qc.slot,
-                qc.totalAttestingStake,
-            });
+                log.info("QC formed for slot {} — block finalized (stake: {})\n", .{
+                    qc.slot,
+                    qc.totalAttestingStake,
+                });
 
-            const qc_payload = try rlp.encode(server.allocator, qc);
-            defer server.allocator.free(qc_payload);
-            try broadcastRaw(server, types.MsgQuorumCertificate, qc_payload);
+                const qc_payload = try rlp.encode(server.allocator, qc);
+                defer server.allocator.free(qc_payload);
+                try broadcastRaw(server, types.MsgAdaptiveQC, qc_payload);
+            }
         }
-    }
-
-    if (!quorum_reached) {
+    } else {
         try broadcastToCommittee(server, types.MsgVote, payload);
     }
 }
@@ -928,13 +974,20 @@ fn handleThreadAttestation(server: *Server, peer: *Peer, payload: []const u8) !v
             .blsSignature = msg.blsSignature,
             .attestingStake = msg.attestingStake,
         };
-        _ = pool.addAttestation(attest) catch |err| {
+        _ = pool.addAttestation(
+            attest,
+            server.engine.validator_set.active,
+            server.engine.getCurrentTier(),
+            &server.engine.adaptive.epochManager.committeeManager,
+            server.engine.epochSeed,
+            server.engine.validator_set.totalStake(),
+        ) catch |err| {
             log.debug("Failed to add thread attestation: {}", .{err});
         };
     }
 
     peer.updateScore(3);
-    server.stats.attestationsRelayed += 1;
+    server.countAttestationsRelayed();
 
     gossipToSubnet(server, msg.threadId, types.MsgThreadAttestation, payload, peer);
 }
@@ -942,8 +995,29 @@ fn handleThreadAttestation(server: *Server, peer: *Peer, payload: []const u8) !v
 fn handleThreadCertificate(server: *Server, peer: *Peer, payload: []const u8) !void {
     const msg = try rlp.decode(server.allocator, types.ThreadCertificateMsg, payload);
 
-    if (msg.totalEligibleStake > 0) {
-        if (@as(u512, msg.attestingStake) * 3 <= @as(u512, msg.totalEligibleStake) * 2) {
+    // Verify quorum against ACTUAL validator set stake (not self-reported message fields).
+    // The weaverBitmap tells us which validators signed — look up their real stake.
+    const validators = server.engine.validator_set.active;
+    var attesting_stake: u256 = 0;
+    const max_bitmap_validators = @min(validators.len, 256);
+    for (0..max_bitmap_validators) |i| {
+        const byte_idx = i / 8;
+        const bit_idx: u3 = @intCast(i % 8);
+        if (byte_idx < msg.weaverBitmap.len and (msg.weaverBitmap[byte_idx] >> bit_idx) & 1 == 1) {
+            attesting_stake += validators[i].stake;
+        }
+    }
+
+    // Use committee manager's actual stake (Tier 2) or total stake (Tier 1/3) as denominator.
+    // This prevents a malicious aggregator from crafting a cert with inflated values.
+    const total_thread_stake = server.engine.adaptive.epochManager.committeeManager.getThreadStake(msg.threadId);
+    const total_eligible = if (total_thread_stake > 0)
+        total_thread_stake
+    else
+        server.engine.validator_set.totalStake();
+
+    if (total_eligible > 0) {
+        if (@as(u512, attesting_stake) * 3 <= @as(u512, total_eligible) * 2) {
             peer.updateScore(-10);
             return;
         }
@@ -955,8 +1029,8 @@ fn handleThreadCertificate(server: *Server, peer: *Peer, payload: []const u8) !v
         .thread_root = msg.threadRoot,
         .aggregateSignature = msg.aggregateSignature,
         .weaverBitmap = msg.weaverBitmap,
-        .attestingStake = msg.attestingStake,
-        .totalEligibleStake = msg.totalEligibleStake,
+        .attestingStake = attesting_stake,
+        .totalEligibleStake = total_eligible,
     };
     server.engine.adaptive.addThreadCertificate(cert);
 
@@ -964,10 +1038,58 @@ fn handleThreadCertificate(server: *Server, peer: *Peer, payload: []const u8) !v
     gossipToSubnet(server, msg.threadId, types.MsgThreadCertificate, payload, peer);
 }
 
-fn handleAdaptiveQC(server: *Server, peer: *Peer, payload: []const u8) !void {
-    _ = try rlp.decode(server.allocator, types.AdaptiveQCMsg, payload);
-    peer.updateScore(10);
+fn handleThreadTimeoutProof(server: *Server, peer: *Peer, payload: []const u8) !void {
+    const msg = try rlp.decode(server.allocator, types.ThreadTimeoutProofMsg, payload);
 
+    if (msg.slot != server.engine.adaptive.currentSlot) return;
+
+    // Verify BLS signature before accepting
+    const sig_valid = try server.engine.verifyThreadTimeoutProof(
+        msg.proposerIndex,
+        msg.slot,
+        msg.threadId,
+        msg.signature,
+    );
+    if (!sig_valid) {
+        peer.updateScore(-30);
+        return;
+    }
+
+    const proof = consensus.types.ThreadTimeoutProof{
+        .slot = msg.slot,
+        .threadId = msg.threadId,
+        .proposerIndex = msg.proposerIndex,
+        .signature = msg.signature,
+    };
+    server.engine.adaptive.addThreadTimeoutProof(proof);
+
+    peer.updateScore(5);
+    try broadcastRaw(server, types.MsgThreadTimeoutProof, payload);
+}
+
+fn handleAdaptiveQC(server: *Server, peer: *Peer, payload: []const u8) !void {
+    const msg = try rlp.decode(server.allocator, types.AdaptiveQCMsg, payload);
+    defer server.allocator.free(msg.voterBitmap);
+
+    server.engine.verifyQCAggregate(
+        &msg.wovenRoot,
+        msg.aggregateSignature,
+        msg.voterBitmap,
+    ) catch |err| {
+        log.warn("handleAdaptiveQC: invalid QC from peer {x}: {}", .{ peer.id, err });
+        peer.updateScore(-20);
+        return;
+    };
+
+    server.engine.updateFinality(msg.slot);
+    server.chain.setLastFinalized(msg.slot);
+    server.engine.resetViewChangeBackoff();
+
+    log.info("QC received and verified for slot {} — block finalized (stake: {})", .{
+        msg.slot, msg.totalAttestingStake,
+    });
+
+    peer.updateScore(10);
     try broadcastRaw(server, types.MsgAdaptiveQC, payload);
 }
 
@@ -980,17 +1102,28 @@ fn handleSnowballQuery(server: *Server, peer: *Peer, payload: []const u8) !void 
     }
 
     const accept = if (server.snowballEngine) |sb|
-        sb.getPreference(msg.slot) != .None
+        sb.getPreference(msg.slot) == .Accept
     else
         false;
+
+    // Look up our own validator index and stake for the response
+    var our_index: u32 = 0;
+    var our_stake: u256 = 0;
+    for (server.engine.validator_set.active, 0..) |v, i| {
+        if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
+            our_index = @intCast(i);
+            our_stake = v.stake;
+            break;
+        }
+    }
 
     const response = types.SnowballResponseMsg{
         .slot = msg.slot,
         .blockHash = msg.blockHash,
         .accept = accept,
         .round = msg.round,
-        .responderIndex = 0,
-        .responderStake = 0,
+        .responderIndex = our_index,
+        .responderStake = our_stake,
     };
     try peer.send(types.MsgSnowballResponse, response);
     peer.updateScore(1);
@@ -999,12 +1132,97 @@ fn handleSnowballQuery(server: *Server, peer: *Peer, payload: []const u8) !void 
 fn handleSnowballResponse(server: *Server, peer: *Peer, payload: []const u8) !void {
     const msg = try rlp.decode(server.allocator, types.SnowballResponseMsg, payload);
 
+    // Validate the responder exists in the validator set
+    if (msg.responderIndex >= server.engine.validator_set.active.len) {
+        peer.updateScore(-5);
+        return;
+    }
+
+    // Validate the reported stake matches the on-chain validator stake
+    const expected_stake = server.engine.validator_set.active[msg.responderIndex].stake;
+    if (msg.responderStake != expected_stake) {
+        peer.updateScore(-10);
+        return;
+    }
+
     if (server.snowballEngine) |sb| {
-        _ = sb.recordResponse(
+        const result = sb.recordResponse(
             msg.slot,
+            msg.responderIndex,
             msg.accept,
             msg.responderStake,
         );
+
+        // When a round completes without finalization, dispatch the next round
+        if (result == .RoundComplete) {
+            const epoch_seed = server.engine.epochSeed;
+            var our_index: u32 = 0;
+            for (server.engine.validator_set.active, 0..) |v, i| {
+                if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
+                    our_index = @intCast(i);
+                    break;
+                }
+            }
+            if (sb.nextRound(
+                msg.slot,
+                epoch_seed,
+                our_index,
+                @intCast(server.engine.validator_set.active.len),
+            )) |peers| {
+                for (peers) |peer_idx| {
+                    if (peer_idx >= server.engine.validator_set.active.len) continue;
+                    const peer_addr = server.engine.validator_set.active[peer_idx].address;
+                    const p = server.findPeerByValidatorAddress(peer_addr) orelse continue;
+                    const query = types.SnowballQueryMsg{
+                        .slot = msg.slot,
+                        .blockHash = msg.blockHash,
+                        .round = 0, // round managed internally by snowball engine
+                        .querierIndex = our_index,
+                    };
+                    p.send(types.MsgSnowballQuery, query) catch continue;
+                }
+            } else {
+                log.debug("Snowball: nextRound returned null (finalized)", .{});
+            }
+        }
+
+        // ── Phase 3.4: SnowballFinalization → QC Bridge ──────────
+        // When Snowball finalizes with Accept, build a QC proof via
+        // quorum.zig and mark the block as finalized in the consensus engine.
+        if (result == .Finalized) {
+            if (sb.isAccepted(msg.slot)) {
+                // Extract Snowball finalization proof
+                const proof = sb.getFinalizationProof(msg.slot) orelse {
+                    log.warn("Snowball: finalized but no proof for slot {}", .{msg.slot});
+                    return;
+                };
+
+                // Build a SnowballQuorumCertificate via quorum.zig
+                const snowball_qc = consensus.quorum.buildSnowballQC(
+                    msg.slot,
+                    msg.blockHash,
+                    server.engine.epochSeed,
+                    @intCast(server.engine.validator_set.active.len),
+                    proof,
+                );
+
+                // Update finality state
+                server.engine.updateFinality(msg.slot);
+                server.chain.setLastFinalized(msg.slot);
+                server.engine.resetViewChangeBackoff();
+
+                log.info("Snowball finalized block {} (rounds={d}, responders={d}) — block finalized via QC bridge", .{
+                    msg.slot,
+                    snowball_qc.proof.roundsCompleted,
+                    snowball_qc.proof.responderCount,
+                });
+            } else {
+                log.debug("Snowball: slot {} finalized with Reject (timeout)", .{msg.slot});
+            }
+
+            // Clean up the Snowball instance regardless of Accept/Reject
+            sb.removeInstance(msg.slot);
+        }
     }
 
     peer.updateScore(1);

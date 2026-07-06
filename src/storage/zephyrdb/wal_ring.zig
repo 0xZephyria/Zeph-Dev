@@ -17,6 +17,8 @@ const std = @import("std");
 const Atomic = std.atomic.Value;
 const Mutex = std.Thread.Mutex;
 
+const log = std.log;
+
 /// WAL entry types
 pub const OpType = enum(u8) {
     Noop = 0,
@@ -157,7 +159,12 @@ pub const WalRing = struct {
         // Start background flush thread if enabled and we have a file
         if (config.enable_background_flush and config.flush_interval_ms > 0 and file != null) {
             self.bg_flush_running.store(true, .release);
-            self.bg_flush_thread = std.Thread.spawn(.{}, backgroundFlushLoop, .{&self}) catch null;
+            if (std.Thread.spawn(.{}, backgroundFlushLoop, .{&self})) |thread| {
+                self.bg_flush_thread = thread;
+            } else |err| {
+                log.warn("Failed to start WAL background flush thread: {}\n", .{err});
+                self.bg_flush_running.store(false, .release);
+            }
         }
 
         return self;

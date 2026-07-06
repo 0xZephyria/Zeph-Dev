@@ -31,6 +31,7 @@ const state_mod = core.state;
 const state_bridge = @import("state_bridge");
 const StateBridge = state_bridge.StateBridge;
 const vm = @import("vm");
+const solana_bridge = @import("vm/solana/bridge.zig");
 
 /// VMBridge configuration
 /// Configuration options for the VMBridge.
@@ -172,18 +173,15 @@ pub const VMBridge = struct {
         };
     }
 
-    /// Execute a contract via RISC-V VM — the main execution callback.
+    /// Execute a contract via the appropriate VM (RISC-V or Solana BPF).
     /// Called by the executor for both contract calls and deployments.
     ///
     /// Thread Safety: The VMBridge pointer is extracted from ctx — no global state.
     /// Each lane passes its own overlay, so there are zero cross-lane data races.
     ///
-    /// This function:
-    ///   1. Creates a StateBridge connecting VM syscalls → State Overlay
-    ///   2. Passes full block/TX execution context
-    ///   3. Executes the RISC-V bytecode
-    ///   4. Propagates logs from HostEnv to VMResult
-    ///   5. Returns output (returnData) for the executor
+    /// VM Selection:
+    ///   - Solana BPF ELF (e_machine = 263 / EM_SBPF) → Solana VM
+    ///   - "FORG" prefix or anything else → RISC-V forgec VM
     fn executeCallback(
         ctx: *anyopaque,
         code: []const u8,
@@ -197,28 +195,30 @@ pub const VMBridge = struct {
         receipt_queue: ?*core.accounts.ReceiptQueue,
         tx_index: u32,
     ) VMResult {
-        // Thread-safe: extract VMBridge from ctx pointer, no global state
         const bridge: *VMBridge = @ptrCast(@alignCast(ctx));
         _ = bridge.executionCount.fetchAdd(1, .monotonic);
 
-        // Empty code = nothing to execute
         if (code.len == 0) {
-            return VMResult{
-                .success = true,
-                .budgetUsed = 0,
-                .returnData = &[_]u8{},
-            };
+            return VMResult{ .success = true, .budgetUsed = 0, .returnData = &[_]u8{} };
         }
 
-        // Create a StateBridge connecting the VM syscalls to the State overlay.
-        // The overlay provides per-TX isolation — all state changes are
-        // scoped to this overlay until the executor commits or reverts.
+        // ── VM Selection ────────────────────────────────────────────
+        // Detect Solana BPF: ELF header with e_machine = EM_SBPF (263)
+        const is_solana = code.len > 20 and
+            code[0] == 0x7f and code[1] == 'E' and code[2] == 'L' and code[3] == 'F' and
+            std.mem.readInt(u16, code[18..20], .little) == 263;
+
+        if (is_solana) {
+            return executeSolana(code, input, budget, overlay, caller, self_address, value);
+        }
+
+        // ── RISC-V (forgec) path ────────────────────────────────────
         var sb = StateBridge.init(
             bridge.allocator,
             @ptrCast(overlay),
-            self_address.bytes, // self_address (contract being called)
-            caller.bytes, // caller (msg.sender)
-            u256ToBytes(value), // call value
+            self_address.bytes,
+            caller.bytes,
+            u256ToBytes(value),
             budget,
         );
         sb.deltaQueue = delta_queue;
@@ -227,8 +227,6 @@ pub const VMBridge = struct {
         sb.vm_pool = &bridge.vm_pool;
         defer sb.deinit();
 
-        // Wire full execution context from the block/TX environment
-        // These are set once per block and immutable during lane execution
         sb.blockNumber = bridge.execCtx.blockNumber;
         sb.timestamp = bridge.execCtx.timestamp;
         sb.chainId = bridge.execCtx.chainId;
@@ -237,7 +235,6 @@ pub const VMBridge = struct {
         sb.producer = bridge.execCtx.producer;
         sb.prevRandao = bridge.execCtx.prevRandao;
 
-        // Execute via RISC-V VM with all providers wired
         const riscv = @import("vm/riscv/mod.zig");
         const exec_result = riscv.executeContract(
             bridge.allocator,
@@ -246,11 +243,7 @@ pub const VMBridge = struct {
             budget,
             @ptrCast(&sb),
         ) catch {
-            return VMResult{
-                .success = false,
-                .budgetUsed = budget,
-                .returnData = &[_]u8{},
-            };
+            return VMResult{ .success = false, .budgetUsed = budget, .returnData = &[_]u8{} };
         };
 
         _ = bridge.totalBudgetUsed.fetchAdd(exec_result.budgetUsed, .monotonic);
@@ -279,3 +272,25 @@ fn u256ToBytes(value: u256) [32]u8 {
     }
     return bytes;
 }
+
+fn executeSolana(
+    code: []const u8,
+    input: []const u8,
+    budget: u64,
+    overlay: *state_mod.Overlay,
+    caller: core.types.Address,
+    self_address: core.types.Address,
+    value: u256,
+) VMResult {
+    _ = overlay;
+    _ = caller;
+    _ = self_address;
+    _ = value;
+    const result = solana_bridge.executeContract(std.heap.page_allocator, code, input, budget);
+    return VMResult{
+        .success = result.success,
+        .budgetUsed = result.budgetUsed,
+        .returnData = result.returnData,
+    };
+}
+

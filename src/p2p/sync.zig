@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("core");
 const types = @import("types.zig");
 const Peer = @import("peer.zig").Peer;
+const zquic = @import("quic/root.zig");
 const turbine_mod = @import("turbine.zig");
 const rlp = @import("encoding").rlp;
 const Server = @import("server.zig").Server;
@@ -116,6 +117,42 @@ pub fn handleBlocks(server: *Server, peer: *Peer, payload: []const u8) !void {
             return;
         };
 
+        if (server.engine.lastFinalizedBlock > 0) {
+            if (heapBlock.header.number <= server.engine.lastFinalizedBlock) {
+                log.debug("Sync: Block {d} is at or below finalized height {d}, skipping", .{
+                    heapBlock.header.number, server.engine.lastFinalizedBlock,
+                });
+                return;
+            }
+            const finalized_blk = server.chain.getBlockByNumber(server.engine.lastFinalizedBlock) orelse {
+                log.debug("Sync: Finalized block {d} not found in chain, skipping", .{server.engine.lastFinalizedBlock});
+                return;
+            };
+            defer server.chain.freeBlock(finalized_blk);
+            const finalized_id = finalized_blk.id();
+
+            var current_id = block.header.parentId;
+            var found = false;
+            while (!found) {
+                if (std.mem.eql(u8, &current_id.bytes, &core.types.Hash.zero().bytes)) break;
+                const ancestor = server.chain.getBlockById(current_id) catch break orelse break;
+                defer server.chain.freeBlock(ancestor);
+                if (ancestor.header.number == server.engine.lastFinalizedBlock) {
+                    const ancestor_id = ancestor.id();
+                    if (std.mem.eql(u8, &ancestor_id.bytes, &finalized_id.bytes)) {
+                        found = true;
+                    }
+                    break;
+                }
+                if (ancestor.header.number < server.engine.lastFinalizedBlock) break;
+                current_id = ancestor.header.parentId;
+            }
+            if (!found) {
+                log.debug("Sync: Block {d} is on a fork that orphans finalized blocks, skipping", .{heapBlock.header.number});
+                return;
+            }
+        }
+
         const blockNumber = heapBlock.header.number;
 
         server.dagPool.removeCommitted(heapBlock.transactions);
@@ -130,7 +167,7 @@ pub fn handleBlocks(server: *Server, peer: *Peer, payload: []const u8) !void {
 
         server.dagPool.syncWithState();
         server.engine.adaptive.advanceSlot(blockNumber);
-        server.engine.syncFinalityFromAdaptive();
+        server.chain.setLastFinalized(server.engine.lastFinalizedBlock);
         server.gulfStream.advanceSlot(server.engine.adaptive.currentSlot);
 
         server.engine.handleEpochRotationIfBoundary(blockNumber, blockId.bytes) catch |err| {
@@ -175,7 +212,7 @@ pub fn checkAndRequestRepairs(server: *Server) !void {
 
     if (!std.mem.eql(u8, &server.config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
         const my_stake = blk: {
-            for (server.engine.activeValidators) |v| {
+            for (server.engine.validator_set.active) |v| {
                 if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
                     break :blk v.stake;
                 }
@@ -192,7 +229,7 @@ pub fn checkAndRequestRepairs(server: *Server) !void {
     for (server.peers.items) |p| {
         if (p.handshakeComplete) {
             const stake = blk: {
-                for (server.engine.activeValidators) |v| {
+                for (server.engine.validator_set.active) |v| {
                     if (std.mem.eql(u8, &v.address.bytes, &p.validatorAddress.bytes)) {
                         break :blk v.stake;
                     }
@@ -306,7 +343,9 @@ pub fn checkAndRequestRepairs(server: *Server) !void {
                     .shredIndices = req.missing,
                     .requesterAddress = server.config.validatorAddress,
                 };
-                peer.send(types.MsgShredRepairRequest, repair_msg) catch {};
+                peer.send(types.MsgShredRepairRequest, repair_msg) catch |err| {
+                    log.warn("Failed to send repair request to peer {s}:{}: {}\n", .{ peer.ipSlice(), peer.port, err });
+                };
             }
         }
     }
@@ -344,7 +383,7 @@ pub fn forwardGulfStream(server: *Server) !void {
             .batchId = 0,
             .senderSubnet = 0,
         };
-        peer.send(types.MsgTxBatch, msg) catch |err| {
+        sendTxBatch(server, peer, msg) catch |err| {
             log.warn("Failed to forward batch to leader peer: {}\n", .{err});
         };
         log.info("Gulf Stream: Forwarded {d} TX(s) to predicted proposer {s} (slot {d})\n", .{
@@ -371,7 +410,7 @@ pub fn forwardGulfStream(server: *Server) !void {
                 .batchId = 0,
                 .senderSubnet = 0,
             };
-            peer.send(types.MsgTxBatch, msg) catch {};
+            sendTxBatch(server, peer, msg) catch {};
             log.debug("Gulf Stream: Proposer {s} not connected. Relayed {d} TX(s) via fallback validator {s}\n", .{
                 &std.fmt.bytesToHex(target.validatorAddress.bytes, .lower),
                 drain_result.txData.len,
@@ -379,4 +418,49 @@ pub fn forwardGulfStream(server: *Server) !void {
             });
         }
     }
+}
+
+fn sendTxBatch(server: *Server, peer: *Peer, msg: types.TxBatchMsg) !void {
+    if (server.quicEndpoint) |ep| {
+        if (std.net.Address.parseIp4(peer.ipSlice(), peer.port)) |addr| {
+            var conn = ep.findConnByAddr(addr);
+            // If no QUIC connection exists yet, try to establish one
+            if (conn == null) {
+                _ = ep.connect(addr, null) catch |err| {
+                    log.debug("QUIC: Could not initiate connection for TX batch: {}\n", .{err});
+                };
+                // After initiating, try to find it again (may still be handshaking)
+                conn = ep.findConnByAddr(addr);
+            }
+            if (conn) |c| {
+                if (c.state == .Established) {
+                    const bytes = try rlp.encode(server.allocator, msg);
+                    defer server.allocator.free(bytes);
+
+                    const payload_len = 8 + bytes.len;
+                    const payload = try server.allocator.alloc(u8, payload_len);
+                    defer server.allocator.free(payload);
+
+                    std.mem.writeInt(u64, payload[0..8], types.MsgTxBatch, .big);
+                    @memcpy(payload[8..], bytes);
+
+                    const pkt = zquic.pkt.Packet{
+                        .packet_type = .OneRTT,
+                        .connection_id = peer.connection_id,
+                        .payload = payload,
+                    };
+
+                    const encoded_buf_len = payload_len + 10;
+                    const encoded_buf = try server.allocator.alloc(u8, encoded_buf_len);
+                    defer server.allocator.free(encoded_buf);
+
+                    const written = try pkt.encode(encoded_buf);
+
+                    try ep.sendOnStream(c, zquic.StreamIds.GULF_STREAM, encoded_buf[0..written], false);
+                    return;
+                }
+            }
+        } else |_| {}
+    }
+    try peer.send(types.MsgTxBatch, msg);
 }

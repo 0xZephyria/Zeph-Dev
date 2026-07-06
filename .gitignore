@@ -12,7 +12,10 @@ src/crypto/blst/wrapper
 node.log
 node.pid
 node1.log
-
+*.c
+*.md
+.mailmap
+sig/
 # dependencies
 node_modules/
 .DS_Store
@@ -34,3 +37,8 @@ contracts/bin/resolc
 tasks copy.md
 tasks copy 2.md
 tasks.md
+
+# Solana VM
+//sig/
+/src/vm/solana
+/src/vm/solana_shared

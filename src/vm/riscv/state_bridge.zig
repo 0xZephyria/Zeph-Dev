@@ -10,7 +10,7 @@
 //
 //   1. SLOAD/SSTORE route through the per-TX Overlay — each TX gets
 //      isolated state that commits only on success. The Overlay uses
-//      the global Verkle trie's storage_cell key derivation:
+//      the global KV HighperfDB and ZephyrDB storage_cell key derivation:
 //        StorageKey = blake3(contract_address || slot)
 //      This means different contract slots are DIFFERENT trie keys.
 //
@@ -210,7 +210,7 @@ pub const StateBridge = struct {
     // Storage operations (SLOAD / SSTORE)
     // ================================================================
     // These route through the per-TX Overlay. The Overlay uses the
-    // Verkle trie's account-per-slot model where:
+    // KV HighperfDB and ZephyrDB account-per-slot model where:
     //   StorageKey = blake3(contract_address || slot)
     // This guarantees that different slots = different trie keys = zero conflicts.
 

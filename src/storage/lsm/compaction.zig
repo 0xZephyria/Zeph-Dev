@@ -8,7 +8,7 @@ const fs = std.fs;
 const SSTableReader = @import("sstable.zig").SSTableReader;
 const SSTableWriter = @import("sstable.zig").SSTableWriter;
 
-/// 32-byte key comparison (replaces former SIMD-based comparison from verkle module)
+/// 32-byte key comparison (replaces former SIMD-based comparison from module)
 fn keyCompare(a: [32]u8, b: [32]u8) std.math.Order {
     return std.mem.order(u8, &a, &b);
 }

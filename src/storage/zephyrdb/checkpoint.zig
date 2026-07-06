@@ -44,7 +44,7 @@ pub const CheckpointHeader = extern struct {
     account_count: u32, // Number of accounts in checkpoint
     slot_count: u64, // Total storage slots
     timestamp: i64, // Unix timestamp of checkpoint creation
-    state_root: [32]u8, // Verkle trie root at this block
+    state_root: [32]u8, // KV HighperfDB and ZephyrDB root at this block
     checksum: [32]u8, // Blake3 hash of all data after header
     compressed_size: u64, // Compressed size (0 if uncompressed)
     uncompressed_size: u64, // Original data size

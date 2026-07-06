@@ -23,6 +23,7 @@ const std = @import("std");
 const core = @import("core");
 const types = @import("types.zig");
 const Atomic = std.atomic.Value;
+const slot_mod = @import("slot.zig");
 
 /// Pipeline stage
 pub const PipelineStage = enum {
@@ -41,6 +42,7 @@ pub const Proposal = struct {
     txHashes: []const core.types.Hash,
     stage: PipelineStage,
     voteCount: u32,
+    cumulativeStake: u256,
     voteBitmap: u256,
     isFinalized: bool,
     isIrreversible: bool,
@@ -60,6 +62,8 @@ pub const Proposal = struct {
     tier: types.ConsensusTier,
     /// Proposer's VRF proof
     proposerVrfProof: ?[96]u8,
+    /// Quorum Certificate for this proposal (set when formed by QC path)
+    quorumCertificate: ?types.QuorumCertificate,
 };
 
 /// Pipeline configuration (optimized for 400ms block time)
@@ -158,8 +162,12 @@ pub const Pipeline = struct {
     executedNumber: Atomic(u64),
     /// Validator state
     validatorCount: u32,
+    validatorStakes: []const u256,
+    totalStake: u256,
+    stakesAllocated: bool,
     ourIndex: u32,
     ourAddress: core.types.Address,
+    epochSeed: [32]u8,
     // Stats
     proposalsCreated: Atomic(u64),
     proposalsFinalized: Atomic(u64),
@@ -177,6 +185,12 @@ pub const Pipeline = struct {
     /// irreversibility markers. Set via setFinalizeCallback().
     onFinalize: ?*const fn (blockNumber: u64, state_root: core.types.Hash) void,
 
+    /// Callback for external equivocation check (cross-references the
+    /// ZeliusEngine.proposalsSeen map, which covers ALL block numbers).
+    /// Returns true if blockNumber has already been proposed by anyone.
+    /// Set via setEquivocationCheckCallback().
+    onCheckEquivocation: ?*const fn (blockNumber: u64) bool,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, config: PipelineConfig) Self {
@@ -189,8 +203,12 @@ pub const Pipeline = struct {
             .irreversibleNumber = Atomic(u64).init(0),
             .executedNumber = Atomic(u64).init(0),
             .validatorCount = config.validatorCount,
+            .validatorStakes = &.{},
+            .totalStake = 0,
+            .stakesAllocated = false,
             .ourIndex = config.ourIndex,
             .ourAddress = config.ourAddress,
+            .epochSeed = [_]u8{0} ** 32,
             .proposalsCreated = Atomic(u64).init(0),
             .proposalsFinalized = Atomic(u64).init(0),
             .proposalsRejected = Atomic(u64).init(0),
@@ -201,11 +219,15 @@ pub const Pipeline = struct {
             .equivocationLog = .{},
             .lock = .{},
             .onFinalize = null,
+            .onCheckEquivocation = null,
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.equivocationLog.deinit(self.allocator);
+        if (self.stakesAllocated) {
+            self.allocator.free(self.validatorStakes);
+        }
     }
 
     /// Set the validator context
@@ -215,10 +237,30 @@ pub const Pipeline = struct {
         self.ourAddress = ourAddress;
     }
 
+    /// Set the validator stakes and total stake for stake-weighted voting.
+    /// Makes an owned copy of the stakes slice.  Caller may free the original.
+    pub fn setValidatorStakes(self: *Self, stakes: []const u256, totalStake: u256) void {
+        if (self.stakesAllocated) {
+            self.allocator.free(self.validatorStakes);
+            self.stakesAllocated = false;
+        }
+        const owned = self.allocator.dupe(u256, stakes) catch @panic("OOM");
+        self.validatorStakes = owned;
+        self.totalStake = totalStake;
+        self.stakesAllocated = true;
+    }
+
     /// Set the callback invoked when a block is finalized.
     /// Typically wired to ZephyrDB state commit and WAL checkpoint.
     pub fn setFinalizeCallback(self: *Self, callback: *const fn (u64, core.types.Hash) void) void {
         self.onFinalize = callback;
+    }
+
+    /// Register an external equivocation check that covers ALL block numbers
+    /// (not just the 64-slot ring buffer). Typically wired to
+    /// ZeliusEngine.proposalsSeen which persists across epochs.
+    pub fn setEquivocationCheckCallback(self: *Self, callback: *const fn (u64) bool) void {
+        self.onCheckEquivocation = callback;
     }
 
     /// Update adaptive parameters (called at epoch transitions).
@@ -227,13 +269,18 @@ pub const Pipeline = struct {
         self.config.tier = tier;
     }
 
-    /// Check if it's our turn to propose (adaptive — uses VRF-based schedule).
-    /// At Tier 1: deterministic rotation based on seed.
+    /// Set the epoch seed for deterministic proposer computation.
+    pub fn setEpochSeed(self: *Self, seed: [32]u8) void {
+        self.epochSeed = seed;
+    }
+
+    /// Check if it's our turn to propose using the deterministic proposer schedule.
+    /// At Tier 1: deterministic rotation based on epoch seed.
     /// At Tier 2-3: caller should use VRF sortition separately.
     pub fn isOurTurnToPropose(self: *const Self, blockNumber: u64) bool {
-        if (self.validatorCount == 0) return true; // Solo mode
-        // Deterministic fallback (works for Tier 1 and as backup)
-        return (blockNumber % self.validatorCount) == self.ourIndex;
+        if (self.validatorCount == 0) return true;
+        const proposer = slot_mod.deterministicProposer(self.epochSeed, blockNumber, self.validatorCount);
+        return proposer == self.ourIndex;
     }
 
     /// Stage 1: Create an adaptive block proposal with thread awareness.
@@ -274,6 +321,17 @@ pub const Pipeline = struct {
             }
         }
 
+        // Cross-reference with the global proposalsSeen map (covers ALL block
+        // numbers, not just the 64-slot ring buffer).  Catches equivocation
+        // that spans more than 64 slots.
+        if (self.onCheckEquivocation) |cb| {
+            if (cb(blockNumber)) {
+                _ = self.equivocationsDetected.fetchAdd(1, .monotonic);
+                _ = self.proposalsRejected.fetchAdd(1, .monotonic);
+                return error.EquivocationDetected;
+            }
+        }
+
         const hashes = try self.allocator.alloc(core.types.Hash, txHashes.len);
         @memcpy(hashes, txHashes);
 
@@ -284,6 +342,7 @@ pub const Pipeline = struct {
             .txHashes = hashes,
             .stage = .Propose,
             .voteCount = 1,
+            .cumulativeStake = if (self.ourIndex < self.validatorStakes.len) self.validatorStakes[self.ourIndex] else 1,
             .voteBitmap = if (self.ourIndex < 256) @as(u256, 1) << @as(u7, @intCast(self.ourIndex & 0xFF)) else @as(u256, 0),
             .isFinalized = false,
             .isIrreversible = false,
@@ -297,6 +356,7 @@ pub const Pipeline = struct {
             .threadCount = self.config.threadCount,
             .tier = self.config.tier,
             .proposerVrfProof = null,
+            .quorumCertificate = null,
         };
 
         self.headNumber.store(blockNumber, .release);
@@ -340,15 +400,19 @@ pub const Pipeline = struct {
         proposal.voteBitmap |= voter_bit;
         proposal.stage = .Vote;
 
+        // Stake-weighted accumulation
+        const voter_stake = if (voter_index < self.validatorStakes.len) self.validatorStakes[voter_index] else 1;
+        proposal.cumulativeStake += voter_stake;
+
         _ = self.votesCast.fetchAdd(1, .monotonic);
 
-        // Check quorum (2/3+1)
-        const required = if (self.validatorCount == 0)
-            @as(u32, 1)
+        // Stake-weighted quorum check (2/3+1)
+        const required: u256 = if (self.totalStake == 0)
+            1
         else
-            (self.validatorCount * 2 / 3) + 1;
+            (self.totalStake * 2 / 3) + 1;
 
-        if (proposal.voteCount >= required) {
+        if (proposal.cumulativeStake >= required) {
             return try self.finalize(proposal);
         }
 
@@ -375,6 +439,7 @@ pub const Pipeline = struct {
         // Apply each signer from the aggregate bitmap
         // (Only count new votes — skip duplicates via bitmap intersection)
         var new_votes: u32 = 0;
+        var new_stake: u256 = 0;
         for (0..@min(agg.signerCount, 256)) |i| {
             const idx: u8 = @intCast(i);
             if (agg.hasSigner(idx)) {
@@ -383,22 +448,25 @@ pub const Pipeline = struct {
                     proposal.voteBitmap |= voter_bit;
                     proposal.voteCount += 1;
                     new_votes += 1;
+                    // Stake-weighted accumulation
+                    new_stake += if (idx < self.validatorStakes.len) self.validatorStakes[idx] else 1;
                 }
             }
         }
 
         if (new_votes == 0) return false;
+        proposal.cumulativeStake += new_stake;
 
         _ = self.votesCast.fetchAdd(new_votes, .monotonic);
         proposal.stage = .Vote;
 
-        // Check quorum (2/3+1)
-        const required = if (self.validatorCount == 0)
-            @as(u32, 1)
+        // Stake-weighted quorum check (2/3+1)
+        const required: u256 = if (self.totalStake == 0)
+            1
         else
-            (self.validatorCount * 2 / 3) + 1;
+            (self.totalStake * 2 / 3) + 1;
 
-        if (proposal.voteCount >= required) {
+        if (proposal.cumulativeStake >= required) {
             return try self.finalize(proposal);
         }
 
@@ -433,6 +501,35 @@ pub const Pipeline = struct {
         }
 
         return true;
+    }
+
+    /// Attach a QuorumCertificate to an existing proposal (called by QC formation path).
+    /// Accepts both BLS (Tier 1-2) and Snowball (Tier 3) QCs.
+    /// Returns true if the QC was attached, false if proposal not found or already has QC.
+    pub fn attachQC(self: *Self, blockNumber: u64, qc: types.QuorumCertificate) bool {
+        self.lock.lock();
+        defer self.lock.unlock();
+        const slot = @as(usize, @intCast(blockNumber % RING_SIZE));
+        const proposal = self.proposals[slot] orelse return false;
+        if (proposal.blockNumber != blockNumber) return false;
+        if (proposal.quorumCertificate != null) return false;
+        proposal.quorumCertificate = qc;
+
+        // If the proposal is already finalized, ensure finalizedNumber reflects it
+        if (proposal.isFinalized) {
+            self.finalizedNumber.store(blockNumber, .release);
+            self.irreversibleNumber.store(blockNumber, .release);
+        }
+        return true;
+    }
+
+    /// Check if a block has an associated QC.
+    pub fn hasQC(self: *Self, blockNumber: u64) bool {
+        self.lock.lock();
+        defer self.lock.unlock();
+        const slot = @as(usize, @intCast(blockNumber % RING_SIZE));
+        const proposal = self.proposals[slot] orelse return false;
+        return proposal.blockNumber == blockNumber and proposal.quorumCertificate != null;
     }
 
     /// Check if a block is past the finality point (irreversible).

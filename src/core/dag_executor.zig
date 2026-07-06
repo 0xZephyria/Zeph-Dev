@@ -436,7 +436,9 @@ pub const DAGExecutor = struct {
             if (conflict_count > 0) {
                 had_conflicts = true;
                 for (0..overlays.len) |i| {
-                    if (!conflicted[i]) overlays[i].commit() catch {};
+                    if (!conflicted[i]) overlays[i].commit() catch |err| {
+                        log.err("Failed to commit non-conflicted overlay {}: {}\n", .{ i, err });
+                    };
                 }
                 for (0..overlays.len) |i| {
                     if (!conflicted[i]) continue;
@@ -457,7 +459,9 @@ pub const DAGExecutor = struct {
                         @intCast(i),
                         lane_offsets[i],
                     );
-                    overlays[i].commit() catch {};
+                    overlays[i].commit() catch |err| {
+                        log.err("Failed to commit re-executed overlay {}: {}\n", .{ i, err });
+                    };
                 }
                 log.info("Zelius-OPE: {} cross-lane conflict(s) re-executed\n", .{conflict_count});
             }
@@ -515,10 +519,14 @@ pub const DAGExecutor = struct {
                 // CreditReceipt stores delta as [32]u8; interpret as u256
                 const delta_val = std.mem.readInt(u256, &receipt.deltaValue, .big);
                 if (receipt.isAddition) {
-                    self.state.addBalance(receipt.recipient, @intCast(delta_val)) catch {};
+                    self.state.addBalance(receipt.recipient, @intCast(delta_val)) catch |err| {
+                        log.err("Failed to apply delta balance for recipient {x}: {}\n", .{ receipt.recipient.bytes, err });
+                    };
                 } else {
                     const neg: i256 = -@as(i256, @intCast(delta_val));
-                    self.state.addBalance(receipt.recipient, neg) catch {};
+                    self.state.addBalance(receipt.recipient, neg) catch |err| {
+                        log.err("Failed to reverse delta balance for recipient {x}: {}\n", .{ receipt.recipient.bytes, err });
+                    };
                 }
             }
         }
@@ -529,7 +537,9 @@ pub const DAGExecutor = struct {
         // when conflicts were present. Only commit here when no conflicts ran.
         if (!had_conflicts) {
             for (overlays) |*overlay| {
-                overlay.commit() catch {};
+                overlay.commit() catch |err| {
+                    log.err("Failed to commit overlay: {}\n", .{err});
+                };
             }
         }
 
@@ -602,7 +612,9 @@ pub const DAGExecutor = struct {
 
         // Commit reward overlay to base state (after StateDelta capture)
         if (reward_overlay) |*ro| {
-            ro.commit() catch {};
+            ro.commit() catch |err| {
+                log.err("Failed to commit reward overlay: {}\n", .{err});
+            };
             ro.deinit();
         }
 
@@ -843,13 +855,17 @@ pub const DAGExecutor = struct {
         const actual_fee = tx.computePrice * @as(u256, budget_used);
         const refund_amount = max_fee - actual_fee;
         if (refund_amount > 0) {
-            overlay.addBalance(tx.from, @intCast(refund_amount)) catch {};
+            overlay.addBalance(tx.from, @intCast(refund_amount)) catch |err| {
+                log.err("Failed to refund {d} to {x}: {}\n", .{ refund_amount, tx.from.bytes, err });
+            };
         }
 
         // 7. Pay fee to producer
 
         if (actual_fee > 0) {
-            overlay.addBalance(self.config.producer, @intCast(actual_fee)) catch {};
+            overlay.addBalance(self.config.producer, @intCast(actual_fee)) catch |err| {
+                log.err("Failed to pay fee {d} to producer {x}: {}\n", .{ actual_fee, self.config.producer.bytes, err });
+            };
         }
 
         return TxResult{
@@ -890,6 +906,223 @@ pub const DAGExecutor = struct {
             g.value_ptr.* = code;
             return code;
         }
+    }
+
+    // ── Block Validation (Re-execute Without Commit) ──────────────────
+
+    /// Re-executes a block's transactions to compute the expected state root.
+    /// Does NOT commit any state changes — pure validation.
+    /// The caller must compare the returned root against `block.header.stateRoot`.
+    pub fn replayBlockTransactions(
+        self: *DAGExecutor,
+        transactions: []const types.Transaction,
+    ) !types.Hash {
+        // Build execution plan from the block's transactions
+        var plan = try dag_scheduler.scheduleFromTxs(
+            self.allocator,
+            transactions,
+            .{
+                .numThreads = self.config.numThreads,
+                .blockExecutionBudget = self.config.blockExecutionBudget,
+                .producer = self.config.producer,
+            },
+        );
+        defer plan.deinit();
+
+        if (plan.totalTxs == 0) {
+            return types.Hash{ .bytes = self.lastStateRoot };
+        }
+
+        // Clear per-block code cache
+        {
+            var it = self.code_cache.iterator();
+            while (it.next()) |entry| {
+                self.state.allocator.free(entry.value_ptr.*);
+            }
+            self.code_cache.clearRetainingCapacity();
+        }
+
+        // ── Setup: overlays, arenas, queues (same as executeBlock) ──────
+
+        const num_lanes = plan.lanes.len;
+        const overlays = try self.allocator.alloc(state_mod.Overlay, num_lanes);
+        var initialized_overlays: usize = 0;
+        defer {
+            for (overlays[0..initialized_overlays]) |*o| o.deinit();
+            self.allocator.free(overlays);
+        }
+
+        const delta_queues = try self.allocator.alloc(accounts.DeltaQueue, num_lanes);
+        var initialized_deltas: usize = 0;
+        defer {
+            for (delta_queues[0..initialized_deltas]) |*dq| dq.deinit();
+            self.allocator.free(delta_queues);
+        }
+
+        const receipt_queues = try self.allocator.alloc(accounts.ReceiptQueue, num_lanes);
+        var initialized_receipts: usize = 0;
+        defer {
+            for (receipt_queues[0..initialized_receipts]) |*rq| rq.deinit();
+            self.allocator.free(receipt_queues);
+        }
+
+        // Save and replace lane arenas
+        const saved_arenas = self.lane_arenas;
+        self.lane_arenas = try self.allocator.alloc(std.heap.ArenaAllocator, num_lanes);
+        for (0..num_lanes) |i| {
+            self.lane_arenas[i] = std.heap.ArenaAllocator.init(self.allocator);
+            overlays[i] = state_mod.Overlay.init(self.lane_arenas[i].allocator(), self.state);
+            overlays[i].finalizeInit();
+            initialized_overlays += 1;
+            delta_queues[i] = accounts.DeltaQueue.init(self.allocator);
+            initialized_deltas += 1;
+            receipt_queues[i] = accounts.ReceiptQueue.init(self.allocator);
+            initialized_receipts += 1;
+        }
+
+        // Compute lane offsets
+        const lane_offsets = try self.allocator.alloc(u32, plan.lanes.len);
+        defer self.allocator.free(lane_offsets);
+        var offset: u32 = 0;
+        for (plan.lanes, 0..) |*lane, i| {
+            lane_offsets[i] = offset;
+            offset += @intCast(lane.txs.len);
+        }
+
+        // ── Phase 1: Parallel Lane Execution ────────────────────────────
+
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = self.allocator, .n_jobs = self.config.numThreads });
+        defer pool.deinit();
+
+        var wg = std.Thread.WaitGroup{};
+        const contexts = try self.allocator.alloc(LaneContext, plan.lanes.len);
+        defer self.allocator.free(contexts);
+
+        for (plan.lanes, 0..) |*lane, i| {
+            contexts[i] = LaneContext{
+                .executor = self,
+                .lane = lane,
+                .overlay = &overlays[i],
+                .results = try self.allocator.alloc(TxResult, lane.txs.len),
+                .deltaQueue = &delta_queues[i],
+                .receiptQueue = &receipt_queues[i],
+                .laneId = @intCast(i),
+                .globalTxOffset = lane_offsets[i],
+                .totalBudgetUsed = 0,
+            };
+        }
+        defer for (contexts) |*c| {
+            if (c.results.len > 0) self.allocator.free(c.results);
+        };
+
+        const max_groups = @min(self.config.numThreads, @as(u32, @intCast(plan.lanes.len)));
+        const groups = try self.allocator.alloc(LaneGroup, max_groups);
+        defer self.allocator.free(groups);
+
+        {
+            var group_start: usize = 0;
+            for (0..max_groups) |g| {
+                const lanes_rem = plan.lanes.len - group_start;
+                const groups_rem = max_groups - g;
+                const chunk = lanes_rem / groups_rem + @intFromBool(lanes_rem % groups_rem != 0);
+                groups[g] = LaneGroup{
+                    .executor = self,
+                    .contexts = contexts[group_start..@min(group_start + chunk, plan.lanes.len)],
+                };
+                group_start += chunk;
+            }
+        }
+
+        for (groups) |*group| {
+            pool.spawnWg(&wg, executeLaneGroup, .{group});
+        }
+        wg.wait();
+
+        // ── Phase 1.5: Cross-Lane Conflict Resolution (no commits) ──────
+
+        if (overlays.len > 1) {
+            var conflicted = try self.allocator.alloc(bool, overlays.len);
+            defer self.allocator.free(conflicted);
+            @memset(conflicted, false);
+
+            for (1..overlays.len) |b| {
+                for (0..b) |a| {
+                    if (overlays[b].hasReadConflictWith(&overlays[a])) {
+                        conflicted[b] = true;
+                        break;
+                    }
+                }
+            }
+
+            var any_conflicted = false;
+            for (conflicted) |c| any_conflicted = any_conflicted or c;
+
+            if (any_conflicted) {
+                // Non-conflicted: nothing to commit (validation mode)
+                // Conflicted: re-execute with fresh overlay
+                for (0..overlays.len) |i| {
+                    if (!conflicted[i]) continue;
+                    self.lane_arenas[i].deinit();
+                    self.lane_arenas[i] = std.heap.ArenaAllocator.init(self.allocator);
+                    overlays[i] = state_mod.Overlay.init(self.lane_arenas[i].allocator(), self.state);
+                    overlays[i].finalizeInit();
+                    delta_queues[i].clear();
+                    receipt_queues[i].clear();
+                    self.executeLaneSequential(
+                        &plan.lanes[i],
+                        &overlays[i],
+                        contexts[i].results,
+                        &delta_queues[i],
+                        &receipt_queues[i],
+                        @intCast(i),
+                        lane_offsets[i],
+                    );
+                }
+            }
+        }
+
+        // ── Phase 3: State Root Computation (skip Phase 2 delta merge + Phase 2.5 rewards) ──
+
+        const state_root: types.Hash = blk: {
+            var total: usize = 0;
+            for (overlays[0..initialized_overlays]) |*o| {
+                total += o.dirty.count();
+            }
+
+            if (total == 0) break :blk types.Hash{ .bytes = self.lastStateRoot };
+
+            const keys = try self.allocator.alloc([32]u8, total);
+            defer self.allocator.free(keys);
+            const values = try self.allocator.alloc([]const u8, total);
+            var idx: usize = 0;
+            for (overlays[0..initialized_overlays]) |*o| {
+                var it = o.dirty.iterator();
+                while (it.next()) |entry| {
+                    keys[idx] = entry.key_ptr.*;
+                    values[idx] = try self.allocator.dupe(u8, entry.value_ptr.*);
+                    idx += 1;
+                }
+            }
+
+            var delta = state_root_mod.StateDelta{
+                .keys = keys,
+                .values = values,
+                .count = total,
+            };
+            const result_bytes = state_root_mod.sorted_delta.compute(self.allocator, &delta, self.lastStateRoot) catch self.lastStateRoot;
+
+            for (values) |v| self.allocator.free(v);
+
+            break :blk types.Hash{ .bytes = result_bytes };
+        };
+
+        // Restore saved arenas (validation does not take ownership)
+        for (self.lane_arenas) |*la| la.deinit();
+        self.allocator.free(self.lane_arenas);
+        self.lane_arenas = saved_arenas;
+
+        return state_root;
     }
 
     /// Get performance statistics.

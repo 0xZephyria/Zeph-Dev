@@ -38,6 +38,7 @@ pub const Blockchain = struct {
     chainId: u64,
     /// The id of the genesis block (immutable after initialization).
     genesisId: types.Hash,
+    lastFinalizedBlock: u64,
     lock: std.Thread.RwLock,
 
     /// Initializes a new Blockchain instance, loading the persisted head from the database.
@@ -50,6 +51,7 @@ pub const Blockchain = struct {
             .cachedHeadId = types.Hash.zero(),
             .chainId = chainId,
             .genesisId = types.Hash.zero(),
+            .lastFinalizedBlock = 0,
             .lock = .{},
         };
 
@@ -84,7 +86,9 @@ pub const Blockchain = struct {
 
     pub fn setGenesisId(self: *Blockchain, id: types.Hash) void {
         self.genesisId = id;
-        self.db.write("genesis_id", &id.bytes) catch {};
+        self.db.write("genesis_id", &id.bytes) catch |err| {
+            log.err("Failed to persist genesis_id: {}\n", .{err});
+        };
     }
 
     // ── Head Access (thread-safe) ─────────────────────────────────────
@@ -109,6 +113,20 @@ pub const Blockchain = struct {
             return block.header.number;
         }
         return 0;
+    }
+
+    pub fn setLastFinalized(self: *Blockchain, number: u64) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        if (number > self.lastFinalizedBlock) {
+            self.lastFinalizedBlock = number;
+        }
+    }
+
+    pub fn getLastFinalized(self: *Blockchain) u64 {
+        self.lock.lockShared();
+        defer self.lock.unlockShared();
+        return self.lastFinalizedBlock;
     }
 
     // ── Block Addition ────────────────────────────────────────────────
@@ -206,7 +224,9 @@ pub const Blockchain = struct {
         }
         self.currentBlock = block;
         self.cachedHeadId = blkId;
-        self.db.write("head", &blkId.bytes) catch {};
+        self.db.write("head", &blkId.bytes) catch |err| {
+            log.err("Failed to persist head: {}\n", .{err});
+        };
     }
 
     // ── Block Storage ─────────────────────────────────────────────────

@@ -54,6 +54,7 @@ pub const MsgAdaptiveQC: u64 = 0x22;
 pub const MsgSnowballQuery: u64 = 0x23;
 pub const MsgSnowballResponse: u64 = 0x24;
 pub const MsgEpochTransition: u64 = 0x25;
+pub const MsgThreadTimeoutProof: u64 = 0x26;
 
 // ── Network Constants ───────────────────────────────────────────────────
 
@@ -403,10 +404,18 @@ pub const AdaptiveQCMsg = struct {
     wovenRoot: core.types.Hash,
     threadCertBitmap: u128,
     aggregateSignature: [96]u8,
-    voterBitmap: [32]u8,
+    voterBitmap: []u8,
     totalAttestingStake: u256,
     randomnessSeed: [32]u8,
     tier: u8, // ConsensusTier as u8
+};
+
+/// Thread timeout proof message (substitute for missing committee cert)
+pub const ThreadTimeoutProofMsg = struct {
+    slot: u64,
+    threadId: u8,
+    proposerIndex: u32,
+    signature: [96]u8,
 };
 
 /// Snowball query message (Tier 3: request a peer's preference)

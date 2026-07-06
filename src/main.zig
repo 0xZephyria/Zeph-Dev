@@ -17,6 +17,14 @@ const Header = types.Header;
 const Address = types.Address;
 const Hash = types.Hash;
 
+// Callback wrapper: Pipeline → ZeliusEngine equivocation cross-reference.
+// File-level variable captures the engine pointer (Zig doesn't have closures).
+var g_equivocation_engine: ?*consensus.ZeliusEngine = null;
+fn checkProposalInEngine(blockNumber: u64) bool {
+    if (g_equivocation_engine) |eng| return eng.proposalExists(blockNumber);
+    return false;
+}
+
 // ── Version Info ─────────────────────────────────────────────────────────
 const VERSION = "0.2.0";
 const BUILD_TARGET = "native";
@@ -405,7 +413,7 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
     // Install signal handler
     const act = std.posix.Sigaction{
         .handler = .{ .handler = &sigHandler },
-        .mask = 0,
+        .mask = std.mem.zeroes(std.posix.sigset_t),
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.INT, &act, null);
@@ -522,7 +530,7 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
                 .address = val_addr,
                 .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
                 .status = .Active,
-                .blsPubKey = consensus.zelius.deriveBlsPubKey(seed_bytes),
+                .blsPubKey = consensus.keys.deriveBlsPubKey(seed_bytes),
                 .commission = 500,
                 .activationBlock = 0,
                 .slashCount = 0,
@@ -543,7 +551,7 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
             .address = validatorAddr,
             .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
             .status = .Active,
-            .blsPubKey = consensus.zelius.deriveBlsPubKey(minerPrivKey),
+            .blsPubKey = consensus.keys.deriveBlsPubKey(minerPrivKey),
             .commission = 500, // 5%
             .activationBlock = 0,
             .slashCount = 0,
@@ -556,7 +564,7 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
             .address = validatorAddr,
             .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
             .status = .Active,
-            .blsPubKey = consensus.zelius.deriveBlsPubKey(minerPrivKey),
+            .blsPubKey = consensus.keys.deriveBlsPubKey(minerPrivKey),
             .commission = 500, // 5%
             .activationBlock = 0,
             .slashCount = 0,
@@ -598,7 +606,7 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
     printComponentLine("├─", "DAG Pipeline  ", "256-shard mempool + parallel executor");
 
     // 5b. BlockProducer — unified production interface (DAG primary)
-    var producer = core.block_producer.BlockProducer.init(
+    var producer = try core.block_producer.BlockProducer.init(
         allocator,
         chain,
         &worldState,
@@ -631,6 +639,18 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
         .tier = engine.getCurrentTier(),
     });
     defer pipeline.deinit();
+    {
+        const stakes = try allocator.alloc(u256, validators.len);
+        defer allocator.free(stakes);
+        var total: u256 = 0;
+        for (validators, 0..) |v, idx| {
+            stakes[idx] = v.stake;
+            total += v.stake;
+        }
+        pipeline.setValidatorStakes(stakes, total);
+    }
+    g_equivocation_engine = engine;
+    pipeline.setEquivocationCheckCallback(checkProposalInEngine);
 
     var staking = consensus.Staking.init(allocator, .{});
     defer staking.deinit();
@@ -730,6 +750,10 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
     historicalState.setHead(chain.getHeadNumber());
 
     // 10. P2P Server
+
+    var voteCollector = try consensus.VoteCollector.init(allocator, 2048);
+    defer voteCollector.deinit();
+
     if (testnetValidators > 0) {
         enableStun = false; // Disable STUN for local testnet
         if (bootstrapAddrs.items.len == 0) {
@@ -754,8 +778,10 @@ fn startNode(backing_allocator: std.mem.Allocator, args: []const []const u8) !vo
     });
     defer p2pServer.deinit();
     nodeMiner.setP2p(p2pServer);
+    p2pServer.setDAGExecutor(&dagExecutor);
     p2pServer.setThreadAttestPool(&threadAttestPool);
     p2pServer.setSnowballEngine(&snowball);
+    p2pServer.voteCollector = &voteCollector;
 
     // Register bootstrap nodes
     for (bootstrapAddrs.items) |addr_str| {

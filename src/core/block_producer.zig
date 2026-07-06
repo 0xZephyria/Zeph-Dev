@@ -51,7 +51,7 @@ pub const BlockProducer = struct {
         worldState: *state_mod.State,
         producer: types.Address,
         executionBudget: u64,
-    ) BlockProducer {
+    ) !BlockProducer {
         const size = 16 * 1024 * 1024;
         const buf = std.posix.mmap(
             null,
@@ -60,7 +60,10 @@ pub const BlockProducer = struct {
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
-        ) catch @panic("mmap failed for block_buf");
+        ) catch |err| {
+            log.err("mmap failed for block_buf: {}\n", .{err});
+            return error.MmapFailed;
+        };
         var bp = BlockProducer{
             .allocator = allocator,
             .chain = chain,

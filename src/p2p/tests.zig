@@ -966,6 +966,7 @@ test "GulfStream - advance slot resets per-target counter (Firewall 3)" {
 test "Pipeline - reject stale blockNumber (Firewall 2)" {
     var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
     defer pipe.deinit();
+    pipe.setValidatorStakes(&[_]u256{100_000_000_000}, 100_000_000_000);
 
     // First proposal for block 1 succeeds with non-zero parentId
     var parentId1 = core.types.Hash.zero();
@@ -979,6 +980,7 @@ test "Pipeline - reject stale blockNumber (Firewall 2)" {
 test "Pipeline - genesis block with zero parentId is allowed (Firewall 1)" {
     var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
     defer pipe.deinit();
+    pipe.setValidatorStakes(&[_]u256{100_000_000_000}, 100_000_000_000);
 
     // Block 0 with zero parentId should be accepted (genesis case — head is 0 so BlockNumberStale is skipped)
     _ = try pipe.propose(0, core.types.Hash.zero(), &[_]core.types.Hash{});
@@ -987,6 +989,7 @@ test "Pipeline - genesis block with zero parentId is allowed (Firewall 1)" {
 test "Pipeline - reject skipping blockNumber (Firewall 2)" {
     var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
     defer pipe.deinit();
+    pipe.setValidatorStakes(&[_]u256{100_000_000_000}, 100_000_000_000);
 
     // Proposing block 2 when head is 0 should fail (skip)
     try testing.expectError(error.BlockNumberSkipsSlot, pipe.propose(2, core.types.Hash.zero(), &[_]core.types.Hash{}));
@@ -995,6 +998,7 @@ test "Pipeline - reject skipping blockNumber (Firewall 2)" {
 test "Pipeline - reject zero parentId for non-genesis (Firewall 1)" {
     var pipe = consensus.pipeline.Pipeline.init(testing.allocator, .{ .validatorCount = 1, .ourIndex = 0 });
     defer pipe.deinit();
+    pipe.setValidatorStakes(&[_]u256{100_000_000_000}, 100_000_000_000);
 
     // Block 1 with zero parentId should be rejected (non-genesis must have valid parent)
     try testing.expectError(error.InvalidParentId, pipe.propose(1, core.types.Hash.zero(), &[_]core.types.Hash{}));

@@ -124,7 +124,7 @@ pub const Vote = struct {
     signature: [96]u8, // BLS G2 signature
 };
 
-// ── VoteMsg (used by VotePool and P2P) ──────────────────────────────────
+// ── VoteMsg (used by VoteCollector and P2P) ─────────────────────────────
 
 pub const VoteMsg = struct {
     /// Canonical block id (Block.id()) voted on.
@@ -308,13 +308,29 @@ pub const ThreadCertificate = struct {
     /// Total stake of attesting weavers
     attestingStake: u256,
     /// Total stake of all eligible weavers for this thread
+    /// NOTE: This field is populated by the cert aggregator and should NOT be
+    /// trusted for quorum verification.  Quorum must be checked against the
+    /// actual committee/validator set stake (see adaptive.zig:addThreadCertificate).
     totalEligibleStake: u256,
+};
 
-    /// Check if the certificate has sufficient quorum (≥67% of eligible stake).
-    pub fn hasQuorum(self: *const ThreadCertificate) bool {
-        if (self.totalEligibleStake == 0) return false;
-        return @as(u512, self.attestingStake) * 3 > @as(u512, self.totalEligibleStake) * 2;
-    }
+// ── Thread Timeout Proof ──────────────────────────────────────────────────
+
+/// Proof that a thread committee failed to produce a certificate within the
+/// timeout window.  Signed by the **deterministic thread proposer** for that
+/// thread — a committee member selected via VRF at epoch boundary.
+///
+/// This preserves the committee-based security model: only a legitimate
+/// committee member for thread `T` can generate a valid timeout proof for
+/// thread `T`.  A malicious thread proposer who signs a false timeout
+/// (i.e., the committee DID produce a cert) can be detected and slashed.
+pub const ThreadTimeoutProof = struct {
+    slot: u64,
+    threadId: u8,
+    /// The designated thread proposer for this slot/thread
+    proposerIndex: u32,
+    /// BLS signature over (slot ‖ threadId ‖ "TIMEOUT")
+    signature: [96]u8,
 };
 
 // ── Woven Quorum Certificate ────────────────────────────────────────────
@@ -331,8 +347,8 @@ pub const WovenQuorumCertificate = struct {
     threadCertBitmap: u128,
     /// BLS aggregate signature of all voters (attestors at Tier 1-2, Snowball at Tier 3)
     aggregateSignature: [96]u8,
-    /// Bitmap of which validators signed (up to 256 validators for Tier 1-2)
-    voterBitmap: [32]u8,
+    /// Bitmap of which validators signed (dynamically sized for up to N validators)
+    voterBitmap: []u8,
     /// Total attesting stake
     totalAttestingStake: u256,
     /// Randomness seed for next slot
@@ -352,6 +368,11 @@ pub const WovenQuorumCertificate = struct {
         return @as(u512, self.totalAttestingStake) * 3 > @as(u512, total_stake) * 2;
     }
 
+    /// Free dynamically allocated fields.
+    pub fn deinit(self: *WovenQuorumCertificate, allocator: std.mem.Allocator) void {
+        allocator.free(self.voterBitmap);
+    }
+
     /// Compute the randomness seed for the next slot.
     pub fn computeNextSeed(self: *const WovenQuorumCertificate) [32]u8 {
         var hasher = std.crypto.hash.Blake3.init(.{});
@@ -363,6 +384,68 @@ pub const WovenQuorumCertificate = struct {
         var result: [32]u8 = undefined;
         hasher.final(&result);
         return result;
+    }
+};
+
+// ── Snowball Quorum Certificate (Tier 3) ───────────────────────────
+
+/// Snowball finalization proof — the set of sampled responder indices
+/// from the final Snowball round that achieved β consecutive Accept rounds.
+pub const SnowballQCProof = struct {
+    /// Validator indices that responded in the final round
+    roundResponders: [SNOWBALL_K]u32,
+    /// Number of valid responders in the final round (≤ SNOWBALL_K)
+    responderCount: u8,
+    /// Total Snowball rounds completed before finalization
+    roundsCompleted: u32,
+};
+
+/// Quorum Certificate produced by Snowball finalization at Tier 3.
+/// Unlike BLS-based WovenQuorumCertificate, this carries a probabilistic
+/// finality proof: a set of sampled responders from the final Snowball round.
+pub const SnowballQuorumCertificate = struct {
+    /// Slot this QC certifies
+    slot: u64,
+    /// Certified block hash
+    blockHash: core.types.Hash,
+    /// Which tier produced this QC (always FullLoom)
+    tier: ConsensusTier,
+    /// Epoch seed used for deterministic peer selection
+    epochSeed: [32]u8,
+    /// Validator count at the time of finalization
+    validatorCount: u32,
+    /// Snowball finalization proof
+    proof: SnowballQCProof,
+};
+
+/// Unified Quorum Certificate — handles both BLS (Tier 1-2) and Snowball (Tier 3) proofs.
+/// All formation and verification logic lives in quorum.zig.
+pub const QuorumCertificate = union(enum) {
+    bls: WovenQuorumCertificate,
+    snowball: SnowballQuorumCertificate,
+
+    /// Extract the slot from any QC variant.
+    pub fn slot(self: *const QuorumCertificate) u64 {
+        return switch (self.*) {
+            .bls => |qc| qc.slot,
+            .snowball => |qc| qc.slot,
+        };
+    }
+
+    /// Extract the block hash from any QC variant.
+    pub fn blockHash(self: *const QuorumCertificate) core.types.Hash {
+        return switch (self.*) {
+            .bls => |qc| qc.wovenRoot,
+            .snowball => |qc| qc.blockHash,
+        };
+    }
+
+    /// Extract the consensus tier from any QC variant.
+    pub fn tier(self: *const QuorumCertificate) ConsensusTier {
+        return switch (self.*) {
+            .bls => |qc| qc.tier,
+            .snowball => |qc| qc.tier,
+        };
     }
 };
 

@@ -4,7 +4,7 @@ const types = @import("../types.zig");
 threadlocal var last_addr_bytes: ?[32]u8 = null;
 threadlocal var last_stem: [31]u8 = undefined;
 
-/// Derive the Verkle stem for any account address using BLAKE3.
+/// Derive the KV stem for any account address using BLAKE3.
 /// stem = blake3(address)[0..31]
 /// TLS-cached: repeated calls with same address skip the hash.
 pub fn accountStem(addr: types.Address) [31]u8 {

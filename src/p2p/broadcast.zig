@@ -51,7 +51,7 @@ pub fn broadcastBlockViaTurbine(server: *Server, blockData: []const u8, blockNum
 
     if (!std.mem.eql(u8, &server.config.validatorAddress.bytes, &core.types.Address.zero().bytes)) {
         const my_stake = blk: {
-            for (server.engine.activeValidators) |v| {
+            for (server.engine.validator_set.active) |v| {
                 if (std.mem.eql(u8, &v.address.bytes, &server.config.validatorAddress.bytes)) {
                     break :blk v.stake;
                 }
@@ -67,7 +67,7 @@ pub fn broadcastBlockViaTurbine(server: *Server, blockData: []const u8, blockNum
     for (server.peers.items) |p| {
         if (p.handshakeComplete) {
             const stake = blk: {
-                for (server.engine.activeValidators) |v| {
+                for (server.engine.validator_set.active) |v| {
                     if (std.mem.eql(u8, &v.address.bytes, &p.validatorAddress.bytes)) {
                         break :blk v.stake;
                     }
@@ -174,8 +174,9 @@ pub fn drainAndBroadcastSlashEvents(server: *Server) !void {
             .validator = event.validator,
             .blockNumber = event.blockNumber,
             .reason = @intFromEnum(event.reason),
-            .evidenceHash = event.evidenceHash,
-            .timestamp = event.timestamp,
+            .evidenceHash1 = event.evidenceHash1,
+            .evidenceHash2 = event.evidenceHash2,
+            .reporterSignature = [_]u8{0} ** 96,
         };
         broadcastRaw(server, types.MsgSlashEvidence, std.mem.asBytes(&msg)) catch {};
     }
@@ -198,7 +199,7 @@ pub fn broadcast(server: *Server, msgCode: u64, msg: anytype) !void {
             peer.send(msgCode, msg) catch {};
         }
     }
-    server.stats.packetsSent += @intCast(peersCopy.len);
+    server.countPacketsSent(@intCast(peersCopy.len));
 }
 
 /// Broadcast raw bytes to all handshaked peers.
@@ -216,7 +217,7 @@ pub fn broadcastRaw(server: *Server, msgCode: u64, payload: []const u8) !void {
             peer.sendRaw(msgCode, payload) catch {};
         }
     }
-    server.stats.packetsSent += @intCast(peersCopy.len);
+    server.countPacketsSent(@intCast(peersCopy.len));
 }
 
 /// Broadcast to a subset of peers (fanout), excluding a specific peer.

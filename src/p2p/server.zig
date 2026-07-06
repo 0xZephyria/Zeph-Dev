@@ -80,6 +80,7 @@ pub const Server = struct {
     chain: *core.Blockchain,
     engine: *consensus.ZeliusEngine,
     dagPool: *core.dag_mempool.DAGMempool,
+    dagExecutor: ?*core.dag_executor.DAGExecutor,
 
     // Peer Management
     peers: std.ArrayListUnmanaged(*Peer),
@@ -104,9 +105,15 @@ pub const Server = struct {
     discovery: *discovery_mod.DiscoveryService,
     compressor: compression_mod.Compressor,
 
+    // ── QUIC Transport Endpoint ─────────────────────────────────────────
+    // Handles encrypted QUIC connections for Gulf Stream TX forwarding,
+    // block propagation, and secure peer-to-peer gossip. nil = plain UDP mode.
+    quicEndpoint: ?*zquic.QuicEndpoint,
+
     // Loom Genesis Adaptive Consensus subsystems
     threadAttestPool: ?*consensus.ThreadAttestationPool,
     snowballEngine: ?*consensus.Snowball,
+    voteCollector: *consensus.VoteCollector,
 
     // Subnet Management
     localSubnets: [16]u8,
@@ -161,7 +168,10 @@ pub const Server = struct {
         const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, posix.IPPROTO.UDP);
         errdefer posix.close(sock);
 
-        try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+        // NOTE: SO_REUSEADDR deliberately omitted. macOS lets multiple sockets bind the same UDP port
+        // when this option is set, causing packet delivery to the wrong socket when a zombie process
+        // holds the same port. Without it, bind fails with EADDRINUSE on conflict, and the retry loop
+        // in start() properly shifts to the next available port.
 
         const Timeval = extern struct {
             tv_sec: c_long,
@@ -214,6 +224,7 @@ pub const Server = struct {
             .chain = chain,
             .engine = engine,
             .dagPool = dagPool,
+            .dagExecutor = null,
             .peers = .{},
             .peersById = SwissMap(u64, *Peer, hashU64, eqU64).init(allocator),
             .peersByIp = std.AutoHashMap(u32, *Peer).init(allocator),
@@ -229,8 +240,10 @@ pub const Server = struct {
             .gulfStream = gulf_stream_mod.GulfStream.init(allocator, engine, dagPool),
             .discovery = discovery,
             .compressor = compression_mod.Compressor.init(allocator),
+            .quicEndpoint = null, // initialized below
             .threadAttestPool = null,
             .snowballEngine = null,
+            .voteCollector = undefined,
             .localSubnets = localSubnets,
             .subnetPeers = subnetPeers,
             .rateLimiter = std.AutoHashMap(u32, utils.TokenBucket).init(allocator),
@@ -245,6 +258,31 @@ pub const Server = struct {
         };
 
         try self.pool.init(.{ .allocator = allocator, .n_jobs = config.numWorkers });
+
+        // ── Initialize QUIC endpoint if identity key is provided ──────────
+        // The QUIC endpoint reuses the existing UDP socket so no additional
+        // port is needed. It provides encrypted transport for all peer traffic.
+        if (config.identityKey) |id_key| {
+            const quic_callbacks = zquic.EndpointCallbacks{
+                .conn_new = onQuicConnNew,
+                .conn_close = onQuicConnClose,
+                .stream_data = onQuicStreamData,
+                .ctx = self,
+            };
+            self.quicEndpoint = zquic.QuicEndpoint.init(
+                allocator,
+                sock,
+                id_key,
+                true, // server mode
+                quic_callbacks,
+            ) catch |err| blk: {
+                log.warn("QUIC: Failed to initialize endpoint ({}), falling back to plain UDP\n", .{err});
+                break :blk null;
+            };
+            if (self.quicEndpoint != null) {
+                log.debug("QUIC: Endpoint initialized (encrypted P2P transport active)\n", .{});
+            }
+        }
 
         return self;
     }
@@ -280,6 +318,8 @@ pub const Server = struct {
         self.gulfStream.deinit();
         self.compressor.deinit();
         self.discovery.deinit();
+
+        if (self.quicEndpoint) |ep| ep.deinit();
 
         self.allocator.destroy(self);
     }
@@ -386,7 +426,12 @@ pub const Server = struct {
     // ── Server Loop ─────────────────────────────────────────────────
 
     fn serverLoop(self: *Self) void {
+        var loop_count: u64 = 0;
         while (self.running) {
+            loop_count += 1;
+            if (loop_count % 100 == 0) {
+                log.debug("DEBUG serverLoop[{}]: iter={}, running={}, peers={}\n", .{ self.config.listenPort, loop_count, self.running, self.peers.items.len });
+            }
             const packetsSlice = self.packetPool.alloc(1) catch |err| {
                 log.debug("Packet pool exhausted ({}), trying to expand pool capacity...\n", .{err});
                 self.packetPool.expandCapacity(64) catch |exp_err| {
@@ -402,7 +447,9 @@ pub const Server = struct {
 
             const len = posix.recvfrom(self.sock, &packet.buffer, 0, @ptrCast(&from), &fromlen) catch |err| {
                 self.packetPool.free(packetsSlice.ptr);
-                self.flushOutbox() catch {};
+                self.flushOutbox() catch |flush_err| {
+                    log.warn("P2P recvfrom error + flushOutbox failed: recv={}, flush={}\n", .{ err, flush_err });
+                };
                 if (err == error.WouldBlock or err == error.Again) {
                     continue;
                 }
@@ -412,13 +459,40 @@ pub const Server = struct {
 
             packet.size = len;
             packet.addr = std.net.Address{ .in = @bitCast(from) };
-            self.stats.packetsReceived += 1;
-            self.stats.bytesReceived += len;
+            _ = @atomicRmw(u64, &self.stats.packetsReceived, .Add, 1, .monotonic);
+            _ = @atomicRmw(u64, &self.stats.bytesReceived, .Add, len, .monotonic);
+            log.debug("DEBUG serverLoop[{}]: received {} bytes from {}.{}.{}.{}:{}, is_quic={}\n", .{
+                self.config.listenPort,
+                len,
+                (from.addr >> 0) & 0xFF, (from.addr >> 8) & 0xFF,
+                (from.addr >> 16) & 0xFF, (from.addr >> 24) & 0xFF,
+                std.mem.bigToNative(u16, from.port),
+                len > 0 and (packet.data()[0] & 0x40) != 0,
+            });
 
             if (!self.checkConnectionBudget(from.addr)) {
                 self.packetPool.free(packetsSlice.ptr);
-                self.stats.rateLimitedPackets += 1;
+                _ = @atomicRmw(u64, &self.stats.rateLimitedPackets, .Add, 1, .monotonic);
                 continue;
+            }
+
+            // ── QUIC dispatch: route QUIC datagrams through the QUIC endpoint ──
+            // A datagram is QUIC if its first byte has the fixed bit (0x40) set.
+            // QUIC Initial packets start with 0xCx (long header + fixed bit).
+            // All other datagrams fall through to the existing UDP handler.
+            const data_slice = packet.data();
+            const is_quic = data_slice.len > 0 and (data_slice[0] & 0x40) != 0;
+            if (is_quic) {
+                if (self.quicEndpoint) |ep| {
+                    const peer_addr = std.net.Address{ .in = @bitCast(from) };
+                    _ = ep.serviceDatagram(data_slice, peer_addr);
+                    ep.flushSendQueue();
+                    self.packetPool.free(packetsSlice.ptr);
+                    self.flushOutbox() catch |flush_err| {
+                        log.warn("flushOutbox failed after QUIC dispatch: {}\n", .{flush_err});
+                    };
+                    continue;
+                }
             }
 
             if (self.checkRateLimit(from.addr)) {
@@ -426,13 +500,75 @@ pub const Server = struct {
                     self.packetPool.free(packetsSlice.ptr);
                 };
             } else {
-                self.stats.rateLimitedPackets += 1;
+                _ = @atomicRmw(u64, &self.stats.rateLimitedPackets, .Add, 1, .monotonic);
                 self.punishIp(from.addr, -5);
                 self.packetPool.free(packetsSlice.ptr);
             }
 
-            self.flushOutbox() catch {};
+            self.flushOutbox() catch |flush_err| {
+                log.warn("flushOutbox failed after packet handling: {}\n", .{flush_err});
+            };
+
+            // Also drain the QUIC send queue (for cases where QUIC data was
+            // queued outside of the QUIC datagram path, e.g. initial connect())
+            if (self.quicEndpoint) |ep| ep.flushSendQueue();
         }
+    }
+
+    // ── QUIC Endpoint Callbacks ──────────────────────────────────────────
+    //
+    // These static functions are called by the QuicEndpoint when connection
+    // or stream events occur. They bridge QUIC events into the existing
+    // P2P server message handling pipeline.
+
+    fn onQuicConnNew(conn: *zquic.QuicConn, ctx: ?*anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        log.debug("QUIC: New encrypted connection established from {f} (stake={})\n", .{
+            conn.peer_addr,
+            conn.stake_weight,
+        });
+        _ = @atomicRmw(u32, &self.stats.peersAuthenticated, .Add, 1, .monotonic);
+    }
+
+    fn onQuicConnClose(conn: *zquic.QuicConn, ctx: ?*anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        _ = self;
+        log.debug("QUIC: Connection closed: {f}\n", .{conn.peer_addr});
+    }
+
+    /// Called when data arrives on any QUIC stream.
+    /// Routes stream data back through the existing message dispatch pipeline.
+    fn onQuicStreamData(
+        conn: *zquic.QuicConn,
+        stream_id: u64,
+        data: []const u8,
+        fin: bool,
+        ctx: ?*anyopaque,
+    ) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        _ = fin;
+
+        // Log stream-specific routing
+        const stream_name: []const u8 = switch (stream_id) {
+            zquic.StreamIds.HANDSHAKE => "handshake",
+            zquic.StreamIds.GOSSIP => "gossip",
+            zquic.StreamIds.BLOCKS => "blocks",
+            zquic.StreamIds.GULF_STREAM => "gulf-stream",
+            else => "unknown",
+        };
+        log.debug("QUIC: Data on stream-{} ({s}) from {f}: {} bytes\n", .{
+            stream_id, stream_name, conn.peer_addr, data.len,
+        });
+
+        // Dispatch raw frame bytes through the existing handlePacket pipeline.
+        // The existing Zephyria packet framing is preserved inside QUIC STREAM frames.
+        var from_addr = conn.peer_addr.in;
+        self.handlePacket(@ptrCast(&from_addr), data) catch |err| {
+            if (err != error.EndOfStream) {
+                self.countInvalidPackets();
+                log.warn("QUIC stream dispatch error on stream-{}: {}\n", .{ stream_id, err });
+            }
+        };
     }
 
     fn handlePacketWrapper(self: *Self, packet: *Packet, ptr: [*]Packet) void {
@@ -440,7 +576,7 @@ pub const Server = struct {
         var fromAddr = packet.addr.in;
         self.handlePacket(@ptrCast(&fromAddr), packet.data()) catch |err| {
             if (err != error.EndOfStream) {
-                self.stats.invalidPackets += 1;
+                self.countInvalidPackets();
                 log.warn("P2P packet process error: {} from {d}.{d}.{d}.{d}:{}\n", .{
                     err,
                     (fromAddr.sa.addr >> 0) & 0xFF,
@@ -493,7 +629,7 @@ pub const Server = struct {
                     .peerRole = .Validator,
                     .stakeAmount = blk_stake: {
                         var amt: u64 = 0;
-                        for (self.engine.activeValidators) |v| {
+                        for (self.engine.validator_set.active) |v| {
                             if (std.mem.eql(u8, &v.address.bytes, &self.config.validatorAddress.bytes)) {
                                 amt = @intCast(@min(v.stake, std.math.maxInt(u64)));
                                 break;
@@ -504,13 +640,14 @@ pub const Server = struct {
                     .subscribedSubnets = self.localSubnets,
                 };
                 try p.send(types.MsgStatus, status);
+                log.debug("DEBUG handlePacket[{}]: StatusMsg response enqueued for {s}:{}\n", .{ self.config.listenPort, ip, p.port });
 
                 try self.peers.append(self.allocator, p);
                 try self.peersById.ensureTotalCapacity(self.peersById.count() + 1);
                 self.peersById.putAssumeCapacity(connId, p);
                 try self.peersByIp.put(sender.addr, p);
 
-                self.stats.peersConnected += 1;
+                _ = @atomicRmw(u32, &self.stats.peersConnected, .Add, 1, .monotonic);
                 log.debug("New peer: {s}:{} (total: {})\n", .{ ip, p.port, self.peers.items.len });
                 break :blk p;
             }
@@ -585,12 +722,29 @@ pub const Server = struct {
         };
         try p.send(types.MsgStatus, status);
 
+        // Also initiate a QUIC connection to this peer for encrypted transport
+        // Flush outbox immediately to ensure initial StatusMsg is sent
+        // (otherwise it may sit in the outbox indefinitely if no packets arrive)
+        self.flushOutbox() catch |flush_err| {
+            log.debug("Failed to flush outbox after connect: {}\n", .{flush_err});
+        };
+
+        log.debug("DEBUG connectPeerLocked[{}]: StatusMsg sent and flushed to {s}:{}\n", .{ self.config.listenPort, ip_str, p.port });
+
+        if (self.quicEndpoint) |ep| {
+            _ = ep.connect(address, null) catch |err| {
+                log.debug("QUIC: Failed to initiate connection to {f}: {}\n", .{ address, err });
+            };
+            // Flush QUIC send queue to ensure ClientHello is sent
+            ep.flushSendQueue();
+        }
+
         try self.peers.append(self.allocator, p);
         try self.peersById.ensureTotalCapacity(self.peersById.count() + 1);
         self.peersById.putAssumeCapacity(p.connection_id, p);
         try self.peersByIp.put(ip, p);
 
-        self.stats.peersConnected += 1;
+        _ = @atomicRmw(u32, &self.stats.peersConnected, .Add, 1, .monotonic);
         log.debug("Proactively connecting to peer: {s}:{} (total: {})\n", .{ ip_str, p.port, self.peers.items.len });
     }
 
@@ -602,8 +756,53 @@ pub const Server = struct {
         self.snowballEngine = sb;
     }
 
+    pub fn setDAGExecutor(self: *Self, exec: *core.dag_executor.DAGExecutor) void {
+        self.dagExecutor = exec;
+    }
+
     pub fn getStats(self: *const Self) ServerStats {
-        return self.stats;
+        return .{
+            .packetsReceived = @atomicLoad(u64, &self.stats.packetsReceived, .monotonic),
+            .packetsSent = @atomicLoad(u64, &self.stats.packetsSent, .monotonic),
+            .bytesReceived = @atomicLoad(u64, &self.stats.bytesReceived, .monotonic),
+            .bytesSent = @atomicLoad(u64, &self.stats.bytesSent, .monotonic),
+            .peersConnected = @atomicLoad(u32, &self.stats.peersConnected, .monotonic),
+            .peersAuthenticated = @atomicLoad(u32, &self.stats.peersAuthenticated, .monotonic),
+            .peersPruned = @atomicLoad(u64, &self.stats.peersPruned, .monotonic),
+            .rateLimitedPackets = @atomicLoad(u64, &self.stats.rateLimitedPackets, .monotonic),
+            .invalidPackets = @atomicLoad(u64, &self.stats.invalidPackets, .monotonic),
+            .shredsRelayed = @atomicLoad(u64, &self.stats.shredsRelayed, .monotonic),
+            .attestationsRelayed = @atomicLoad(u64, &self.stats.attestationsRelayed, .monotonic),
+            .blocksDroppedDuplicate = @atomicLoad(u64, &self.stats.blocksDroppedDuplicate, .monotonic),
+            .txsDroppedDuplicate = @atomicLoad(u64, &self.stats.txsDroppedDuplicate, .monotonic),
+            .blocksDroppedOversized = @atomicLoad(u64, &self.stats.blocksDroppedOversized, .monotonic),
+            .blocksDroppedSemantic = @atomicLoad(u64, &self.stats.blocksDroppedSemantic, .monotonic),
+        };
+    }
+
+    pub fn countInvalidPackets(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.invalidPackets, .Add, 1, .monotonic);
+    }
+    pub fn countBlocksDroppedOversized(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.blocksDroppedOversized, .Add, 1, .monotonic);
+    }
+    pub fn countBlocksDroppedSemantic(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.blocksDroppedSemantic, .Add, 1, .monotonic);
+    }
+    pub fn countBlocksDroppedDuplicate(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.blocksDroppedDuplicate, .Add, 1, .monotonic);
+    }
+    pub fn countTxsDroppedDuplicate(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.txsDroppedDuplicate, .Add, 1, .monotonic);
+    }
+    pub fn countShredsRelayed(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.shredsRelayed, .Add, 1, .monotonic);
+    }
+    pub fn countAttestationsRelayed(self: *Self) void {
+        _ = @atomicRmw(u64, &self.stats.attestationsRelayed, .Add, 1, .monotonic);
+    }
+    pub fn countPacketsSent(self: *Self, count: usize) void {
+        _ = @atomicRmw(u64, &self.stats.packetsSent, .Add, count, .monotonic);
     }
 
     pub fn getPeerCount(self: *Self) u32 {
@@ -691,16 +890,27 @@ pub const Server = struct {
         var capacity = self.config.rateLimit.baseCapacity;
         var refill_rate = self.config.rateLimit.baseRefill;
 
-        if (self.peersByIp.get(ip)) |peer| {
-            if (peer.stakeAmount > 0) {
-                const stake_f = @as(f64, @floatFromInt(peer.stakeAmount));
-                const multiplier = @min(@sqrt(stake_f / 10000.0), self.config.rateLimit.maxStakeMultiplier);
-                refill_rate *= @max(1.0, multiplier);
+        var peer_stake: u64 = 0;
+        var peer_is_committee: bool = false;
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            if (self.peersByIp.get(ip)) |peer| {
+                peer.mutex.lock();
+                defer peer.mutex.unlock();
+                peer_stake = peer.stakeAmount;
+                peer_is_committee = peer.isCommitteeMember;
             }
-            if (peer.isCommitteeMember) {
-                capacity *= self.config.rateLimit.committeeBurstMultiplier;
-                refill_rate *= self.config.rateLimit.committeeBurstMultiplier;
-            }
+        }
+
+        if (peer_stake > 0) {
+            const stake_f = @as(f64, @floatFromInt(peer_stake));
+            const multiplier = @min(@sqrt(stake_f / 10000.0), self.config.rateLimit.maxStakeMultiplier);
+            refill_rate *= @max(1.0, multiplier);
+        }
+        if (peer_is_committee) {
+            capacity *= self.config.rateLimit.committeeBurstMultiplier;
+            refill_rate *= self.config.rateLimit.committeeBurstMultiplier;
         }
 
         gop.value_ptr.capacity = capacity;
@@ -778,9 +988,11 @@ pub const Server = struct {
 
                 _ = self.peers.swapRemove(i);
 
-                self.stats.peersPruned += 1;
-                if (self.stats.peersConnected > 0) {
-                    self.stats.peersConnected -= 1;
+                _ = @atomicRmw(u64, &self.stats.peersPruned, .Add, 1, .monotonic);
+                var current = @atomicLoad(u32, &self.stats.peersConnected, .monotonic);
+                while (current > 0) {
+                    const actual = @cmpxchgWeak(u32, &self.stats.peersConnected, current, current - 1, .monotonic, .monotonic) orelse break;
+                    current = actual;
                 }
 
                 peer.deinit();
@@ -790,7 +1002,9 @@ pub const Server = struct {
                         .sequence = @bitCast(now),
                         .timestamp = now,
                     };
-                    peer.send(types.MsgPing, ping_msg) catch {};
+                    peer.send(types.MsgPing, ping_msg) catch |err| {
+                        log.warn("Failed to send ping to peer {s}:{}: {}\n", .{ peer.ipSlice(), peer.port, err });
+                    };
                 }
                 i += 1;
             }
@@ -856,8 +1070,20 @@ pub const Server = struct {
     fn flushOutboxLocked(self: *Self) !void {
         if (self.outbox.items.len == 0) return;
 
+        log.debug("DEBUG flushOutboxLocked[{}]: {} packets to send\n", .{ self.config.listenPort, self.outbox.items.len });
+        for (self.outbox.items, 0..) |pkt, i| {
+            const addr_in: *const posix.sockaddr.in = @ptrCast(@alignCast(&pkt.addr.any));
+            const dest_port = std.mem.bigToNative(u16, addr_in.port);
+            log.debug("DEBUG flushOutboxLocked[{}]:   pkt[{}] -> {d}.{d}.{d}.{d}:{}\n", .{
+                self.config.listenPort, i,
+                (addr_in.addr >> 0) & 0xFF, (addr_in.addr >> 8) & 0xFF,
+                (addr_in.addr >> 16) & 0xFF, (addr_in.addr >> 24) & 0xFF,
+                dest_port,
+            });
+        }
         const sent = try socket_utils.sendBatch(self.sock, self.outbox.items);
-        self.stats.packetsSent += @intCast(sent);
+        log.debug("DEBUG flushOutboxLocked[{}]: sent {} packets successfully\n", .{ self.config.listenPort, sent });
+        self.countPacketsSent(@intCast(sent));
 
         if (sent > 0) {
             const remaining = self.outbox.items.len - sent;

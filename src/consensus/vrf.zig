@@ -7,7 +7,7 @@ const secureZero = @import("utils").secureZero;
 const VRF_DST = "ZEPHYRIA_VRF_DST_V01";
 
 pub const DOMAIN_PROPOSER = "ZEPHYRIA_SORTITION_PROPOSER_V01";
-const DOMAIN_WEAVER = "ZEPHYRIA_SORTITION_WEAVER_V01";
+pub const DOMAIN_WEAVER = "ZEPHYRIA_SORTITION_WEAVER_V01";
 const DOMAIN_ATTESTOR = "ZEPHYRIA_SORTITION_ATTESTOR_V01";
 const DOMAIN_COMMITTEE = "ZEPHYRIA_SORTITION_COMMITTEE_V01";
 
@@ -103,8 +103,8 @@ pub const VRF = struct {
         sk_bytes: [32]u8,
         seed: [32]u8,
         slot: u64,
-        stake: u64,
-        total_stake: u64,
+        stake: u256,
+        total_stake: u256,
         expected_proposers: u32,
     ) !struct { eligible: bool, proof: [96]u8, vrf_hash: [32]u8 } {
         const input = buildSortitionInput(DOMAIN_PROPOSER, seed, slot, null);
@@ -121,8 +121,8 @@ pub const VRF = struct {
         seed: [32]u8,
         slot: u64,
         thread_id: u8,
-        stake: u64,
-        total_stake: u64,
+        stake: u256,
+        total_stake: u256,
         expected_weavers: u32,
     ) !struct { eligible: bool, proof: [96]u8 } {
         const extra = [_]u8{thread_id};
@@ -137,8 +137,8 @@ pub const VRF = struct {
         sk_bytes: [32]u8,
         seed: [32]u8,
         slot: u64,
-        stake: u64,
-        total_stake: u64,
+        stake: u256,
+        total_stake: u256,
         expected_attestors: u32,
     ) !struct { eligible: bool, proof: [96]u8 } {
         const input = buildSortitionInput(DOMAIN_ATTESTOR, seed, slot, null);

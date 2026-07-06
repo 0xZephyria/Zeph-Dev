@@ -375,7 +375,7 @@ pub const Miner = struct {
 
     fn checkProposerEligibility(self: *Miner, _: *types.Block, nextNumber: u64) bool {
         // Single-validator mode: always eligible
-        if (self.engine.activeValidators.len <= 1) return true;
+        if (self.engine.validator_set.active.len <= 1) return true;
         // In testnet/multi-node mode, determine proposer index from ZeliusEngine
         return self.engine.isProposerForSlot(nextNumber, self.ourValidatorIndex);
     }
@@ -408,6 +408,7 @@ pub const Miner = struct {
                 self.engine.getThreadCount(),
                 self.engine.getCurrentTier(),
             );
+            pipe.setEpochSeed(self.engine.epochSeed);
         }
 
         if (self.p2pServer) |server| {
@@ -415,7 +416,7 @@ pub const Miner = struct {
                 .newEpoch = self.engine.currentEpoch,
                 .tier = @intFromEnum(self.engine.getCurrentTier()),
                 .threadCount = self.engine.getThreadCount(),
-                .validatorCount = @intCast(self.engine.activeValidators.len),
+                .validatorCount = @intCast(self.engine.validator_set.active.len),
                 .epochSeed = self.engine.epochSeed,
             };
             server.broadcast(p2p.types.MsgEpochTransition, epoch_msg) catch {};

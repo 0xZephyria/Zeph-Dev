@@ -58,10 +58,26 @@ pub const SnowballInstance = struct {
     current_round_accept_stake: u256,
     /// Stake-weighted reject count
     current_round_reject_stake: u256,
+    /// Total stake of all respondents this round (for proportion check)
+    current_round_total_stake: u256,
     /// Confidence counter for Accept
     accept_confidence: u32,
     /// Confidence counter for Reject
     reject_confidence: u32,
+    /// Validator indices that already responded this round (dedup, max K)
+    round_responders: [types.SNOWBALL_K]u32,
+    /// How many unique responders we've seen this round
+    round_responder_count: u8,
+
+    /// Validator indices that were queried this round (set by setQueriedPeers)
+    round_queried_peers: [types.SNOWBALL_K]u32,
+    /// How many queried peers this round
+    round_queried_count: u8,
+
+    /// Snapshot of the final round's responders (set when finalized)
+    final_round_responders: [types.SNOWBALL_K]u32,
+    /// Count of valid final round responders
+    final_round_responder_count: u8,
 };
 
 // ── Snowball Engine ─────────────────────────────────────────────────────
@@ -78,9 +94,21 @@ pub const Snowball = struct {
     total_finalizations: u64,
     total_timeouts: u64,
 
+    /// Thread safety for concurrent P2P handler access.
+    mutex: std.Thread.Mutex,
+
+    pub const RecordResult = enum(u8) {
+        None,           // Not enough responses yet
+        Finalized,      // Block finalized (Accept or Reject)
+        RoundComplete,  // Round complete, ready for next round
+    };
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, config: SnowballConfig) Self {
+        // Snowball safety invariant: alpha > k/2 — without it no honest
+        // majority can ever form and the protocol never converges.
+        std.debug.assert(config.alpha * 2 > config.k);
         return Self{
             .allocator = allocator,
             .config = config,
@@ -88,6 +116,7 @@ pub const Snowball = struct {
             .total_rounds = 0,
             .total_finalizations = 0,
             .total_timeouts = 0,
+            .mutex = .{},
         };
     }
 
@@ -96,10 +125,15 @@ pub const Snowball = struct {
     }
 
     /// Start a new Snowball instance for a slot.
-    pub fn startInstance(self: *Self, slot: u64, block_hash: core.types.Hash) !void {
+    /// `preference` must be set by the caller based on block verification:
+    /// - Accept if the block is valid, has valid parent, no equivocation
+    /// - Reject if the block fails any verification step
+    pub fn startInstance(self: *Self, slot: u64, block_hash: core.types.Hash, preference: Preference) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         try self.instances.put(slot, SnowballInstance{
             .block_hash = block_hash,
-            .preference = .None,
+            .preference = preference,
             .consecutive_count = 0,
             .rounds_completed = 0,
             .finalized = false,
@@ -108,21 +142,69 @@ pub const Snowball = struct {
             .current_round_total = 0,
             .current_round_accept_stake = 0,
             .current_round_reject_stake = 0,
+            .current_round_total_stake = 0,
             .accept_confidence = 0,
             .reject_confidence = 0,
+            .round_responders = undefined,
+            .round_responder_count = 0,
+            .round_queried_peers = undefined,
+            .round_queried_count = 0,
+            .final_round_responders = undefined,
+            .final_round_responder_count = 0,
         });
     }
 
+    /// Register the set of validators that were queried for the current round.
+    /// Must be called before processing responses for this round.
+    pub fn setQueriedPeers(self: *Self, slot: u64, peers: []const u32) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const instance = self.instances.getPtr(slot) orelse return;
+        const count = @min(peers.len, types.SNOWBALL_K);
+        for (peers[0..count], 0..) |p, i| {
+            instance.round_queried_peers[i] = p;
+        }
+        instance.round_queried_count = @intCast(count);
+    }
+
     /// Record a response from a queried peer.
-    /// Returns true if finalization is now achieved.
+    /// `responder_index` is the validator index — used for deduplication.
+    /// `responder_stake` is that validator's voting stake.
+    /// Returns RecordResult indicating what action the caller should take.
     pub fn recordResponse(
         self: *Self,
         slot: u64,
+        responder_index: u32,
         accept: bool,
         responder_stake: u256,
-    ) bool {
-        var instance = self.instances.getPtr(slot) orelse return false;
-        if (instance.finalized) return true;
+    ) RecordResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var instance = self.instances.getPtr(slot) orelse return .None;
+        if (instance.finalized) return .Finalized;
+
+        // Verify the responder was in the queried set for this round.
+        const qc = instance.round_queried_count;
+        if (qc > 0) {
+            var found = false;
+            for (0..qc) |i| {
+                if (instance.round_queried_peers[i] == responder_index) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return .None;
+        }
+
+        // Deduplicate: reject if this validator already responded this round
+        const rc = instance.round_responder_count;
+        for (0..rc) |i| {
+            if (instance.round_responders[i] == responder_index) return .None;
+        }
+        if (rc < types.SNOWBALL_K) {
+            instance.round_responders[rc] = responder_index;
+            instance.round_responder_count = @intCast(rc + 1);
+        }
 
         if (accept) {
             instance.current_round_accept += 1;
@@ -132,24 +214,41 @@ pub const Snowball = struct {
             instance.current_round_reject_stake += responder_stake;
         }
         instance.current_round_total += 1;
+        instance.current_round_total_stake += responder_stake;
 
         // Check if we have k responses (round complete)
         if (instance.current_round_total >= self.config.k) {
             return self.completeRound(instance);
         }
 
-        return false;
+        return .None;
     }
 
     /// Complete a Snowball round and check for finalization.
-    fn completeRound(self: *Self, instance: *SnowballInstance) bool {
+    fn completeRound(self: *Self, instance: *SnowballInstance) RecordResult {
+        self.total_rounds += 1;
+
+        // Determine round winner using stake-weighted alpha.
         instance.rounds_completed += 1;
         self.total_rounds += 1;
 
-        // Determine round winner
-        const round_pref: Preference = if (instance.current_round_accept >= self.config.alpha)
+        // Determine round winner using stake-weighted alpha.
+        // For k sampled peers representing proportion of total stake,
+        // require both count AND stake to pass the alpha threshold.
+        // This prevents low-stake adversaries from biasing samples.
+        const k = self.config.k;
+        const alpha = self.config.alpha;
+        const total_s = instance.current_round_total_stake;
+        const accept_cnt = instance.current_round_accept >= alpha;
+        const reject_cnt = instance.current_round_reject >= alpha;
+        const accept_stake = total_s > 0 and
+            instance.current_round_accept_stake * k >= total_s * alpha;
+        const reject_stake = total_s > 0 and
+            instance.current_round_reject_stake * k >= total_s * alpha;
+
+        const round_pref: Preference = if (accept_cnt and accept_stake)
             .Accept
-        else if (instance.current_round_reject >= self.config.alpha)
+        else if (reject_cnt and reject_stake)
             .Reject
         else
             .None;
@@ -180,22 +279,31 @@ pub const Snowball = struct {
         if (instance.consecutive_count >= self.config.beta) {
             instance.finalized = true;
             self.total_finalizations += 1;
-            // Reset for next round (round is done)
-            self.resetRound(instance);
-            return true;
+            // Snapshot final round responders for QC formation
+            const rc = instance.round_responder_count;
+            for (0..rc) |i| {
+                instance.final_round_responders[i] = instance.round_responders[i];
+            }
+            instance.final_round_responder_count = rc;
+            return .Finalized;
         }
 
-        // Check timeout
+        // Check timeout — force Reject, never finalize an unconvincing block
         if (instance.rounds_completed >= self.config.max_rounds) {
-            // Force finalization with current preference
+            instance.preference = .Reject;
             instance.finalized = true;
             self.total_timeouts += 1;
-            return true;
+            // Snapshot final round responders for QC formation
+            const rc = instance.round_responder_count;
+            for (0..rc) |i| {
+                instance.final_round_responders[i] = instance.round_responders[i];
+            }
+            instance.final_round_responder_count = rc;
+            return .Finalized;
         }
 
-        // Reset for next round
-        self.resetRound(instance);
-        return false;
+        // Round complete, caller should dispatch next round via nextRound()
+        return .RoundComplete;
     }
 
     fn resetRound(self: *Self, instance: *SnowballInstance) void {
@@ -205,10 +313,15 @@ pub const Snowball = struct {
         instance.current_round_total = 0;
         instance.current_round_accept_stake = 0;
         instance.current_round_reject_stake = 0;
+        instance.current_round_total_stake = 0;
+        instance.round_responder_count = 0;
+        instance.round_queried_count = 0;
     }
 
     /// Check if a slot's instance has finalized.
-    pub fn isFinalized(self: *const Self, slot: u64) bool {
+    pub fn isFinalized(self: *Self, slot: u64) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.instances.get(slot)) |instance| {
             return instance.finalized;
         }
@@ -216,28 +329,104 @@ pub const Snowball = struct {
     }
 
     /// Get the preference for a slot's instance.
-    pub fn getPreference(self: *const Self, slot: u64) Preference {
+    pub fn getPreference(self: *Self, slot: u64) Preference {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.instances.get(slot)) |instance| {
             return instance.preference;
         }
         return .None;
     }
 
+    /// Extract a SnowballQCProof from a finalized instance.
+    /// Returns null if the instance is not finalized or doesn't exist.
+    pub fn getFinalizationProof(self: *Self, slot: u64) ?types.SnowballQCProof {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const instance = self.instances.getPtr(slot) orelse return null;
+        if (!instance.finalized) return null;
+        return types.SnowballQCProof{
+            .roundResponders = instance.final_round_responders,
+            .responderCount = instance.final_round_responder_count,
+            .roundsCompleted = instance.rounds_completed,
+        };
+    }
+
     /// Check if the block was accepted.
-    pub fn isAccepted(self: *const Self, slot: u64) bool {
+    pub fn isAccepted(self: *Self, slot: u64) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.instances.get(slot)) |instance| {
             return instance.finalized and instance.preference == .Accept;
         }
         return false;
     }
 
-    /// Remove a completed instance (cleanup).
+    /// Check if a round is complete and the instance is ready for the next round.
+    /// Returns true if the current round has collected enough responses for the
+    /// next round to begin, regardless of whether finalization was achieved.
+    pub fn isRoundComplete(self: *Self, slot: u64) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const instance = self.instances.getPtr(slot) orelse return false;
+        if (instance.finalized) return false;
+        return instance.current_round_total >= self.config.k;
+    }
+
+    /// Reset the current round and return the peers for the next round.
+    /// Advances `rounds_completed` and provides fresh peers for the caller
+    /// to dispatch queries to.
+    pub fn nextRound(
+        self: *Self,
+        slot: u64,
+        seed: [32]u8,
+        our_index: u32,
+        validator_count: u32,
+    ) ?[types.SNOWBALL_K]u32 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const instance = self.instances.getPtr(slot) orelse return null;
+        if (instance.finalized) return null;
+
+        instance.rounds_completed += 1;
+
+        // Reset per-round state
+        instance.current_round_accept = 0;
+        instance.current_round_reject = 0;
+        instance.current_round_total = 0;
+        instance.current_round_accept_stake = 0;
+        instance.current_round_reject_stake = 0;
+        instance.current_round_total_stake = 0;
+        instance.round_responder_count = 0;
+        instance.round_queried_count = 0;
+
+        const peers = self.selectPeers(
+            seed,
+            slot,
+            instance.rounds_completed,
+            validator_count,
+            our_index,
+        ) catch return null;
+
+        for (peers, 0..) |p, i| {
+            instance.round_queried_peers[i] = p;
+        }
+        instance.round_queried_count = types.SNOWBALL_K;
+
+        return peers;
+    }
+
+    /// Remove an instance (cleanup after finalization).
     pub fn removeInstance(self: *Self, slot: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         _ = self.instances.fetchRemove(slot);
     }
 
     /// Prune all instances older than a given slot.
     pub fn pruneOlderThan(self: *Self, slot: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         var to_remove = std.ArrayList(u64).init(self.allocator);
         defer to_remove.deinit();
 
@@ -254,6 +443,8 @@ pub const Snowball = struct {
     }
 
     /// Select k random peers for querying (uses Blake3 PRNG).
+    /// `our_index` is added to the PRNG seed so each validator queries
+    /// a different (but deterministic and verifiable) set of peers.
     /// Returns indices into the validator array.
     pub fn selectPeers(
         self: *const Self,
@@ -261,6 +452,7 @@ pub const Snowball = struct {
         slot: u64,
         round: u32,
         validator_count: u32,
+        our_index: u32,
     ) ![types.SNOWBALL_K]u32 {
         _ = self;
         var peers: [types.SNOWBALL_K]u32 = undefined;
@@ -271,7 +463,16 @@ pub const Snowball = struct {
             return peers;
         }
 
-        var state = seed;
+        var state: [32]u8 = undefined;
+        {
+            var hasher = std.crypto.hash.Blake3.init(.{});
+            hasher.update(&seed);
+            var buf4: [4]u8 = undefined;
+            std.mem.writeInt(u32, &buf4, our_index, .big);
+            hasher.update(&buf4);
+            hasher.final(&state);
+        }
+
         var selected: usize = 0;
         var attempts: usize = 0;
         const max_attempts = types.SNOWBALL_K * 4;
@@ -287,7 +488,6 @@ pub const Snowball = struct {
             const val = std.mem.readInt(u32, state[0..4], .big);
             const idx = val % validator_count;
 
-            // Dedup: linear scan over already-selected (K=20, O(K) is fine)
             const is_dup = blk: {
                 for (0..selected) |j| {
                     if (peers[j] == idx) break :blk true;
@@ -299,10 +499,20 @@ pub const Snowball = struct {
                 selected += 1;
             }
         }
-        // Fill any remaining slots with fallback indices
+        var fallback_idx: u32 = @intCast(selected);
         while (selected < types.SNOWBALL_K) {
-            peers[selected] = @intCast(selected % validator_count);
-            selected += 1;
+            const candidate = fallback_idx % validator_count;
+            const is_dup = blk: {
+                for (0..selected) |j| {
+                    if (peers[j] == candidate) break :blk true;
+                }
+                break :blk false;
+            };
+            if (!is_dup) {
+                peers[selected] = candidate;
+                selected += 1;
+            }
+            fallback_idx += 1;
         }
 
         return peers;

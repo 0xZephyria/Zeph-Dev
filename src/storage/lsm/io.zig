@@ -336,7 +336,7 @@ pub const IoUringEngine = struct {
 
         // Map SQ ring
         const sq_ring_sz = params.sq_off.array + params.sq_entries * @sizeOf(u32);
-        const sq_ptr = std.posix.mmap(
+        const sq_slice = try std.posix.mmap(
             null,
             sq_ring_sz,
             std.posix.PROT.READ | std.posix.PROT.WRITE,
@@ -344,8 +344,7 @@ pub const IoUringEngine = struct {
             self.ring_fd,
             @intCast(std.os.linux.IORING_OFF_SQ_RING),
         );
-        // Assume sq_ptr is valid — real code checks for MAP_FAILED
-        const sq_base: [*]u8 = @ptrCast(sq_ptr);
+        const sq_base = sq_slice.ptr;
 
         self.sq_ring.head = @ptrCast(@alignCast(sq_base + params.sq_off.head));
         self.sq_ring.tail = @ptrCast(@alignCast(sq_base + params.sq_off.tail));
@@ -356,7 +355,7 @@ pub const IoUringEngine = struct {
 
         // Map SQEs
         const sqes_sz = params.sq_entries * @sizeOf(SQE);
-        const sqes_ptr = std.posix.mmap(
+        const sqes_slice = try std.posix.mmap(
             null,
             sqes_sz,
             std.posix.PROT.READ | std.posix.PROT.WRITE,
@@ -364,11 +363,11 @@ pub const IoUringEngine = struct {
             self.ring_fd,
             @intCast(std.os.linux.IORING_OFF_SQES),
         );
-        self.sqes = @as([*]SQE, @ptrCast(@alignCast(sqes_ptr)))[0..params.sq_entries];
+        self.sqes = @as([*]SQE, @ptrCast(@alignCast(sqes_slice.ptr)))[0..params.sq_entries];
 
         // Map CQ ring
         const cq_ring_sz = params.cq_off.cqes + params.cq_entries * @sizeOf(CQE);
-        const cq_ptr = std.posix.mmap(
+        const cq_slice = try std.posix.mmap(
             null,
             cq_ring_sz,
             std.posix.PROT.READ | std.posix.PROT.WRITE,
@@ -376,7 +375,7 @@ pub const IoUringEngine = struct {
             self.ring_fd,
             @intCast(std.os.linux.IORING_OFF_CQ_RING),
         );
-        const cq_base: [*]u8 = @ptrCast(cq_ptr);
+        const cq_base = cq_slice.ptr;
 
         self.cq_ring.head = @ptrCast(@alignCast(cq_base + params.cq_off.head));
         self.cq_ring.tail = @ptrCast(@alignCast(cq_base + params.cq_off.tail));

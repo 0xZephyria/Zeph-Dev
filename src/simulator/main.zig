@@ -118,7 +118,7 @@ pub fn main() !void {
             .address = val_addr,
             .stake = 100_000_000_000_000_000_000_000, // 100k ZEE
             .status = .Active,
-            .blsPubKey = consensus.zelius.deriveBlsPubKey(seed_bytes),
+            .blsPubKey = consensus.keys.deriveBlsPubKey(seed_bytes),
             .commission = 500, // 5%
             .activationBlock = 0,
             .slashCount = 0,

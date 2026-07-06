@@ -76,6 +76,13 @@ pub fn build(b: *std.Build) void {
     p2p_mod.addImport("net_utils", net_utils_mod);
     p2p_mod.addImport("rlp", rlp_mod);
 
+    // QUIC module (standalone, wired into p2p) — plan §Layer 1
+    const quic_mod = b.addModule("quic", .{
+        .root_source_file = b.path("src/p2p/quic/root.zig"),
+    });
+    quic_mod.addImport("core", core_mod);
+    p2p_mod.addImport("quic", quic_mod);
+
     // RPC module (JSON-RPC API)
     const rpc_mod = b.addModule("rpc", .{
         .root_source_file = b.path("src/rpc/mod.zig"),
@@ -118,6 +125,8 @@ pub fn build(b: *std.Build) void {
     state_bridge_mod.addImport("vm", vm_mod);
     vm_bridge_mod.addImport("state_bridge", state_bridge_mod);
 
+    const sanitize_thread = b.option(bool, "sanitize-thread", "Enable Thread Sanitizer") orelse false;
+
     // ---- Zephyria blockchain node executable ----
     const node_exe = b.addExecutable(.{
         .name = "zephyria",
@@ -127,6 +136,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    node_exe.root_module.sanitize_thread = sanitize_thread;
     node_exe.root_module.addImport("storage", storage_mod);
     node_exe.root_module.addImport("consensus", consensus_mod);
     node_exe.root_module.addImport("p2p", p2p_mod);
@@ -148,6 +158,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    sim_exe.root_module.sanitize_thread = sanitize_thread;
     sim_exe.root_module.addImport("storage", storage_mod);
     sim_exe.root_module.addImport("consensus", consensus_mod);
     sim_exe.root_module.addImport("p2p", p2p_mod);
@@ -167,6 +178,21 @@ pub fn build(b: *std.Build) void {
     }
     const run_node_step = b.step("run", "Run the Zephyria blockchain node");
     run_node_step.dependOn(&run_node_cmd.step);
+
+    // ---- Solana BPF ELF test runner ----
+    const solana_elf_test = b.addExecutable(.{
+        .name = "solana-elf-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/vm/solana/test_elf.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_solana_elf_test = b.addRunArtifact(solana_elf_test);
+    if (b.args) |args| run_solana_elf_test.addArgs(args);
+    const solana_elf_step = b.step("elf-test", "Run Solana BPF ELF test");
+    solana_elf_step.dependOn(&run_solana_elf_test.step);
+    b.installArtifact(solana_elf_test);
 
     // ---- Blockchain node tests ----
     const node_test_step = b.step("test", "Run all tests");
@@ -290,6 +316,65 @@ pub fn build(b: *std.Build) void {
     const p2p_test_step = b.step("test-p2p", "Run P2P unit tests");
     p2p_test_step.dependOn(&b.addRunArtifact(p2p_test).step);
 
+    // QUIC unit tests (RFC 9001 test vectors — no network required)
+    const quic_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/p2p/quic/quic_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    quic_test.root_module.addImport("core", core_mod);
+    node_test_step.dependOn(&b.addRunArtifact(quic_test).step);
+
+    // Individual QUIC module tests (tls, frames, packet codec)
+    const quic_tls_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/p2p/quic/tls.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    quic_tls_test.root_module.addImport("core", core_mod);
+    quic_tls_test.root_module.addImport("crypto", crypto_mod);
+    node_test_step.dependOn(&b.addRunArtifact(quic_tls_test).step);
+
+    const quic_frames_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/p2p/quic/frames.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    node_test_step.dependOn(&b.addRunArtifact(quic_frames_test).step);
+
+    const quic_packet_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/p2p/quic/transport/packet.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    node_test_step.dependOn(&b.addRunArtifact(quic_packet_test).step);
+
+    const quic_test_step = b.step("test-quic", "Run QUIC unit tests (RFC 9001 test vectors)");
+    quic_test_step.dependOn(&b.addRunArtifact(quic_test).step);
+    quic_test_step.dependOn(&b.addRunArtifact(quic_tls_test).step);
+    quic_test_step.dependOn(&b.addRunArtifact(quic_frames_test).step);
+    quic_test_step.dependOn(&b.addRunArtifact(quic_packet_test).step);
+
+    // QUIC connection state machine tests
+    const quic_conn_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/p2p/quic/conn.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    quic_conn_test.root_module.addImport("core", core_mod);
+    node_test_step.dependOn(&b.addRunArtifact(quic_conn_test).step);
+    quic_test_step.dependOn(&b.addRunArtifact(quic_conn_test).step);
+
     // DAG Mempool tests
     const dag_test = b.addTest(.{
         .root_module = b.createModule(.{
@@ -359,6 +444,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    blockchain_benchmark.root_module.sanitize_thread = sanitize_thread;
     blockchain_benchmark.root_module.addImport("storage", storage_mod);
     blockchain_benchmark.root_module.addImport("consensus", consensus_mod);
     blockchain_benchmark.root_module.addImport("core", core_mod);

@@ -50,7 +50,7 @@ fn sendBatchLinux(
     // We can't use variable length array for msgs on stack easily in Zig without comptime known upper bound?
     // But PACKETS_PER_BATCH is constant.
     var msgs: [PACKETS_PER_BATCH]std.os.linux.mmsghdr = undefined;
-    var iovecs: [PACKETS_PER_BATCH]std.os.linux.iovec = undefined;
+    var iovecs: [PACKETS_PER_BATCH]std.posix.iovec = undefined;
     // We need to store sockaddrs because mmsghdr takes pointers
 
     // usage of std.net.Address.any implies we should use storage capable of holding both.
@@ -63,7 +63,7 @@ fn sendBatchLinux(
         const packet = &packets[i];
 
         iovecs[i] = .{
-            .base = packet.data().ptr,
+            .base = @constCast(packet.data().ptr),
             .len = packet.size,
         };
 
@@ -75,7 +75,7 @@ fn sendBatchLinux(
         @memcpy(@as([*]u8, @ptrCast(dst_ptr))[0..addr_len], @as([*]const u8, @ptrCast(src_ptr))[0..addr_len]);
 
         msgs[i] = .{
-            .msg_hdr = .{
+            .hdr = .{
                 .name = @ptrCast(&sockaddr_storage[i]),
                 .namelen = addr_len,
                 .iov = @ptrCast(&iovecs[i]),
@@ -84,11 +84,11 @@ fn sendBatchLinux(
                 .controllen = 0,
                 .flags = 0,
             },
-            .msg_len = 0,
+            .len = 0,
         };
     }
 
-    const rc = std.os.linux.sendmmsg(socket, &msgs, @intCast(count), 0);
+    const rc = std.os.linux.sendmmsg(socket, @ptrCast(&msgs), @intCast(count), 0);
     return switch (std.posix.errno(rc)) {
         .SUCCESS => @intCast(rc),
         else => |e| return std.posix.unexpectedErrno(e),

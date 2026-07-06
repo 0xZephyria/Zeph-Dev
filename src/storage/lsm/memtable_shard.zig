@@ -50,8 +50,8 @@ pub const Shard = struct {
     size_bytes: Atomic(usize),
     /// Entry count
     count: Atomic(u64),
-    /// Lock for writes (reads are mostly lock-free via copy)
-    write_lock: std.Thread.Mutex,
+    /// Lock for writes and reads to avoid HashMap data race
+    rw_lock: std.Thread.RwLock,
     /// Sequence counter for this shard
     sequence: Atomic(u64),
     /// Is this shard frozen (pending flush)?
@@ -66,7 +66,7 @@ pub const Shard = struct {
             .data = std.AutoHashMap([32]u8, Entry).init(allocator),
             .size_bytes = Atomic(usize).init(0),
             .count = Atomic(u64).init(0),
-            .write_lock = std.Thread.Mutex{},
+            .rw_lock = std.Thread.RwLock{},
             .sequence = Atomic(u64).init(0),
             .frozen = Atomic(bool).init(false),
         };
@@ -90,8 +90,8 @@ pub const Shard = struct {
             return error.ShardFrozen;
         }
 
-        self.write_lock.lock();
-        defer self.write_lock.unlock();
+        self.rw_lock.lock();
+        defer self.rw_lock.unlock();
 
         const seq = self.sequence.fetchAdd(1, .monotonic);
         const val_copy = try self.allocator.dupe(u8, value);
@@ -124,8 +124,8 @@ pub const Shard = struct {
             return error.ShardFrozen;
         }
 
-        self.write_lock.lock();
-        defer self.write_lock.unlock();
+        self.rw_lock.lock();
+        defer self.rw_lock.unlock();
 
         const seq = self.sequence.fetchAdd(1, .monotonic);
 
@@ -150,16 +150,22 @@ pub const Shard = struct {
         _ = self.size_bytes.fetchAdd(32 + 24, .monotonic); // key + overhead
     }
 
-    /// Get a value (lock-free read)
-    pub fn get(self: *const Self, key: [32]u8) ?[]const u8 {
+    /// Get a value (thread-safe read)
+    pub fn get(self: *Self, key: [32]u8) ?[]const u8 {
+        self.rw_lock.lockShared();
+        defer self.rw_lock.unlockShared();
+
         if (self.data.get(key)) |entry| {
             return entry.value;
         }
         return null;
     }
 
-    /// Get entry with metadata
-    pub fn getEntry(self: *const Self, key: [32]u8) ?Entry {
+    /// Get entry with metadata (thread-safe read)
+    pub fn getEntry(self: *Self, key: [32]u8) ?Entry {
+        self.rw_lock.lockShared();
+        defer self.rw_lock.unlockShared();
+
         return self.data.get(key);
     }
 
@@ -173,10 +179,13 @@ pub const Shard = struct {
         self.frozen.store(true, .release);
     }
 
-    /// Get all entries sorted by key
-    pub fn getSorted(self: *const Self, allocator: Allocator) ![]Entry {
+    /// Get all entries sorted by key (thread-safe read)
+    pub fn getSorted(self: *Self, allocator: Allocator) ![]Entry {
         var entries: std.ArrayList(Entry) = .empty;
         errdefer entries.deinit(allocator);
+
+        self.rw_lock.lockShared();
+        defer self.rw_lock.unlockShared();
 
         var it = self.data.iterator();
         while (it.next()) |kv| {

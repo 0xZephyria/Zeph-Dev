@@ -7,14 +7,14 @@
 //   • Predictable hashing (fixed layout, no dynamic fields)
 //   • SIMD-friendly batch processing
 //   • Zero dynamic allocation for header operations
-//   • Efficient Verkle trie leaf encoding
+//   • Efficient KV HighperfDB and ZephyrDB
 
 const std = @import("std");
 const types = @import("../types.zig");
 const Blake3 = std.crypto.hash.Blake3;
 
 /// Universal Account Header.
-/// Every account in the Verkle trie starts with this header.
+/// Every account in the KV HighperfDB and ZephyrDB starts with this header.
 pub const AccountHeader = struct {
     /// Schema version for future upgrades
     version: u8 = 1,

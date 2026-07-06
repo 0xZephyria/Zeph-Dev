@@ -20,12 +20,49 @@
 const std = @import("std");
 const core = @import("core");
 const types = @import("types.zig");
+const committees_mod = @import("committees.zig");
+const vrf_mod = @import("vrf.zig");
 
 const blst_mod = core.crypto.blst;
 const blst_c = blst_mod.c;
 const secureZero = @import("utils").secureZero;
 
 const BLS_DST = "ZEPHYRIA_BLS_DST_V01";
+
+// ── BLS Signature Verification ─────────────────────────────────────────
+
+/// Verify a thread attestation's BLS signature against the attester's public key.
+/// Message: threadAttestationMessage(slot, threadId, thread_root) —
+/// defined in types.zig as domain-separated Blake3.
+pub fn verifyAttestationSignature(
+    pk_bytes: [48]u8,
+    signature: [96]u8,
+    slot: u64,
+    threadId: u8,
+    thread_root: core.types.Hash,
+) bool {
+    const msg = types.threadAttestationMessage(slot, threadId, thread_root);
+
+    var sig_affine: blst_c.blst_p2_affine = undefined;
+    if (blst_c.blst_p2_uncompress(&sig_affine, &signature) != blst_c.BLST_SUCCESS) return false;
+    if (!blst_c.blst_p2_affine_in_g2(&sig_affine)) return false;
+
+    var pk_affine: blst_c.blst_p1_affine = undefined;
+    if (blst_c.blst_p1_uncompress(&pk_affine, &pk_bytes) != blst_c.BLST_SUCCESS) return false;
+    if (!blst_c.blst_p1_affine_in_g1(&pk_affine)) return false;
+
+    return blst_c.blst_core_verify_pk_in_g1(
+        &pk_affine,
+        &sig_affine,
+        true,
+        &msg,
+        msg.len,
+        BLS_DST.ptr,
+        BLS_DST.len,
+        null,
+        0,
+    ) == blst_c.BLST_SUCCESS;
+}
 
 // ── Thread Attestation Pool ─────────────────────────────────────────────
 
@@ -109,7 +146,21 @@ pub const ThreadAttestationPool = struct {
     }
 
     /// Add a thread attestation. Returns true if a new certificate was produced.
-    pub fn addAttestation(self: *Self, attestation: types.ThreadAttestation) !bool {
+    /// `validators` must be the active validator set for this epoch (used to verify
+    /// the attester's BLS signature and derive their actual stake).
+    /// `tier` controls which membership check applies:
+    ///   - Tier 2 (CommitteeLoom): committee membership via `committee_manager`
+    ///   - Tier 3 (FullLoom): VRF weaver proof verification via `epoch_seed` and `total_active_stake`
+    /// `epoch_seed` and `total_active_stake` are required at Tier 3 for VRF verification.
+    pub fn addAttestation(
+        self: *Self,
+        attestation: types.ThreadAttestation,
+        validators: []const types.ValidatorInfo,
+        tier: types.ConsensusTier,
+        committee_manager: ?*const committees_mod.CommitteeManager,
+        epoch_seed: [32]u8,
+        total_active_stake: u256,
+    ) !bool {
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -130,10 +181,67 @@ pub const ThreadAttestationPool = struct {
             return false;
         }
 
+        // Verify attester exists in validator set
+        if (attestation.validatorIndex >= validators.len) {
+            self.total_attestations_rejected += 1;
+            return false;
+        }
+
+        const pk = validators[attestation.validatorIndex].blsPubKey;
+
+        // Verify BLS signature — attester must have produced this attestation
+        if (!verifyAttestationSignature(pk, attestation.blsSignature, attestation.slot, attestation.threadId, attestation.thread_root)) {
+            self.total_attestations_rejected += 1;
+            return false;
+        }
+
+        // Tier 2 (CommitteeLoom): verify attester is a member of the thread's committee
+        if (tier == .CommitteeLoom) {
+            const cm = committee_manager orelse {
+                self.total_attestations_rejected += 1;
+                return false;
+            };
+            if (!cm.isInCommittee(attestation.validatorIndex, attestation.threadId)) {
+                self.total_attestations_rejected += 1;
+                return false;
+            }
+        }
+
+        // Tier 3 (FullLoom): verify VRF weaver proof
+        if (tier == .FullLoom) {
+            const vrf_input = vrf_mod.VRF.buildSortitionInput(
+                vrf_mod.DOMAIN_WEAVER,
+                epoch_seed,
+                attestation.slot,
+                &[_]u8{attestation.threadId},
+            );
+            if (!vrf_mod.VRF.verify(pk, attestation.roleProof, &vrf_input)) {
+                self.total_attestations_rejected += 1;
+                return false;
+            }
+            const stake = validators[attestation.validatorIndex].stake;
+            if (!vrf_mod.VRF.checkProposerEligibility(
+                attestation.roleProof,
+                stake,
+                total_active_stake,
+                types.EXPECTED_WEAVERS_PER_THREAD,
+            )) {
+                self.total_attestations_rejected += 1;
+                return false;
+            }
+        }
+
+        // Derive actual stake from validator set (NOT self-reported attestingStake)
+        const actual_stake = validators[attestation.validatorIndex].stake;
+        if (actual_stake == 0) {
+            self.total_attestations_rejected += 1;
+            return false;
+        }
+
         // Store attestation
         try self.attestations[tid].append(self.allocator, attestation);
         try self.attested_validators[tid].put(attestation.validatorIndex, {});
-        self.attested_stake[tid] += attestation.attestingStake;
+        self.attested_stake[tid] += actual_stake;
         self.total_attestations_received += 1;
 
         // Check if we've reached quorum for this thread

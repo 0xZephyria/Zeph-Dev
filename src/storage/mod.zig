@@ -608,8 +608,8 @@ pub const HybridDB = struct {
         entry_count: *usize,
     ) !void {
         for (memtable.shards) |shard| {
-            shard.write_lock.lock();
-            defer shard.write_lock.unlock();
+            shard.rw_lock.lock();
+            defer shard.rw_lock.unlock();
             
             var it = shard.data.iterator();
             while (it.next()) |entry| {

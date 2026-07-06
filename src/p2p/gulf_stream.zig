@@ -17,6 +17,7 @@ const consensus = @import("consensus");
 const types = @import("types.zig");
 const rlp = @import("encoding").rlp;
 const log = core.logger;
+const quic_root = @import("quic/root.zig");
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -122,8 +123,8 @@ pub const GulfStream = struct {
             // Firewall 2: Only forward for current (i=0) and next (i=1) slot
             if (i > 1) break;
             const proposer_idx = eng.getExpectedProposer(target_slot);
-            if (proposer_idx < eng.activeValidators.len) {
-                const addr = eng.activeValidators[proposer_idx].address;
+            if (proposer_idx < eng.validator_set.active.len) {
+                const addr = eng.validator_set.active[proposer_idx].address;
                 // Firewall 1: Verify target is the eligible proposer
                 if (!eng.isEligibleProposer(target_slot, addr)) continue;
                 targets[i] = .{
@@ -174,9 +175,9 @@ pub const GulfStream = struct {
         // Get target for current slot
         const target: ?ForwardTarget = if (self.engine) |eng| blk: {
             const proposer_idx = eng.getExpectedProposer(self.current_slot);
-            if (proposer_idx >= eng.activeValidators.len) break :blk null;
+            if (proposer_idx >= eng.validator_set.active.len) break :blk null;
 
-            const addr = eng.activeValidators[proposer_idx].address;
+            const addr = eng.validator_set.active[proposer_idx].address;
 
             // ── Firewall 1: Verify target is eligible proposer for this slot
             if (!eng.isEligibleProposer(self.current_slot, addr)) break :blk null;
@@ -271,6 +272,46 @@ pub const GulfStream = struct {
     /// Drop any pending state (used on leader change or shutdown).
     pub fn drainAll(self: *Self) void {
         _ = self;
+    }
+
+    /// Send a TX batch over a QUIC connection on stream-12 (Gulf Stream).
+    /// Encodes the data as a toy Packet frame inside the QUIC stream,
+    /// preserving the existing Zephyria message dispatch layer.
+    pub fn sendViaQuic(
+        ep: *quic_root.QuicEndpoint,
+        conn: *quic_root.QuicConn,
+        stream_id: u64,
+        data: []const u8,
+    ) !void {
+        try ep.sendOnStream(conn, stream_id, data, false);
+    }
+
+    /// Encode a Zephyria message and send it over a QUIC stream.
+    /// Wraps the message in the legacy toy Packet framing for compatibility
+    /// with the existing handlePacket() pipeline on the receiver side.
+    pub fn sendViaQuicWrapped(
+        ep: *quic_root.QuicEndpoint,
+        conn: *quic_root.QuicConn,
+        stream_id: u64,
+        msg_type: u64,
+        payload: []const u8,
+    ) !void {
+        const total_len = 8 + payload.len;
+        const buf = try conn.allocator.alloc(u8, total_len);
+        defer conn.allocator.free(buf);
+
+        std.mem.writeInt(u64, buf[0..8], msg_type, .big);
+        @memcpy(buf[8..], payload);
+
+        const pkt = quic_root.pkt.Packet{
+            .packet_type = .OneRTT,
+            .connection_id = 0,
+            .payload = buf,
+        };
+
+        var encoded: [1500]u8 = undefined;
+        const written = try pkt.encode(&encoded);
+        try ep.sendOnStream(conn, stream_id, encoded[0..written], false);
     }
 
     /// Current queue depth (always 0 — no internal queue).

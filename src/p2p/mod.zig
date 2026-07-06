@@ -20,7 +20,6 @@ pub const message_handlers = @import("message_handlers.zig");
 pub const broadcast = @import("broadcast.zig");
 pub const sync = @import("sync.zig");
 
-// Export key structs
 pub const Server = server.Server;
 pub const ServerConfig = server.ServerConfig;
 pub const Peer = peer.Peer;
@@ -32,6 +31,13 @@ pub const PropagationTree = turbine.PropagationTree;
 pub const ReedSolomon = turbine.ReedSolomon;
 pub const ShredCollector = turbine.ShredCollector;
 
+// QUIC transport types
+pub const QuicEndpoint = quic.QuicEndpoint;
+pub const QuicConn = quic.QuicConn;
+pub const QuicStream = quic.QuicStream;
+pub const TlsConfig = quic.TlsConfig;
+pub const EndpointCallbacks = quic.EndpointCallbacks;
+
 pub fn init() void {
-    log.debug("P2P module initialized (v{})\n", .{types.PROTOCOL_VERSION});
+    log.debug("P2P module initialized (v{}) with QUIC transport\n", .{types.PROTOCOL_VERSION});
 }
