@@ -2,6 +2,8 @@
 node_data/
 zig-out/
 .zig-cache/
+src/crypto/blst/blst
+src/crypto/blst/wrapper
 
 # object files
 *.o
@@ -14,8 +16,7 @@ node.pid
 node1.log
 *.c
 *.md
-.mailmap
-sig/
+
 # dependencies
 node_modules/
 .DS_Store
@@ -42,3 +43,4 @@ tasks.md
 //sig/
 /src/vm/solana
 /src/vm/solana_shared
+sig/
